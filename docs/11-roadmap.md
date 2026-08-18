@@ -17,7 +17,8 @@ Escopo priorizado e implementado:
 
 ## v1.1 — Operação diária (4–6 semanas)
 
-- Upload de arquivo real (OFX/CSV/CNAB240) e agendamento de importação.
+- ✅ Upload de arquivo real OFX/CSV na conciliação (UI e API multipart, detecção de formato e
+  codificação) — entregue. Pendente: CNAB240 e agendamento de importação.
 - Paginação/índices para volumetria (hoje: filtros em memória, ok até ~10⁴ registros/empresa).
 - Gestão de usuários pela UI (convite, troca de papel, desativação) e troca de empresa na sessão.
 - Baixa parcial em conciliação (uma transação ↔ várias parcelas e vice-versa) e transferências
