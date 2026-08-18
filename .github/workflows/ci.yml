@@ -28,7 +28,7 @@ jobs:
           DEMO_MODE: "1"
 
   postgres:
-    name: Adaptador Prisma (PostgreSQL real)
+    name: Adaptador Prisma (PostgreSQL real) + fila (Redis real)
     runs-on: ubuntu-latest
     services:
       db:
@@ -44,8 +44,18 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://financeira:financeira@localhost:5432/financeira?schema=public
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -60,6 +70,8 @@ jobs:
         run: npm run db:seed
       - name: Smoke ponta-a-ponta (orquestrador + skills sobre Prisma)
         run: npx tsx scripts/smoke-prisma.ts
+      - name: Barramento de eventos BullMQ (consumo, retry e fila morta)
+        run: npx vitest run src/adapters/queue
 
   e2e:
     name: E2E (Playwright, modo demo)

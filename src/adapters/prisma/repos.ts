@@ -118,6 +118,12 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** BigInt (banco) -> number de centavos (domínio). Seguro até ~90 trilhões de centavos. */
+/** offset/limit com defaults e pisos — mesma semântica do adaptador em memória. */
+const pageArgs = (q: { offset?: number; limit?: number }): { skip: number; take: number } => ({
+  skip: Math.max(0, q.offset ?? 0),
+  take: Math.max(1, q.limit ?? 50),
+});
+
 const fromCents = (v: bigint): number => Number(v);
 const toCents = (v: number): bigint => BigInt(v);
 const fromCentsOpt = (v: bigint | null): number | undefined =>
@@ -1137,6 +1143,24 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
       });
       return rows.map(bankTransactionToDomain);
     },
+    async listPage(companyId, query) {
+      const where = {
+        companyId,
+        ...(query.bankAccountId !== undefined ? { bankAccountId: query.bankAccountId } : {}),
+        ...(query.reconciled !== undefined ? { reconciled: query.reconciled } : {}),
+      };
+      const { skip, take } = pageArgs(query);
+      const [rows, total] = await Promise.all([
+        prisma.bankTransaction.findMany({
+          where,
+          orderBy: [{ date: "desc" }, { id: "desc" }],
+          skip,
+          take,
+        }),
+        prisma.bankTransaction.count({ where }),
+      ]);
+      return { items: rows.map(bankTransactionToDomain), total, offset: skip, limit: take };
+    },
   };
 
   const payables: PayableRepo = {
@@ -1181,6 +1205,23 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
         orderBy: { dueDate: "asc" },
       });
       return rows.map(payableToDomain);
+    },
+    async listPage(companyId, query) {
+      const where = {
+        companyId,
+        ...(query.statuses !== undefined ? { status: { in: query.statuses } } : {}),
+      };
+      const { skip, take } = pageArgs(query);
+      const [rows, total] = await Promise.all([
+        prisma.payable.findMany({
+          where,
+          orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+          skip,
+          take,
+        }),
+        prisma.payable.count({ where }),
+      ]);
+      return { items: rows.map(payableToDomain), total, offset: skip, limit: take };
     },
   };
 
@@ -1233,6 +1274,23 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
         orderBy: { dueDate: "asc" },
       });
       return rows.map(receivableToDomain);
+    },
+    async listPage(companyId, query) {
+      const where = {
+        companyId,
+        ...(query.statuses !== undefined ? { status: { in: query.statuses } } : {}),
+      };
+      const { skip, take } = pageArgs(query);
+      const [rows, total] = await Promise.all([
+        prisma.receivable.findMany({
+          where,
+          orderBy: [{ dueDate: "asc" }, { id: "asc" }],
+          skip,
+          take,
+        }),
+        prisma.receivable.count({ where }),
+      ]);
+      return { items: rows.map(receivableToDomain), total, offset: skip, limit: take };
     },
   };
 
@@ -1580,6 +1638,20 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
       });
       return rows.map(eventToDomain);
     },
+    async listPage(companyId, query) {
+      const where = { companyId, ...(query.type ? { type: query.type } : {}) };
+      const { skip, take } = pageArgs(query);
+      const [rows, total] = await Promise.all([
+        prisma.eventRecord.findMany({
+          where,
+          orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+          skip,
+          take,
+        }),
+        prisma.eventRecord.count({ where }),
+      ]);
+      return { items: rows.map(eventToDomain), total, offset: skip, limit: take };
+    },
   };
 
   const skillExecutions: SkillExecutionRepo = {
@@ -1619,6 +1691,19 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
         orderBy: { seq: "asc" },
       });
       return rows.map(auditToDomain);
+    },
+    async listPage(companyId, query) {
+      const where = {
+        companyId,
+        ...(query.entityType ? { entityType: query.entityType } : {}),
+        ...(query.entityId ? { entityId: query.entityId } : {}),
+      };
+      const { skip, take } = pageArgs(query);
+      const [rows, total] = await Promise.all([
+        prisma.auditRecord.findMany({ where, orderBy: { seq: "desc" }, skip, take }),
+        prisma.auditRecord.count({ where }),
+      ]);
+      return { items: rows.map(auditToDomain), total, offset: skip, limit: take };
     },
   };
 

@@ -5,6 +5,7 @@ import { formatBR, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
 import type { ISODate } from "@/core/dates";
 import type { ReconciliationMatch } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
+import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { confirmMatchAction, importStatementAction, rejectMatchAction } from "./actions";
 
 interface TargetInfo {
@@ -17,19 +18,24 @@ interface TargetInfo {
 export default async function ConciliacaoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; erro?: string }>;
+  searchParams: Promise<{ ok?: string; erro?: string; pt?: string }>;
 }) {
-  const { ok, erro } = await searchParams;
+  const { ok, erro, pt } = await searchParams;
   const session = await requireSession();
   const { repos } = await getContainer();
   const companyId = session.company.id;
 
-  const [bankAccounts, suggested, decided, unreconciled, payables, receivables, payments, suppliers, customers, users] =
+  const [bankAccounts, suggested, decided, unreconciledPage, payables, receivables, payments, suppliers, customers, users] =
     await Promise.all([
       repos.bankAccounts.listAll(companyId),
       repos.reconciliations.listByStatus(companyId, ["suggested"]),
       repos.reconciliations.listByStatus(companyId, ["confirmed", "auto_confirmed"]),
-      repos.bankTransactions.listUnreconciled(companyId),
+      // Tabela de não conciliadas paginada (data desc) — volumetria.
+      repos.bankTransactions.listPage(companyId, {
+        offset: pageOffset(pt),
+        limit: PAGE_SIZE,
+        reconciled: false,
+      }),
       repos.payables.listAll(companyId),
       repos.receivables.listAll(companyId),
       repos.payments.listAll(companyId),
@@ -105,7 +111,7 @@ export default async function ConciliacaoPage({
   const recentDecided = [...decided]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 15);
-  const unreconciledRows = [...unreconciled].sort((a, b) =>
+  const unreconciledRows = [...unreconciledPage.items].sort((a, b) =>
     a.date === b.date ? a.id.localeCompare(b.id) : b.date.localeCompare(a.date)
   );
 
@@ -136,17 +142,18 @@ export default async function ConciliacaoPage({
               <option value="auto">Detectar automaticamente</option>
               <option value="ofx">OFX</option>
               <option value="csv">CSV</option>
+              <option value="cnab240">CNAB240 (retorno)</option>
             </select>
           </Field>
           <div className="flex items-end">
             <Button>Importar e conciliar</Button>
           </div>
           <div className="md:col-span-2">
-            <Field label="Arquivo do extrato (OFX ou CSV)">
+            <Field label="Arquivo do extrato (OFX, CSV ou CNAB240)">
               <input
                 type="file"
                 name="arquivo"
-                accept=".ofx,.csv,.txt"
+                accept=".ofx,.csv,.txt,.ret,.rem"
                 className={`${inputClass} file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-xs file:font-medium`}
               />
             </Field>
@@ -255,7 +262,7 @@ export default async function ConciliacaoPage({
         )}
       </Card>
 
-      <Card className="mb-6" title={`3 — Transações não conciliadas (${unreconciledRows.length})`}>
+      <Card className="mb-6" title={`3 — Transações não conciliadas (${unreconciledPage.total})`}>
         {unreconciledRows.length === 0 ? (
           <EmptyState message="Todas as transações importadas estão conciliadas." />
         ) : (
@@ -277,6 +284,7 @@ export default async function ConciliacaoPage({
             ))}
           </Table>
         )}
+        <Pager page={unreconciledPage} basePath="/conciliacao" param="pt" />
       </Card>
 
       <Card title="4 — Histórico recente de conciliações">

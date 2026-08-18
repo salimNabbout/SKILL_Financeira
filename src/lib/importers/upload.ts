@@ -38,7 +38,7 @@ function pickFile(formData: FormData): File | null {
  */
 export async function extractStatementUpload(formData: FormData): Promise<StatementUpload> {
   const requestedFormat = String(formData.get("format") ?? "auto").toLowerCase();
-  if (!["auto", "ofx", "csv"].includes(requestedFormat)) {
+  if (!["auto", "ofx", "csv", "cnab240"].includes(requestedFormat)) {
     throw new ValidationError(`Formato de extrato inválido: ${requestedFormat}.`);
   }
 
@@ -72,7 +72,7 @@ export async function extractStatementUpload(formData: FormData): Promise<Statem
       : (requestedFormat as StatementFormat);
   if (!format) {
     throw new ValidationError(
-      "Não foi possível detectar o formato do extrato — selecione OFX ou CSV manualmente."
+      "Não foi possível detectar o formato do extrato — selecione OFX, CSV ou CNAB240 manualmente."
     );
   }
 

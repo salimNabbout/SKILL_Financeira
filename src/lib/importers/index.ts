@@ -9,7 +9,13 @@ export {
 } from "./common";
 export { parseOfx } from "./ofx";
 export { parseCsv, parseCsvStatement, type CsvSeparator } from "./csv";
-export { parseCnab } from "./cnab";
+export {
+  CNAB240_LAYOUT,
+  CNAB240_LINE_LENGTH,
+  looksLikeCnab240,
+  parseCnab,
+  parseCnab240,
+} from "./cnab";
 export {
   decodeStatementBuffer,
   detectStatementFormat,

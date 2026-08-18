@@ -114,7 +114,7 @@ export interface BankAccount {
   updatedAt: string;
 }
 
-export type BankTransactionSource = "ofx" | "csv" | "api_mock" | "manual";
+export type BankTransactionSource = "ofx" | "csv" | "cnab240" | "api_mock" | "manual";
 
 export interface BankTransaction {
   id: ID;

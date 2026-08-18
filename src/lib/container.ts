@@ -8,7 +8,7 @@
 import { HeuristicClassifier } from "@/core/ai";
 import { HashChainAuditTrail } from "@/core/audit";
 import { SystemClock } from "@/core/clock";
-import { InMemoryEventBus } from "@/core/events";
+import { InMemoryEventBus, type EventBus } from "@/core/events";
 import { RandomIdGenerator } from "@/core/ids";
 import { Orchestrator } from "@/core/orchestrator/orchestrator";
 import type { SkillRegistry } from "@/core/orchestrator/registry";
@@ -22,7 +22,7 @@ import { createPrismaRepositories } from "@/adapters/prisma";
 export interface AppContainer {
   mode: "demo" | "prisma";
   repos: Repositories;
-  events: InMemoryEventBus;
+  events: EventBus;
   audit: HashChainAuditTrail;
   clock: SystemClock;
   ids: RandomIdGenerator;
@@ -59,7 +59,18 @@ async function build(): Promise<AppContainer> {
     mode = "prisma";
   }
 
-  const events = new InMemoryEventBus(repos.events, clock, ids);
+  // Barramento de eventos: in-process com outbox por padrão; em produção,
+  // EVENT_BUS=bullmq + REDIS_URL ativam a fila real (worker em processo
+  // separado: npx tsx scripts/event-worker.ts).
+  let events: EventBus;
+  if (mode === "prisma" && process.env.EVENT_BUS === "bullmq" && process.env.REDIS_URL) {
+    const { BullMqEventBus } = await import("@/adapters/queue/bullmq-bus");
+    events = new BullMqEventBus(repos.events, clock, ids, {
+      redisUrl: process.env.REDIS_URL,
+    });
+  } else {
+    events = new InMemoryEventBus(repos.events, clock, ids);
+  }
   const audit = new HashChainAuditTrail(repos.audit, clock, ids);
   const orchestrator = new Orchestrator({ repos, events, clock, ids, ai, registry });
 

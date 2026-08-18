@@ -452,6 +452,8 @@ paths:
       tags: [títulos]
       summary: Títulos a pagar (filtros por status e janela de vencimento)
       parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
         - name: status
           in: query
           schema: { type: string, enum: [open, scheduled, partially_paid, paid, canceled] }
@@ -465,7 +467,7 @@ paths:
           schema: { $ref: "#/components/schemas/ISODate" }
       responses:
         "200":
-          description: Títulos ordenados por vencimento
+          description: "Página de títulos: data = { items, total, offset, limit } (ordem: vencimento asc)"
           content:
             application/json:
               schema:
@@ -506,6 +508,8 @@ paths:
       tags: [títulos]
       summary: Títulos a receber (filtros por status e janela de vencimento)
       parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
         - name: status
           in: query
           schema: { type: string, enum: [open, partially_received, received, canceled] }
@@ -517,7 +521,7 @@ paths:
           schema: { $ref: "#/components/schemas/ISODate" }
       responses:
         "200":
-          description: Títulos ordenados por vencimento
+          description: "Página de títulos: data = { items, total, offset, limit } (ordem: vencimento asc)"
           content:
             application/json:
               schema:
@@ -558,6 +562,8 @@ paths:
       tags: [títulos]
       summary: Transações do extrato importado
       parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
         - name: accountId
           in: query
           schema: { type: string }
@@ -857,6 +863,8 @@ paths:
       tags: [governança]
       summary: Trilha de auditoria imutável (exige audit.view)
       parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
         - name: entityType
           in: query
           schema: { type: string, example: Payable }
@@ -899,6 +907,8 @@ paths:
       tags: [governança]
       summary: Outbox de eventos de domínio
       parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
         - name: type
           in: query
           schema: { type: string, example: payable.created }
@@ -976,9 +986,9 @@ paths:
                 bankAccountId: { type: string }
                 format:
                   type: string
-                  enum: [auto, ofx, csv]
+                  enum: [auto, ofx, csv, cnab240]
                   default: auto
-                  description: auto detecta por assinatura OFX/extensão do arquivo
+                  description: auto detecta por assinatura OFX, estrutura CNAB240 ou extensão
                 arquivo:
                   type: string
                   format: binary
@@ -992,7 +1002,7 @@ paths:
               required: [bankAccountId, format, content]
               properties:
                 bankAccountId: { type: string }
-                format: { type: string, enum: [ofx, csv] }
+                format: { type: string, enum: [ofx, csv, cnab240] }
                 content: { type: string, description: Conteúdo do arquivo como texto }
       responses:
         "200":
@@ -1008,6 +1018,17 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
 
 components:
+  parameters:
+    PageLimit:
+      name: limit
+      in: query
+      description: Tamanho da página (1..200, default 50)
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    PageOffset:
+      name: offset
+      in: query
+      description: Deslocamento (default 0)
+      schema: { type: integer, minimum: 0, default: 0 }
   securitySchemes:
     cookieAuth:
       type: apiKey

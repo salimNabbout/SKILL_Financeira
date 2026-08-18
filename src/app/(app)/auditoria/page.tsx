@@ -4,8 +4,7 @@ import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatDateTime } from "@/lib/format";
 import { verifyChain } from "@/core/audit";
-
-const MAX_ROWS = 200;
+import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 
 function smallJson(value: unknown): string {
   const json = JSON.stringify(value, null, 1) ?? "null";
@@ -15,7 +14,7 @@ function smallJson(value: unknown): string {
 export default async function AuditoriaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ entityType?: string; entityId?: string }>;
+  searchParams: Promise<{ entityType?: string; entityId?: string; p?: string }>;
 }) {
   const params = await searchParams;
   const entityType = params.entityType?.trim() || undefined;
@@ -29,9 +28,14 @@ export default async function AuditoriaPage({
   const allRecords = await repos.audit.list(companyId);
   const chain = verifyChain(allRecords);
 
-  const filtered =
-    entityType || entityId ? await repos.audit.list(companyId, { entityType, entityId }) : allRecords;
-  const rows = [...filtered].sort((a, b) => b.seq - a.seq).slice(0, MAX_ROWS);
+  // Tabela paginada no repositório (seq desc).
+  const page = await repos.audit.listPage(companyId, {
+    offset: pageOffset(params.p),
+    limit: PAGE_SIZE,
+    entityType,
+    entityId,
+  });
+  const rows = page.items;
 
   const users = await repos.users.listAll();
   const userName = new Map(users.map((u) => [u.id, u.name]));
@@ -92,7 +96,7 @@ export default async function AuditoriaPage({
         </form>
       </Card>
 
-      <Card title={`Registros (${rows.length}${filtered.length > MAX_ROWS ? ` de ${filtered.length} — exibindo os mais recentes` : ""})`}>
+      <Card title={`Registros (${rows.length} de ${page.total} — mais recentes primeiro)`}>
         {rows.length === 0 ? (
           <EmptyState message="Nenhum registro de auditoria para o filtro informado." />
         ) : (
@@ -155,6 +159,7 @@ export default async function AuditoriaPage({
             ))}
           </Table>
         )}
+        <Pager page={page} basePath="/auditoria" extraQuery={{ entityType, entityId }} />
       </Card>
     </div>
   );

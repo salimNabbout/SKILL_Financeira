@@ -54,6 +54,23 @@ export interface BaseRepo<T extends { id: ID; companyId: ID }> {
   update(entity: T): Promise<T>;
 }
 
+// --- Paginação (volumetria) -------------------------------------------------
+// Superfícies de LISTAGEM (telas e API) usam finders paginados com ordem
+// determinística; skills que agregam continuam com listAll (cálculo, não
+// listagem) — decisão documentada em docs/12.
+
+export interface PageQuery {
+  offset?: number; // default 0
+  limit?: number; // default 50 (máx. aplicado na borda da API)
+}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 // --- Entidades globais (sem escopo de empresa) ------------------------------
 
 export interface CompanyRepo {
@@ -102,6 +119,11 @@ export interface BankTransactionRepo extends BaseRepo<BankTransaction> {
   listByAccount(companyId: ID, bankAccountId: ID): Promise<BankTransaction[]>;
   listUnreconciled(companyId: ID): Promise<BankTransaction[]>;
   listByDateRange(companyId: ID, start: ISODate, end: ISODate): Promise<BankTransaction[]>;
+  /** Ordem: data desc, id desc. */
+  listPage(
+    companyId: ID,
+    query: PageQuery & { bankAccountId?: ID; reconciled?: boolean }
+  ): Promise<Page<BankTransaction>>;
 }
 
 // --- Títulos e liquidações --------------------------------------------------
@@ -110,6 +132,11 @@ export interface PayableRepo extends BaseRepo<Payable> {
   findByOriginKey(companyId: ID, originKey: string): Promise<Payable | null>;
   listByStatus(companyId: ID, statuses: PayableStatus[]): Promise<Payable[]>;
   listDueBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Payable[]>;
+  /** Ordem: vencimento asc, id asc. */
+  listPage(
+    companyId: ID,
+    query: PageQuery & { statuses?: PayableStatus[] }
+  ): Promise<Page<Payable>>;
 }
 
 export interface ReceivableRepo extends BaseRepo<Receivable> {
@@ -117,6 +144,11 @@ export interface ReceivableRepo extends BaseRepo<Receivable> {
   listByStatus(companyId: ID, statuses: ReceivableStatus[]): Promise<Receivable[]>;
   listDueBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Receivable[]>;
   listByCustomer(companyId: ID, customerId: ID): Promise<Receivable[]>;
+  /** Ordem: vencimento asc, id asc. */
+  listPage(
+    companyId: ID,
+    query: PageQuery & { statuses?: ReceivableStatus[] }
+  ): Promise<Page<Receivable>>;
 }
 
 export interface PaymentRepo extends BaseRepo<Payment> {
@@ -157,6 +189,11 @@ export interface AlertRepo extends BaseRepo<Alert> {
 export interface EventRepo {
   append(event: EventRecordEntity): Promise<void>;
   list(companyId: ID, type?: string): Promise<EventRecordEntity[]>;
+  /** Ordem: occurredAt desc, id desc. */
+  listPage(
+    companyId: ID,
+    query: PageQuery & { type?: string }
+  ): Promise<Page<EventRecordEntity>>;
 }
 
 export interface SkillExecutionRepo {
@@ -169,6 +206,11 @@ export interface AuditRepo {
   append(record: AuditRecord): Promise<void>;
   last(companyId: ID): Promise<AuditRecord | null>;
   list(companyId: ID, filter?: { entityType?: string; entityId?: ID }): Promise<AuditRecord[]>;
+  /** Ordem: seq desc. */
+  listPage(
+    companyId: ID,
+    query: PageQuery & { entityType?: string; entityId?: ID }
+  ): Promise<Page<AuditRecord>>;
 }
 
 // --- Faturamento, cobrança, contabilidade -----------------------------------

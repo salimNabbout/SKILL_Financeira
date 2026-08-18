@@ -477,13 +477,24 @@ describe("payables", () => {
     await seedPayable(env, { dueDate: "2026-08-15", status: "paid", paidCents: 100_000 });
 
     const all = await listPayables(deps, session, {});
-    expect(all.map((p) => p.dueDate)).toEqual(["2026-08-10", "2026-08-15", "2026-08-25"]);
+    expect(all.items.map((p) => p.dueDate)).toEqual(["2026-08-10", "2026-08-15", "2026-08-25"]);
+    expect(all.total).toBe(3);
 
     const open = await listPayables(deps, session, { status: "open" });
-    expect(open).toHaveLength(2);
+    expect(open.items).toHaveLength(2);
 
     const window = await listPayables(deps, session, { from: "2026-08-11", to: "2026-08-26" });
-    expect(window.map((p) => p.dueDate)).toEqual(["2026-08-15", "2026-08-25"]);
+    expect(window.items.map((p) => p.dueDate)).toEqual(["2026-08-15", "2026-08-25"]);
+    expect(window.total).toBe(2);
+
+    // Paginação: limit/offset com total estável e ordem determinística.
+    const page1 = await listPayables(deps, session, { limit: "2", offset: "0" });
+    const page2 = await listPayables(deps, session, { limit: "2", offset: "2" });
+    expect(page1.items.map((p) => p.dueDate)).toEqual(["2026-08-10", "2026-08-15"]);
+    expect(page2.items.map((p) => p.dueDate)).toEqual(["2026-08-25"]);
+    expect(page1.total).toBe(3);
+    expect(page1.limit).toBe(2);
+    await expect(listPayables(deps, session, { limit: "500" })).rejects.toThrow(ValidationError);
   });
 
   it("rejeita status e datas inválidos", async () => {
@@ -559,10 +570,10 @@ describe("bank-transactions", () => {
     });
 
     const byAccount = await listBankTransactions(deps, session, { accountId: "acc_1" });
-    expect(byAccount.map((t) => t.id)).toEqual(["btx_1"]);
+    expect(byAccount.items.map((t) => t.id)).toEqual(["btx_1"]);
 
     const unreconciled = await listBankTransactions(deps, session, { reconciled: "false" });
-    expect(unreconciled.map((t) => t.id)).toEqual(["btx_2"]);
+    expect(unreconciled.items.map((t) => t.id)).toEqual(["btx_2"]);
 
     await expect(listBankTransactions(deps, session, { reconciled: "sim" })).rejects.toThrow(
       ValidationError
@@ -754,8 +765,9 @@ describe("audit, skills e import", () => {
     await createSupplier(deps, manager, { name: "Fornecedor Auditado" });
 
     const records = await getAuditTrail(deps, manager, { entityType: "Supplier" });
-    expect(records.length).toBeGreaterThan(0);
-    expect(records.every((r) => r.entityType === "Supplier")).toBe(true);
+    expect(records.items.length).toBeGreaterThan(0);
+    expect(records.items.every((r) => r.entityType === "Supplier")).toBe(true);
+    expect(records.total).toBe(records.items.length);
 
     const analyst = await sessionFor(env, "analyst"); // finance_analyst não tem audit.view
     await expect(getAuditTrail(deps, analyst, {})).rejects.toThrow(PermissionError);
