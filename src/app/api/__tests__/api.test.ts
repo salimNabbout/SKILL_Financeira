@@ -833,7 +833,7 @@ describe("reports", () => {
     );
     await expect(runReport(deps, session, "inexistente", {})).rejects.toThrow(ValidationError);
     await expect(
-      runReport(deps, session, "daily_summary", { format: "xlsx" })
+      runReport(deps, session, "daily_summary", { format: "doc" })
     ).rejects.toThrow(ValidationError);
     await expect(
       runReport(deps, session, "monthly_close", { period: "2026/07" })
@@ -867,6 +867,24 @@ describe("reports", () => {
       }
     }
   );
+
+  it.skipIf(!exportersAvailable)("format=xlsx devolve um pacote Excel válido", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const session = await sessionFor(env, "viewer");
+    const out = await runReport(deps, session, "daily_summary", { format: "xlsx" });
+    expect(out.kind).toBe("xlsx");
+    if (out.kind === "xlsx") {
+      expect(out.filename).toBe("daily_summary.xlsx");
+      // Assinatura ZIP (PK\x03\x04) e a worksheet dentro do pacote (modo STORE).
+      expect([out.bytes[0], out.bytes[1], out.bytes[2], out.bytes[3]]).toEqual([
+        0x50, 0x4b, 0x03, 0x04,
+      ]);
+      const text = Buffer.from(out.bytes).toString("utf8");
+      expect(text).toContain("xl/worksheets/sheet1.xml");
+      expect(text).toContain("saldo_caixa");
+    }
+  });
 
   it.skipIf(!exportersAvailable)("format=pdf devolve um PDF válido", async () => {
     const env = createTestEnv();

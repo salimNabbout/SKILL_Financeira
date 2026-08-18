@@ -26,7 +26,8 @@ Escopo priorizado e implementado:
 - ✅ Baixa parcial em conciliação (sempre com revisão humana), rateio 1 transação ↔ 2–4 parcelas
   da mesma contraparte (soma exata, decisão em grupo) e transferências entre contas (pares
   opostos com detecção por palavra-chave) — entregue.
-- Exportação Excel (xlsx) além de CSV; relatórios agendados por e-mail.
+- ✅ Exportação Excel (xlsx) além de CSV — entregue (gerador SpreadsheetML próprio, sem
+  dependências; célula monetária numérica com formato). Pendente: relatórios agendados por e-mail.
 - Fila real: EventBus sobre Redis/BullMQ com workers, retry e DLQ (mesma interface).
 
 ## v1.2 — Integrações reais (6–10 semanas)
