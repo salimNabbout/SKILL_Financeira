@@ -1,0 +1,110 @@
+/**
+ * Dinheiro como inteiro de centavos + código de moeda.
+ * BRL por padrão; estrutura pronta para outras moedas.
+ * Nunca usar float para valores monetários.
+ */
+
+export type CurrencyCode = "BRL" | "USD" | "EUR";
+
+export interface Money {
+  amountCents: number;
+  currency: CurrencyCode;
+}
+
+export function brl(amountCents: number): Money {
+  return { amountCents: Math.round(amountCents), currency: "BRL" };
+}
+
+export function addCents(a: number, b: number): number {
+  return a + b;
+}
+
+export function assertSameCurrency(a: Money, b: Money): void {
+  if (a.currency !== b.currency) {
+    throw new Error(`Moedas incompatíveis: ${a.currency} vs ${b.currency}`);
+  }
+}
+
+export function add(a: Money, b: Money): Money {
+  assertSameCurrency(a, b);
+  return { amountCents: a.amountCents + b.amountCents, currency: a.currency };
+}
+
+export function sub(a: Money, b: Money): Money {
+  assertSameCurrency(a, b);
+  return { amountCents: a.amountCents - b.amountCents, currency: a.currency };
+}
+
+/** Percentual com arredondamento half-up em centavos. Ex.: pct(10000, 2) = 200. */
+export function percentOf(amountCents: number, percent: number): number {
+  return Math.round((amountCents * percent) / 100);
+}
+
+/**
+ * Divide um valor em N parcelas somando exatamente o total
+ * (resto distribuído nas primeiras parcelas).
+ */
+export function splitInstallments(totalCents: number, count: number): number[] {
+  if (count < 1 || !Number.isInteger(count)) {
+    throw new Error(`Número de parcelas inválido: ${count}`);
+  }
+  const base = Math.floor(totalCents / count);
+  const remainder = totalCents - base * count;
+  return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
+const BRL_FORMATTER = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
+
+/** Formata centavos como moeda pt-BR. formatBRL(123456) => "R$ 1.234,56" */
+export function formatBRL(amountCents: number): string {
+  return BRL_FORMATTER.format(amountCents / 100);
+}
+
+export function formatMoney(m: Money): string {
+  if (m.currency === "BRL") return formatBRL(m.amountCents);
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: m.currency }).format(
+    m.amountCents / 100
+  );
+}
+
+/**
+ * Juros e multa por atraso — regra determinística, parâmetros vêm de
+ * configuração da empresa (nunca hardcode de regra tributária).
+ * Fórmula: multa = principal * finePercent;
+ *          juros = principal * (monthlyInterestPercent/30) * diasAtraso.
+ */
+export interface LateFeePolicy {
+  finePercent: number; // ex.: 2 = 2%
+  monthlyInterestPercent: number; // ex.: 1 = 1% a.m. (pro rata die)
+}
+
+export interface LateFeeResult {
+  fineCents: number;
+  interestCents: number;
+  totalCents: number; // principal + multa + juros
+  daysLate: number;
+  formula: string;
+}
+
+export function computeLateFee(
+  principalCents: number,
+  daysLate: number,
+  policy: LateFeePolicy
+): LateFeeResult {
+  const days = Math.max(0, daysLate);
+  const fineCents = days > 0 ? percentOf(principalCents, policy.finePercent) : 0;
+  const interestCents =
+    days > 0
+      ? Math.round((principalCents * (policy.monthlyInterestPercent / 100) * days) / 30)
+      : 0;
+  return {
+    fineCents,
+    interestCents,
+    totalCents: principalCents + fineCents + interestCents,
+    daysLate: days,
+    formula: `total = principal + principal×${policy.finePercent}% + principal×(${policy.monthlyInterestPercent}%/30)×${days} dias`,
+  };
+}

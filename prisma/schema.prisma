@@ -1,0 +1,620 @@
+// Modelo de dados — Financeira PME
+// Fonte oficial dos registros: PostgreSQL (banco transacional).
+// Valores monetários: inteiros em centavos (BigInt) + código de moeda (BRL padrão).
+// Datas de competência/vencimento: @db.Date; carimbos de tempo: DateTime UTC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Organização, usuários e RBAC
+// ---------------------------------------------------------------------------
+
+model Company {
+  id              String   @id
+  name            String
+  legalName       String?
+  cnpj            String
+  timezone        String   @default("America/Sao_Paulo")
+  defaultCurrency String   @default("BRL")
+  configJson      Json     @default("{}") // políticas de alçada, juros, régua de cobrança, regras tributárias (dados, não código)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  memberships       Membership[]
+  customers         Customer[]
+  suppliers         Supplier[]
+  bankAccounts      BankAccount[]
+  bankTransactions  BankTransaction[]
+  payables          Payable[]
+  receivables       Receivable[]
+  payments          Payment[]
+  receipts          Receipt[]
+  documents         FinancialDocument[]
+  categories        Category[]
+  costCenters       CostCenter[]
+  chartAccounts     ChartAccount[]
+  budgets           Budget[]
+  approvals         Approval[]
+  reconciliations   ReconciliationMatch[]
+  events            EventRecord[]
+  alerts            Alert[]
+  skillExecutions   SkillExecution[]
+  auditRecords      AuditRecord[]
+  invoices          Invoice[]
+  collectionMsgs    CollectionMessage[]
+  accountingEntries AccountingEntry[]
+  flowRuns          FlowRun[]
+  idempotencyKeys   IdempotencyRecord[]
+
+  @@unique([cnpj])
+}
+
+model User {
+  id           String   @id
+  name         String
+  email        String   @unique
+  passwordHash String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+}
+
+// Papel do usuário em uma empresa, com limite de alçada em centavos.
+model Membership {
+  id                 String  @id
+  userId             String
+  companyId          String
+  role               String // admin | finance_manager | approver | finance_analyst | accountant | viewer
+  approvalLimitCents BigInt? // null = sem limite (dentro do papel)
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+}
+
+// ---------------------------------------------------------------------------
+// Cadastros
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id        String   @id
+  companyId String
+  name      String
+  document  String? // CNPJ/CPF
+  email     String?
+  phone     String?
+  address   String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company     Company             @relation(fields: [companyId], references: [id])
+  receivables Receivable[]
+  invoices    Invoice[]
+  messages    CollectionMessage[]
+
+  @@index([companyId])
+}
+
+model Supplier {
+  id             String   @id
+  companyId      String
+  name           String
+  document       String? // CNPJ/CPF
+  email          String?
+  phone          String?
+  address        String?
+  bankInfoMasked String? // dados bancários sempre mascarados; alteração exige aprovação
+  pixKeyMasked   String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  payables Payable[]
+
+  @@index([companyId])
+}
+
+model BankAccount {
+  id                  String   @id
+  companyId           String
+  name                String
+  bankCode            String
+  agency              String
+  accountNumberMasked String
+  type                String // checking | savings | payment
+  currency            String   @default("BRL")
+  openingBalanceCents BigInt   @default(0)
+  openingBalanceDate  DateTime @db.Date
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  company      Company           @relation(fields: [companyId], references: [id])
+  transactions BankTransaction[]
+  payments     Payment[]
+  receipts     Receipt[]
+
+  @@index([companyId])
+}
+
+model BankTransaction {
+  id            String   @id
+  companyId     String
+  bankAccountId String
+  date          DateTime @db.Date
+  amountCents   BigInt // com sinal: crédito > 0, débito < 0
+  currency      String   @default("BRL")
+  description   String
+  externalId    String? // FITID do OFX ou hash determinístico (dedupe)
+  importBatchId String?
+  source        String // ofx | csv | api_mock | manual
+  reconciled    Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  company     Company               @relation(fields: [companyId], references: [id])
+  bankAccount BankAccount           @relation(fields: [bankAccountId], references: [id])
+  matches     ReconciliationMatch[]
+
+  @@unique([bankAccountId, externalId])
+  @@index([companyId, date])
+}
+
+// ---------------------------------------------------------------------------
+// Contas a pagar / receber e liquidações
+// ---------------------------------------------------------------------------
+
+model Payable {
+  id                String    @id
+  companyId         String
+  supplierId        String
+  documentId        String?
+  description       String
+  issueDate         DateTime  @db.Date
+  dueDate           DateTime  @db.Date
+  amountCents       BigInt
+  paidCents         BigInt    @default(0)
+  currency          String    @default("BRL")
+  status            String // open | scheduled | partially_paid | paid | canceled
+  categoryId        String?
+  costCenterId      String?
+  installmentNumber Int       @default(1)
+  installmentCount  Int       @default(1)
+  originKey         String // chave de idempotência: fornecedor+documento+parcela
+  notes             String?
+  canceledAt        DateTime?
+  createdBy         String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  company    Company            @relation(fields: [companyId], references: [id])
+  supplier   Supplier           @relation(fields: [supplierId], references: [id])
+  document   FinancialDocument? @relation(fields: [documentId], references: [id])
+  category   Category?          @relation(fields: [categoryId], references: [id])
+  costCenter CostCenter?        @relation(fields: [costCenterId], references: [id])
+  payments   Payment[]
+
+  @@unique([companyId, originKey])
+  @@index([companyId, status, dueDate])
+}
+
+model Receivable {
+  id                String    @id
+  companyId         String
+  customerId        String
+  invoiceId         String?
+  documentId        String?
+  description       String
+  issueDate         DateTime  @db.Date
+  dueDate           DateTime  @db.Date
+  amountCents       BigInt
+  receivedCents     BigInt    @default(0)
+  currency          String    @default("BRL")
+  status            String // open | partially_received | received | canceled
+  method            String? // pix | boleto | card | transfer | cash
+  categoryId        String?
+  costCenterId      String?
+  installmentNumber Int       @default(1)
+  installmentCount  Int       @default(1)
+  originKey         String
+  notes             String?
+  canceledAt        DateTime?
+  createdBy         String
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  company    Company             @relation(fields: [companyId], references: [id])
+  customer   Customer            @relation(fields: [customerId], references: [id])
+  invoice    Invoice?            @relation(fields: [invoiceId], references: [id])
+  document   FinancialDocument?  @relation(fields: [documentId], references: [id])
+  category   Category?           @relation(fields: [categoryId], references: [id])
+  costCenter CostCenter?         @relation(fields: [costCenterId], references: [id])
+  receipts   Receipt[]
+  messages   CollectionMessage[]
+
+  @@unique([companyId, originKey])
+  @@index([companyId, status, dueDate])
+}
+
+// Pagamento de um título. NUNCA é executado sem Approval aprovada.
+model Payment {
+  id            String    @id
+  companyId     String
+  payableId     String
+  bankAccountId String
+  amountCents   BigInt
+  scheduledDate DateTime  @db.Date
+  executedAt    DateTime?
+  status        String // pending_approval | approved | executed | rejected | canceled
+  method        String // pix | ted | boleto | debit
+  approvalId    String?
+  requestedBy   String
+  executedBy    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  payable     Payable     @relation(fields: [payableId], references: [id])
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id])
+
+  @@index([companyId, status])
+}
+
+model Receipt {
+  id            String   @id
+  companyId     String
+  receivableId  String
+  bankAccountId String?
+  amountCents   BigInt
+  receivedDate  DateTime @db.Date
+  method        String // pix | boleto | card | transfer | cash
+  registeredBy  String // usuário ou "system" (baixa automática via conciliação)
+  createdAt     DateTime @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  receivable  Receivable   @relation(fields: [receivableId], references: [id])
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  @@index([companyId, receivedDate])
+}
+
+model FinancialDocument {
+  id          String   @id
+  companyId   String
+  type        String // nfe | nfse | invoice | receipt | contract | other
+  number      String
+  series      String?
+  issuerName  String
+  issuerDoc   String?
+  issuedAt    DateTime @db.Date
+  totalCents  BigInt
+  contentHash String // hash do documento para deduplicação
+  rawJson     Json?
+  createdAt   DateTime @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  payables    Payable[]
+  receivables Receivable[]
+
+  @@unique([companyId, contentHash])
+  @@index([companyId, type])
+}
+
+// ---------------------------------------------------------------------------
+// Classificação: categorias, centros de custo, plano de contas
+// ---------------------------------------------------------------------------
+
+model Category {
+  id        String  @id
+  companyId String
+  name      String
+  kind      String // income | expense
+  dreGroup  String // receita_bruta | deducoes | custos | despesas_operacionais | despesas_financeiras | receitas_financeiras | outras
+  parentId  String?
+  active    Boolean @default(true)
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  payables    Payable[]
+  receivables Receivable[]
+  budgetLines BudgetLine[]
+
+  @@index([companyId])
+}
+
+model CostCenter {
+  id        String  @id
+  companyId String
+  code      String
+  name      String
+  active    Boolean @default(true)
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  payables    Payable[]
+  receivables Receivable[]
+  budgetLines BudgetLine[]
+
+  @@unique([companyId, code])
+}
+
+model ChartAccount {
+  id         String  @id
+  companyId  String
+  code       String // ex.: 1.1.01
+  name       String
+  type       String // asset | liability | equity | revenue | expense
+  parentCode String?
+  active     Boolean @default(true)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+}
+
+// ---------------------------------------------------------------------------
+// Orçamento
+// ---------------------------------------------------------------------------
+
+model Budget {
+  id        String   @id
+  companyId String
+  name      String
+  year      Int
+  status    String   @default("active") // draft | active | archived
+  createdAt DateTime @default(now())
+
+  company Company      @relation(fields: [companyId], references: [id])
+  lines   BudgetLine[]
+
+  @@unique([companyId, name, year])
+}
+
+model BudgetLine {
+  id           String  @id
+  budgetId     String
+  period       String // YYYY-MM
+  categoryId   String?
+  costCenterId String?
+  amountCents  BigInt
+
+  budget     Budget      @relation(fields: [budgetId], references: [id])
+  category   Category?   @relation(fields: [categoryId], references: [id])
+  costCenter CostCenter? @relation(fields: [costCenterId], references: [id])
+
+  @@index([budgetId, period])
+}
+
+// ---------------------------------------------------------------------------
+// Governança: aprovações, conciliação, eventos, alertas, auditoria
+// ---------------------------------------------------------------------------
+
+model Approval {
+  id                 String    @id
+  companyId          String
+  targetType         String // payment | collection_message | bank_change | deletion | flow_step
+  targetId           String
+  flowRunId          String?
+  summary            String
+  amountCents        BigInt?
+  requestedBy        String
+  requiredRole       String // papel mínimo para decidir
+  status             String // pending | approved | rejected | expired
+  decidedBy          String?
+  decidedAt          DateTime?
+  justification      String?
+  createdAt          DateTime  @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, status])
+}
+
+model ReconciliationMatch {
+  id                String   @id
+  companyId         String
+  bankTransactionId String
+  targetType        String // payment | receipt | payable | receivable | transfer | unknown
+  targetId          String?
+  confidence        Float
+  status            String // auto_confirmed | suggested | confirmed | rejected
+  matchedBy         String // system | userId
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company         Company         @relation(fields: [companyId], references: [id])
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id])
+
+  @@index([companyId, status])
+}
+
+// Outbox de eventos de domínio (barramento in-process persistido; evolui p/ BullMQ)
+model EventRecord {
+  id            String   @id
+  companyId     String
+  type          String
+  payloadJson   Json
+  source        String // skill ou orquestrador que publicou
+  correlationId String
+  causationId   String?
+  occurredAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, type, occurredAt])
+}
+
+model Alert {
+  id         String    @id
+  companyId  String
+  severity   String // info | warning | critical
+  code       String
+  message    String
+  entityType String?
+  entityId   String?
+  source     String // skill que gerou
+  status     String    @default("open") // open | acknowledged | resolved
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, status, severity])
+}
+
+model SkillExecution {
+  id           String   @id
+  companyId    String
+  flowRunId    String?
+  skill        String
+  action       String
+  inputHash    String
+  status       String // success | warning | error | awaiting_approval
+  confidence   Float
+  resultJson   Json
+  startedAt    DateTime
+  finishedAt   DateTime
+  createdAt    DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, skill, createdAt])
+}
+
+// Trilha de auditoria imutável: append-only com encadeamento de hash.
+model AuditRecord {
+  id            String   @id
+  companyId     String
+  seq           Int
+  actorType     String // user | system | skill
+  actorId       String
+  action        String
+  entityType    String
+  entityId      String
+  beforeJson    Json?
+  afterJson     Json?
+  correlationId String?
+  timestamp     DateTime @default(now())
+  prevHash      String
+  hash          String
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, seq])
+  @@index([companyId, entityType, entityId])
+}
+
+// ---------------------------------------------------------------------------
+// Faturamento, cobrança, contabilidade
+// ---------------------------------------------------------------------------
+
+model Invoice {
+  id          String    @id
+  companyId   String
+  customerId  String
+  saleRef     String? // referência da venda/pedido de origem
+  description String
+  totalCents  BigInt
+  issueDate   DateTime? @db.Date
+  status      String // draft | issued | canceled
+  nfeMockJson Json? // integração NF-e/NFS-e é MOCK identificado no MVP
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  customer    Customer     @relation(fields: [customerId], references: [id])
+  receivables Receivable[]
+
+  @@index([companyId, status])
+}
+
+model CollectionMessage {
+  id           String    @id
+  companyId    String
+  receivableId String
+  customerId   String
+  step         Int // etapa da régua de cobrança
+  channel      String // email | whatsapp_mock | letter
+  subject      String
+  body         String
+  status       String // draft | awaiting_approval | approved | sent | canceled
+  approvalId   String?
+  sentAt       DateTime? // envio real é MOCK no MVP
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  company    Company    @relation(fields: [companyId], references: [id])
+  receivable Receivable @relation(fields: [receivableId], references: [id])
+  customer   Customer   @relation(fields: [customerId], references: [id])
+
+  @@index([companyId, status])
+}
+
+model AccountingEntry {
+  id            String   @id
+  companyId     String
+  entryDate     DateTime @db.Date
+  debitAccount  String // código do plano de contas
+  creditAccount String
+  amountCents   BigInt
+  memo          String
+  sourceType    String // payment | receipt | payable | receivable | adjustment
+  sourceId      String
+  exportBatchId String?
+  exported      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, exported])
+}
+
+// ---------------------------------------------------------------------------
+// Orquestrador: execuções de fluxo e idempotência
+// ---------------------------------------------------------------------------
+
+model FlowRun {
+  id             String   @id
+  companyId      String
+  flow           String
+  status         String // running | awaiting_approval | completed | failed | rejected
+  cursor         Int      @default(0)
+  payloadJson    Json
+  resultsJson    Json     @default("[]")
+  approvalId     String?
+  idempotencyKey String
+  correlationId  String
+  requestedBy    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, status])
+}
+
+model IdempotencyRecord {
+  id          String   @id
+  companyId   String
+  key         String
+  requestHash String
+  resultJson  Json
+  createdAt   DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, key])
+}

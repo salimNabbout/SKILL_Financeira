@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: financeira
+      POSTGRES_PASSWORD: financeira
+      POSTGRES_DB: financeira
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financeira"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Redis reservado para a evolução do barramento de eventos (BullMQ).
+  # No MVP o barramento é in-process com outbox persistido no banco.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:

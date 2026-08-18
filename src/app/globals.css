@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #1a2233;
+  --ink-muted: #5b6472;
+  --line: #e3e6eb;
+  --brand: #0f4c81;
+  --brand-ink: #ffffff;
+  --ok: #1a7f4e;
+  --warn: #a86400;
+  --crit: #b3261e;
+}
+
+html {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
