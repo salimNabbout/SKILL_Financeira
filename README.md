@@ -1,5 +1,7 @@
 # Financeira PME — plataforma financeira multiagente para PMEs brasileiras
 
+[![CI](https://github.com/salimNabbout/SKILL_Financeira/actions/workflows/ci.yml/badge.svg)](https://github.com/salimNabbout/SKILL_Financeira/actions/workflows/ci.yml)
+
 Plataforma que centraliza a operação financeira de uma PME sobre uma arquitetura de **11 skills
 especializadas** (Contas a Pagar, Contas a Receber, Faturamento, Tesouraria/Fluxo de Caixa,
 Conciliação Bancária, Cobrança/Inadimplência, Orçamento, Controladoria/Indicadores, Integração
