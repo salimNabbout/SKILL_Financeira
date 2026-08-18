@@ -1,0 +1,1415 @@
+openapi: 3.1.0
+info:
+  title: Plataforma Financeira PME — API v1
+  version: 1.0.0
+  description: |
+    API REST da plataforma financeira multiagente para PMEs brasileiras.
+
+    Convenções:
+    - **Autenticação** por cookie de sessão HttpOnly assinado (`financeira_session`),
+      obtido em `POST /auth/login`.
+    - **Envelopes**: sucesso `{ "data": ... }`; erro `{ "error": { "code", "message" } }`.
+      Códigos de erro de domínio: `validation_error`/`invalid_input` → 400,
+      `unauthorized`/`invalid_credentials` → 401, `permission_denied`/
+      `segregation_of_duties` → 403, `not_found` → 404, demais → 500 (sem stack).
+    - **Dinheiro** sempre como inteiro em **centavos** (`amountCents`).
+    - **Datas de negócio** como string `YYYY-MM-DD`; carimbos como ISO-8601 UTC.
+    - **LGPD/segurança**: `passwordHash` nunca é retornado; dados bancários são
+      sempre mascarados (`accountNumberMasked`, `bankInfoMasked`, `pixKeyMasked`).
+    - Ações sensíveis (pagar, enviar cobrança) **nunca** executam sem aprovação
+      humana: fluxos suspendem com status `awaiting_approval` e retomam via
+      `POST /approvals/{id}/decide`.
+servers:
+  - url: /api/v1
+security:
+  - cookieAuth: []
+
+tags:
+  - name: auth
+  - name: sessão
+  - name: cadastros
+  - name: títulos
+  - name: orquestrador
+  - name: governança
+  - name: relatórios
+  - name: importação
+
+paths:
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Autentica com e-mail e senha e define o cookie de sessão
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, example: ana@cafeaurora.com.br }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Sessão criada (cookie `financeira_session` via Set-Cookie)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user: { $ref: "#/components/schemas/PublicUser" }
+                      companyId: { type: string }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401":
+          description: Credenciais inválidas
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Encerra a sessão (limpa o cookie)
+      security: []
+      responses:
+        "200":
+          description: Sessão encerrada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ok: { type: boolean }
+
+  /me:
+    get:
+      tags: [sessão]
+      summary: Usuário, empresa e papel da sessão atual
+      responses:
+        "200":
+          description: Sessão atual
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user: { $ref: "#/components/schemas/PublicUser" }
+                      company: { $ref: "#/components/schemas/PublicCompany" }
+                      role: { $ref: "#/components/schemas/RoleName" }
+                      approvalLimitCents:
+                        type: [integer, "null"]
+                        description: Limite de alçada em centavos (null = ilimitado no papel)
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /companies:
+    get:
+      tags: [sessão]
+      summary: Empresas do usuário autenticado (via memberships)
+      responses:
+        "200":
+          description: Lista de empresas com papel do usuário
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/PublicCompany"
+                        - type: object
+                          properties:
+                            role: { $ref: "#/components/schemas/RoleName" }
+                            current: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /companies/current:
+    get:
+      tags: [sessão]
+      summary: Empresa da sessão atual
+      responses:
+        "200":
+          description: Empresa atual
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/PublicCompany" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /users:
+    get:
+      tags: [sessão]
+      summary: Usuários da empresa da sessão (sem hash de senha)
+      responses:
+        "200":
+          description: Usuários e papéis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/PublicUser"
+                        - type: object
+                          properties:
+                            role: { $ref: "#/components/schemas/RoleName" }
+                            approvalLimitCents: { type: [integer, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /suppliers:
+    get:
+      tags: [cadastros]
+      summary: Lista fornecedores (dados bancários sempre mascarados)
+      responses:
+        "200":
+          description: Fornecedores da empresa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Supplier" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [cadastros]
+      summary: Cria fornecedor (exige master_data.manage; idempotente por documento/nome)
+      description: >
+        `bankInfo` e `pixKey` são recebidos crus e persistidos APENAS mascarados
+        (4 últimos caracteres). Repetir o POST com o mesmo documento/nome devolve
+        o registro existente com status 200 (nada é duplicado).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                document: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                address: { type: string }
+                bankInfo: { type: string, description: Mascarado antes de persistir }
+                pixKey: { type: string, description: Mascarado antes de persistir }
+      responses:
+        "201":
+          description: Fornecedor criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Supplier" }
+        "200":
+          description: Registro já existia (replay idempotente)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Supplier" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /customers:
+    get:
+      tags: [cadastros]
+      summary: Lista clientes
+      responses:
+        "200":
+          description: Clientes da empresa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Customer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [cadastros]
+      summary: Cria cliente (exige master_data.manage; idempotente por documento/nome)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                document: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                address: { type: string }
+      responses:
+        "201":
+          description: Cliente criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Customer" }
+        "200":
+          description: Registro já existia (replay idempotente)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Customer" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /categories:
+    get:
+      tags: [cadastros]
+      summary: Lista categorias
+      responses:
+        "200":
+          description: Categorias da empresa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Category" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [cadastros]
+      summary: Cria categoria (exige master_data.manage; idempotente por nome+tipo)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, kind, dreGroup]
+              properties:
+                name: { type: string }
+                kind: { type: string, enum: [income, expense] }
+                dreGroup:
+                  type: string
+                  enum: [receita_bruta, deducoes, custos, despesas_operacionais, despesas_financeiras, receitas_financeiras, outras]
+                parentId: { type: string }
+      responses:
+        "201":
+          description: Categoria criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Category" }
+        "200":
+          description: Registro já existia (replay idempotente)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Category" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /cost-centers:
+    get:
+      tags: [cadastros]
+      summary: Lista centros de custo
+      responses:
+        "200":
+          description: Centros de custo da empresa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/CostCenter" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [cadastros]
+      summary: Cria centro de custo (exige master_data.manage; idempotente por código)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string }
+                name: { type: string }
+      responses:
+        "201":
+          description: Centro de custo criado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/CostCenter" }
+        "200":
+          description: Registro já existia (replay idempotente)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/CostCenter" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /bank-accounts:
+    get:
+      tags: [cadastros]
+      summary: Lista contas bancárias (número sempre mascarado)
+      responses:
+        "200":
+          description: Contas bancárias da empresa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/BankAccount" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [cadastros]
+      summary: Cria conta bancária (exige bank_account.manage)
+      description: >
+        `accountNumber` é recebido cru e persistido APENAS mascarado. Idempotente
+        pela chave natural banco+agência+número mascarado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, bankCode, agency, accountNumber, type, openingBalanceCents, openingBalanceDate]
+              properties:
+                name: { type: string }
+                bankCode: { type: string, example: "341" }
+                agency: { type: string, example: "0001" }
+                accountNumber: { type: string, description: Mascarado antes de persistir }
+                type: { type: string, enum: [checking, savings, payment] }
+                currency: { type: string, default: BRL }
+                openingBalanceCents: { type: integer, description: Centavos (inteiro) }
+                openingBalanceDate: { $ref: "#/components/schemas/ISODate" }
+      responses:
+        "201":
+          description: Conta criada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/BankAccount" }
+        "200":
+          description: Registro já existia (replay idempotente)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/BankAccount" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /payables:
+    get:
+      tags: [títulos]
+      summary: Títulos a pagar (filtros por status e janela de vencimento)
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, scheduled, partially_paid, paid, canceled] }
+        - name: from
+          in: query
+          description: Vencimento a partir de (inclusive)
+          schema: { $ref: "#/components/schemas/ISODate" }
+        - name: to
+          in: query
+          description: Vencimento até (inclusive)
+          schema: { $ref: "#/components/schemas/ISODate" }
+      responses:
+        "200":
+          description: Títulos ordenados por vencimento
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Payable" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /payables/{id}:
+    get:
+      tags: [títulos]
+      summary: Título a pagar com seus pagamentos
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Detalhe do título
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      payable: { $ref: "#/components/schemas/Payable" }
+                      payments:
+                        type: array
+                        items: { $ref: "#/components/schemas/Payment" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /receivables:
+    get:
+      tags: [títulos]
+      summary: Títulos a receber (filtros por status e janela de vencimento)
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, partially_received, received, canceled] }
+        - name: from
+          in: query
+          schema: { $ref: "#/components/schemas/ISODate" }
+        - name: to
+          in: query
+          schema: { $ref: "#/components/schemas/ISODate" }
+      responses:
+        "200":
+          description: Títulos ordenados por vencimento
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Receivable" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /receivables/{id}:
+    get:
+      tags: [títulos]
+      summary: Título a receber com seus recebimentos
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Detalhe do título
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      receivable: { $ref: "#/components/schemas/Receivable" }
+                      receipts:
+                        type: array
+                        items: { $ref: "#/components/schemas/Receipt" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /bank-transactions:
+    get:
+      tags: [títulos]
+      summary: Transações do extrato importado
+      parameters:
+        - name: accountId
+          in: query
+          schema: { type: string }
+        - name: reconciled
+          in: query
+          schema: { type: string, enum: ["true", "false"] }
+      responses:
+        "200":
+          description: Transações ordenadas por data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/BankTransaction" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /approvals:
+    get:
+      tags: [governança]
+      summary: Aprovações da empresa (mais recentes primeiro)
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, approved, rejected, expired] }
+      responses:
+        "200":
+          description: Lista de aprovações
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Approval" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /approvals/{id}/decide:
+    post:
+      tags: [governança]
+      summary: Decide uma aprovação pendente (retoma o fluxo suspenso, se houver)
+      description: >
+        Regras determinísticas aplicadas pelo orquestrador: papel mínimo por
+        alçada, limite do aprovador e segregação de funções (quem solicitou não
+        decide). Se a aprovação pertence a um fluxo suspenso, o passo sensível é
+        reexecutado com a decisão e a resposta consolidada do fluxo é devolvida;
+        caso contrário, devolve `{ approval }`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected] }
+                justification: { type: string }
+            examples:
+              aprovar:
+                summary: Aprovar pagamento dentro da alçada
+                value: { decision: approved, justification: "Dentro da alçada e do orçamento." }
+              rejeitar:
+                summary: Rejeitar com justificativa
+                value: { decision: rejected, justification: "Fornecedor com pendência cadastral." }
+      responses:
+        "200":
+          description: OrchestratorResponse (fluxo retomado) ou `{ approval }`
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: "#/components/schemas/OrchestratorResponse"
+                      - type: object
+                        properties:
+                          approval: { $ref: "#/components/schemas/Approval" }
+              examples:
+                fluxo_retomado:
+                  summary: Pagamento aprovado — fluxo concluído
+                  value:
+                    data:
+                      flowRunId: flow_0001
+                      flow: schedule_payment
+                      status: completed
+                      results:
+                        - stepId: ap_schedule
+                          result:
+                            skill: contas_a_pagar
+                            status: success
+                            confidence: 1.0
+                            data:
+                              payment: { id: pay_0001, status: executed }
+                            alerts: []
+                            pending_items: []
+                            assumptions: []
+                            requires_human_approval: false
+                            audit:
+                              execution_id: exec_0002
+                              timestamp: "2026-08-18T15:03:00.000Z"
+                              data_sources: [payables, payments]
+                      consolidated:
+                        summary: 'Fluxo "schedule_payment" concluído: 4 passo(s) executado(s).'
+                        alerts: []
+                        pending_items: []
+                        assumptions: []
+                        data_sources: [payables, payments]
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Sem alçada ou violação de segregação de funções
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: segregation_of_duties
+                  message: "Segregação de funções: o solicitante não pode aprovar a própria solicitação."
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /alerts:
+    get:
+      tags: [governança]
+      summary: Central de alertas/pendências
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, acknowledged, resolved] }
+      responses:
+        "200":
+          description: Alertas (mais recentes primeiro)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Alert" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /alerts/{id}/ack:
+    post:
+      tags: [governança]
+      summary: Marca o alerta como ciente (idempotente)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Alerta atualizado (ou inalterado, se já não estava aberto)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Alert" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /flows:
+    get:
+      tags: [orquestrador]
+      summary: Fluxos disponíveis do orquestrador
+      responses:
+        "200":
+          description: Catálogo de fluxos (nome, descrição, permissão e passos)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/FlowSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /flows/{flow}/execute:
+    post:
+      tags: [orquestrador]
+      summary: Executa um fluxo (porta de entrada do orquestrador)
+      description: >
+        Corpo `{ payload, idempotencyKey? }`. O payload de cada fluxo está
+        documentado em `GET /flows` e em docs/06-orquestrador.md. Reenviar a
+        mesma requisição com a mesma chave devolve a resposta em cache com
+        `idempotent_replay: true` (nada é reprocessado). Fluxos com passos
+        sensíveis suspendem com `status: awaiting_approval` e um objeto
+        `approval` para decisão humana.
+      parameters:
+        - name: flow
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [supplier_invoice_intake, schedule_payment, bank_statement_import, customer_invoice_intake, dunning_run, daily_summary, monthly_close, accounting_export]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payload: {}
+                idempotencyKey: { type: string }
+            examples:
+              nota_fornecedor:
+                summary: supplier_invoice_intake — entrada de NF de fornecedor
+                value:
+                  idempotencyKey: nf-8841-fornecedor-torra
+                  payload:
+                    supplierId: sup_torrefacao
+                    description: NF 8841 — café verde lote 42
+                    issueDate: "2026-08-10"
+                    dueDate: "2026-09-10"
+                    amountCents: 1250000
+                    categoryId: cat_insumos
+                    installmentCount: 2
+                    document: { type: nfe, number: "8841", issuedAt: "2026-08-10", totalCents: 1250000 }
+              agendar_pagamento:
+                summary: schedule_payment — sempre exige aprovação humana
+                value:
+                  payload:
+                    payableId: pay_0001
+                    bankAccountId: acc_0001
+                    scheduledDate: "2026-08-20"
+                    method: pix
+      responses:
+        "200":
+          description: OrchestratorResponse completa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/OrchestratorResponse" }
+              examples:
+                aguardando_aprovacao:
+                  summary: Fluxo suspenso aguardando aprovação humana
+                  value:
+                    data:
+                      flowRunId: flow_0001
+                      flow: schedule_payment
+                      status: awaiting_approval
+                      results:
+                        - stepId: ap_schedule
+                          result:
+                            skill: contas_a_pagar
+                            status: awaiting_approval
+                            confidence: 1.0
+                            data:
+                              payment: { id: pay_0001, status: pending_approval }
+                              approvalRequest:
+                                targetType: payment
+                                targetId: pay_0001
+                                summary: "Pagamento de R$ 12.500,00 — Torrefação Alfa"
+                                amountCents: 1250000
+                            alerts: []
+                            pending_items: []
+                            assumptions: []
+                            requires_human_approval: true
+                            audit:
+                              execution_id: exec_0001
+                              timestamp: "2026-08-18T15:00:00.000Z"
+                              data_sources: [payables]
+                      consolidated:
+                        summary: 'Fluxo "schedule_payment" aguardando aprovação humana: 1 passo(s) executado(s).'
+                        alerts: []
+                        pending_items: []
+                        assumptions: []
+                        data_sources: [payables]
+                      approval:
+                        id: apr_0001
+                        companyId: co_0001
+                        targetType: payment
+                        targetId: pay_0001
+                        flowRunId: flow_0001
+                        summary: "Pagamento de R$ 12.500,00 — Torrefação Alfa"
+                        amountCents: 1250000
+                        requestedBy: usr_analyst
+                        requiredRole: finance_manager
+                        status: pending
+                        createdAt: "2026-08-18T15:00:00.000Z"
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /audit:
+    get:
+      tags: [governança]
+      summary: Trilha de auditoria imutável (exige audit.view)
+      parameters:
+        - name: entityType
+          in: query
+          schema: { type: string, example: Payable }
+        - name: entityId
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Registros encadeados por hash (adulteração é detectável)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditRecord" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /skills:
+    get:
+      tags: [orquestrador]
+      summary: Catálogo público das skills registradas (contrato)
+      responses:
+        "200":
+          description: Skills com responsabilidade, objetivo, eventos e fontes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/SkillSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /events:
+    get:
+      tags: [governança]
+      summary: Outbox de eventos de domínio
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string, example: payable.created }
+      responses:
+        "200":
+          description: Eventos persistidos (correlationId amarra cada fluxo)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/EventRecord" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /reports/{report}:
+    get:
+      tags: [relatórios]
+      summary: Gera relatório gerencial (json, csv ou pdf)
+      description: >
+        Executa a skill `relatorios_gerenciais` diretamente. `monthly_close`
+        exige `period`. `format=json` devolve o envelope SkillResult; `csv` e
+        `pdf` usam a ação `export_data` da skill (linhas
+        metrica/valor/unidade/fonte) e respondem como download.
+      parameters:
+        - name: report
+          in: path
+          required: true
+          schema: { type: string, enum: [daily_summary, monthly_close, executive_overview] }
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, csv, pdf], default: json }
+        - name: period
+          in: query
+          description: Obrigatório para monthly_close
+          schema: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-07" }
+      responses:
+        "200":
+          description: Relatório no formato solicitado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/SkillResult" }
+            text/csv:
+              schema: { type: string }
+            application/pdf:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /import/statement:
+    post:
+      tags: [importação]
+      summary: Importa extrato bancário (atalho para o fluxo bank_statement_import)
+      description: >
+        Aceita APENAS JSON com o conteúdo do arquivo como string em `content`
+        (multipart NÃO é suportado no MVP — o cliente lê o arquivo e envia o
+        texto). A importação deduplica por FITID/hash e dispara a conciliação
+        automática com grau de confiança.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bankAccountId, format, content]
+              properties:
+                bankAccountId: { type: string }
+                format: { type: string, enum: [ofx, csv] }
+                content: { type: string, description: Conteúdo do arquivo como texto }
+      responses:
+        "200":
+          description: OrchestratorResponse do fluxo bank_statement_import
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/OrchestratorResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: financeira_session
+      description: Cookie HttpOnly assinado (HMAC-SHA256), definido por POST /auth/login.
+
+  responses:
+    Unauthorized:
+      description: Sessão ausente ou expirada
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: unauthorized, message: "Sessão ausente ou expirada. Faça login." }
+    Forbidden:
+      description: Sem permissão (RBAC) ou violação de segregação de funções
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: permission_denied, message: "Papel viewer não possui a permissão master_data.manage." }
+    NotFound:
+      description: Recurso não encontrado na empresa da sessão
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: not_found, message: "Título a pagar não encontrado(a): pay_x" }
+    ValidationError:
+      description: Entrada inválida (zod/regra de negócio)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: validation_error, message: "Entrada inválida: dueDate: data inválida (esperado YYYY-MM-DD)" }
+
+  schemas:
+    ISODate:
+      type: string
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+      description: Data de negócio "YYYY-MM-DD" no fuso da empresa
+      example: "2026-08-18"
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+
+    RoleName:
+      type: string
+      enum: [admin, finance_manager, approver, finance_analyst, accountant, viewer]
+
+    PublicUser:
+      type: object
+      description: Usuário sem passwordHash (LGPD)
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        active: { type: boolean }
+
+    PublicCompany:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        legalName: { type: string }
+        cnpj: { type: string }
+        timezone: { type: string, example: America/Sao_Paulo }
+        defaultCurrency: { type: string, example: BRL }
+        active: { type: boolean }
+
+    Supplier:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        name: { type: string }
+        document: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        address: { type: string }
+        bankInfoMasked: { type: string, description: Sempre mascarado, example: "****4321" }
+        pixKeyMasked: { type: string, description: Sempre mascarado }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Customer:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        name: { type: string }
+        document: { type: string }
+        email: { type: string }
+        phone: { type: string }
+        address: { type: string }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Category:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [income, expense] }
+        dreGroup:
+          type: string
+          enum: [receita_bruta, deducoes, custos, despesas_operacionais, despesas_financeiras, receitas_financeiras, outras]
+        parentId: { type: string }
+        active: { type: boolean }
+
+    CostCenter:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        code: { type: string }
+        name: { type: string }
+        active: { type: boolean }
+
+    BankAccount:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        name: { type: string }
+        bankCode: { type: string }
+        agency: { type: string }
+        accountNumberMasked: { type: string, description: Sempre mascarado }
+        type: { type: string, enum: [checking, savings, payment] }
+        currency: { type: string }
+        openingBalanceCents: { type: integer }
+        openingBalanceDate: { $ref: "#/components/schemas/ISODate" }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Payable:
+      type: object
+      description: Título a pagar (valores em centavos)
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        supplierId: { type: string }
+        documentId: { type: string }
+        description: { type: string }
+        issueDate: { $ref: "#/components/schemas/ISODate" }
+        dueDate: { $ref: "#/components/schemas/ISODate" }
+        amountCents: { type: integer }
+        paidCents: { type: integer }
+        currency: { type: string }
+        status: { type: string, enum: [open, scheduled, partially_paid, paid, canceled] }
+        categoryId: { type: string }
+        costCenterId: { type: string }
+        installmentNumber: { type: integer }
+        installmentCount: { type: integer }
+        originKey: { type: string, description: Chave natural de idempotência }
+        notes: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Payment:
+      type: object
+      description: Pagamento — nunca executado sem aprovação humana registrada
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        payableId: { type: string }
+        bankAccountId: { type: string }
+        amountCents: { type: integer }
+        scheduledDate: { $ref: "#/components/schemas/ISODate" }
+        executedAt: { type: string, format: date-time }
+        status: { type: string, enum: [pending_approval, approved, executed, rejected, canceled] }
+        method: { type: string, enum: [pix, ted, boleto, debit] }
+        approvalId: { type: string }
+        requestedBy: { type: string }
+        executedBy: { type: string }
+
+    Receivable:
+      type: object
+      description: Título a receber (valores em centavos)
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        customerId: { type: string }
+        invoiceId: { type: string }
+        description: { type: string }
+        issueDate: { $ref: "#/components/schemas/ISODate" }
+        dueDate: { $ref: "#/components/schemas/ISODate" }
+        amountCents: { type: integer }
+        receivedCents: { type: integer }
+        currency: { type: string }
+        status: { type: string, enum: [open, partially_received, received, canceled] }
+        method: { type: string, enum: [pix, boleto, card, transfer, cash] }
+        installmentNumber: { type: integer }
+        installmentCount: { type: integer }
+        originKey: { type: string }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    Receipt:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        receivableId: { type: string }
+        bankAccountId: { type: string }
+        amountCents: { type: integer }
+        receivedDate: { $ref: "#/components/schemas/ISODate" }
+        method: { type: string, enum: [pix, boleto, card, transfer, cash] }
+        registeredBy: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    BankTransaction:
+      type: object
+      description: Transação de extrato (crédito > 0, débito < 0, em centavos)
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        bankAccountId: { type: string }
+        date: { $ref: "#/components/schemas/ISODate" }
+        amountCents: { type: integer }
+        currency: { type: string }
+        description: { type: string }
+        externalId: { type: string, description: FITID/hash para deduplicação }
+        importBatchId: { type: string }
+        source: { type: string, enum: [ofx, csv, api_mock, manual] }
+        reconciled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+
+    Approval:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        targetType: { type: string, enum: [payment, collection_message, bank_change, deletion, flow_step] }
+        targetId: { type: string }
+        flowRunId: { type: string }
+        summary: { type: string }
+        amountCents: { type: integer }
+        requestedBy: { type: string }
+        requiredRole: { $ref: "#/components/schemas/RoleName" }
+        status: { type: string, enum: [pending, approved, rejected, expired] }
+        decidedBy: { type: string }
+        decidedAt: { type: string, format: date-time }
+        justification: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    Alert:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        severity: { type: string, enum: [info, warning, critical] }
+        code: { type: string }
+        message: { type: string }
+        entityType: { type: string }
+        entityId: { type: string }
+        source: { type: string }
+        status: { type: string, enum: [open, acknowledged, resolved] }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time }
+
+    AuditRecord:
+      type: object
+      description: Registro imutável, encadeado por hash (sha256)
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        seq: { type: integer }
+        actorType: { type: string, enum: [user, system, skill] }
+        actorId: { type: string }
+        action: { type: string, example: payable.created }
+        entityType: { type: string }
+        entityId: { type: string }
+        before: {}
+        after: {}
+        correlationId: { type: string }
+        timestamp: { type: string, format: date-time }
+        prevHash: { type: string }
+        hash: { type: string }
+
+    EventRecord:
+      type: object
+      properties:
+        id: { type: string }
+        companyId: { type: string }
+        type: { type: string, example: payable.created }
+        payload: {}
+        source: { type: string, description: Skill ou orquestrador que publicou }
+        correlationId: { type: string }
+        causationId: { type: string }
+        occurredAt: { type: string, format: date-time }
+
+    SkillAlert:
+      type: object
+      properties:
+        severity: { type: string, enum: [info, warning, critical] }
+        code: { type: string }
+        message: { type: string }
+        entityType: { type: string }
+        entityId: { type: string }
+
+    PendingItem:
+      type: object
+      properties:
+        code: { type: string }
+        description: { type: string }
+        entityType: { type: string }
+        entityId: { type: string }
+        suggestedAction: { type: string }
+
+    SkillResult:
+      type: object
+      description: Envelope padrão de resposta de toda skill
+      required: [skill, status, confidence, data, alerts, pending_items, assumptions, requires_human_approval, audit]
+      properties:
+        skill: { type: string, example: relatorios_gerenciais }
+        status: { type: string, enum: [success, warning, error, awaiting_approval] }
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: 1.0 para cálculo determinístico; menor para heurística/estimativa
+        data: {}
+        alerts:
+          type: array
+          items: { $ref: "#/components/schemas/SkillAlert" }
+        pending_items:
+          type: array
+          items: { $ref: "#/components/schemas/PendingItem" }
+        assumptions:
+          type: array
+          items: { type: string }
+        requires_human_approval: { type: boolean }
+        audit:
+          type: object
+          properties:
+            execution_id: { type: string }
+            timestamp: { type: string, format: date-time }
+            data_sources:
+              type: array
+              items: { type: string }
+
+    ConsolidatedView:
+      type: object
+      properties:
+        summary: { type: string }
+        alerts:
+          type: array
+          items: { $ref: "#/components/schemas/SkillAlert" }
+        pending_items:
+          type: array
+          items: { $ref: "#/components/schemas/PendingItem" }
+        assumptions:
+          type: array
+          items: { type: string }
+        data_sources:
+          type: array
+          items: { type: string }
+
+    OrchestratorResponse:
+      type: object
+      description: Resposta consolidada de execução de fluxo
+      required: [flowRunId, flow, status, results, consolidated]
+      properties:
+        flowRunId: { type: string }
+        flow: { type: string }
+        status: { type: string, enum: [running, awaiting_approval, completed, failed, rejected] }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              stepId: { type: string }
+              result: { $ref: "#/components/schemas/SkillResult" }
+        consolidated: { $ref: "#/components/schemas/ConsolidatedView" }
+        approval: { $ref: "#/components/schemas/Approval" }
+        idempotent_replay:
+          type: boolean
+          description: true quando a resposta veio do cache de idempotência
+
+    FlowSummary:
+      type: object
+      properties:
+        name: { type: string, example: supplier_invoice_intake }
+        description: { type: string }
+        requiredPermission: { type: string, example: payable.create }
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              skill: { type: string }
+              description: { type: string }
+
+    SkillSummary:
+      type: object
+      description: Contrato público de uma skill registrada
+      properties:
+        name: { type: string }
+        responsibility: { type: string }
+        objective: { type: string }
+        consumes:
+          type: array
+          items: { type: string }
+        publishes:
+          type: array
+          items: { type: string }
+        dataSources:
+          type: array
+          items: { type: string }

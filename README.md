@@ -1,5 +1,7 @@
 # Financeira PME — plataforma financeira multiagente para PMEs brasileiras
 
+[![CI](https://github.com/salimNabbout/SKILL_Financeira/actions/workflows/ci.yml/badge.svg)](https://github.com/salimNabbout/SKILL_Financeira/actions/workflows/ci.yml)
+
 Plataforma que centraliza a operação financeira de uma PME sobre uma arquitetura de **11 skills
 especializadas** (Contas a Pagar, Contas a Receber, Faturamento, Tesouraria/Fluxo de Caixa,
 Conciliação Bancária, Cobrança/Inadimplência, Orçamento, Controladoria/Indicadores, Integração
@@ -70,6 +72,9 @@ npm test              # unitários + integração (Vitest)
 npm run typecheck     # TypeScript strict
 npm run test:e2e      # smoke E2E (Playwright; sobe o app em modo demo na porta 3100)
 ```
+
+Para o E2E, instale os navegadores com `npx playwright install chromium` — ou, se já houver um
+Chromium no ambiente, aponte `PLAYWRIGHT_CHROMIUM_PATH=/caminho/do/chromium`.
 
 ## API
 
