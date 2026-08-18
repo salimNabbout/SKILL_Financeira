@@ -122,7 +122,8 @@ export default async function ConciliacaoPage({
             </select>
           </Field>
           <Field label="Formato">
-            <select name="format" required className={inputClass}>
+            <select name="format" className={inputClass} defaultValue="auto">
+              <option value="auto">Detectar automaticamente</option>
               <option value="ofx">OFX</option>
               <option value="csv">CSV</option>
             </select>
@@ -130,19 +131,31 @@ export default async function ConciliacaoPage({
           <div className="flex items-end">
             <Button>Importar e conciliar</Button>
           </div>
-          <div className="md:col-span-3">
-            <Field label="Conteúdo do arquivo">
-              <textarea
-                name="content"
-                required
-                rows={6}
-                className={`${inputClass} font-mono text-xs`}
-                placeholder="Cole aqui o conteúdo do arquivo OFX ou CSV…"
+          <div className="md:col-span-2">
+            <Field label="Arquivo do extrato (OFX ou CSV)">
+              <input
+                type="file"
+                name="arquivo"
+                accept=".ofx,.csv,.txt"
+                className={`${inputClass} file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-xs file:font-medium`}
               />
             </Field>
             <p className="mt-1 text-xs text-[var(--ink-muted)]">
-              Cole o conteúdo do arquivo exportado pelo banco (upload de arquivo chega na v2).
-              Reimportar o mesmo arquivo é idempotente: transações já existentes não são duplicadas.
+              Até 2 MB. Codificação detectada automaticamente (UTF-8 ou ISO-8859-1 dos bancos).
+            </p>
+          </div>
+          <div className="md:col-span-3">
+            <Field label="Ou cole o conteúdo do arquivo (alternativa ao upload)">
+              <textarea
+                name="content"
+                rows={4}
+                className={`${inputClass} font-mono text-xs`}
+                placeholder="Alternativa: cole aqui o conteúdo do arquivo OFX ou CSV…"
+              />
+            </Field>
+            <p className="mt-1 text-xs text-[var(--ink-muted)]">
+              O arquivo enviado tem precedência sobre o texto colado. Reimportar o mesmo arquivo é
+              idempotente: transações já existentes não são duplicadas.
             </p>
           </div>
         </form>

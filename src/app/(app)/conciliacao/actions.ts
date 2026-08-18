@@ -6,6 +6,7 @@ import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import type { OrchestratorResponse } from "@/core/orchestrator/orchestrator";
 import type { SkillResult } from "@/core/types";
+import { extractStatementUpload } from "@/lib/importers";
 import { callSkill } from "@/app/(app)/contas-a-receber/_lib/call-skill";
 import {
   errorMessage,
@@ -31,19 +32,24 @@ export async function importStatementAction(formData: FormData): Promise<void> {
   const { orchestrator } = await getContainer();
 
   const bankAccountId = fdString(formData, "bankAccountId");
-  const format = fdString(formData, "format");
-  const content = fdString(formData, "content");
-  if (!bankAccountId || !format || !content) {
-    fail("Selecione a conta, o formato e cole o conteúdo do arquivo.");
+  if (!bankAccountId) {
+    fail("Selecione a conta bancária.");
   }
 
   let response: OrchestratorResponse;
+  let encodingNote = "";
   try {
+    // Arquivo enviado tem precedência; texto colado é o fallback. Formato "auto"
+    // detecta por assinatura OFX/extensão; encoding UTF-8 com fallback Windows-1252.
+    const upload = await extractStatementUpload(formData);
+    if (upload.encoding === "windows-1252") {
+      encodingNote = " Arquivo decodificado como ISO-8859-1/Windows-1252.";
+    }
     response = await orchestrator.execute({
       flow: "bank_statement_import",
       companyId: session.company.id,
       actor: session.actor,
-      payload: { bankAccountId, format, content },
+      payload: { bankAccountId, format: upload.format, content: upload.content },
     });
   } catch (error) {
     fail(errorMessage(error));
@@ -62,7 +68,8 @@ export async function importStatementAction(formData: FormData): Promise<void> {
   ok(
     `Importação concluída: ${imp?.imported ?? 0} nova(s), ${imp?.duplicates ?? 0} duplicada(s) ignorada(s). ` +
       `Conciliação automática: ${match?.autoConfirmed ?? 0} baixada(s), ${match?.suggested ?? 0} sugestão(ões) para revisão, ${match?.unmatched ?? 0} sem correspondência.` +
-      (response.idempotent_replay ? " (requisição repetida — nada foi reprocessado)" : "")
+      (response.idempotent_replay ? " (requisição repetida — nada foi reprocessado)" : "") +
+      encodingNote
   );
 }
 

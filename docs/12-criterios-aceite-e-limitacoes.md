@@ -26,8 +26,8 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
 **Integrações são mocks/stubs identificados**
 - Execução bancária de pagamento, NF-e/NFS-e, envio de e-mail/WhatsApp da cobrança: mocks
   declarados (nenhum efeito externo). API bancária/Open Finance: não implementadas; CNAB: stub
-  que declara indisponibilidade. Importação real é por OFX/CSV colado como texto (sem upload
-  binário).
+  que declara indisponibilidade. Importação real é por upload de arquivo OFX/CSV (até 2 MB,
+  detecção automática de formato e codificação UTF-8/ISO-8859-1) ou texto colado.
 
 **Escopo funcional**
 - Multiempresa está no modelo/RBAC, mas a UI opera na primeira empresa do usuário (sem troca de

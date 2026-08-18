@@ -958,13 +958,32 @@ paths:
       tags: [importação]
       summary: Importa extrato bancário (atalho para o fluxo bank_statement_import)
       description: >
-        Aceita APENAS JSON com o conteúdo do arquivo como string em `content`
-        (multipart NÃO é suportado no MVP — o cliente lê o arquivo e envia o
-        texto). A importação deduplica por FITID/hash e dispara a conciliação
-        automática com grau de confiança.
+        Aceita multipart/form-data com o arquivo real (campo `arquivo` ou `file`,
+        até 2 MB; `format` opcional com detecção automática; codificação UTF-8
+        com fallback ISO-8859-1/Windows-1252 dos bancos brasileiros) OU JSON com
+        o conteúdo do arquivo como string em `content`. A importação deduplica
+        por FITID/hash e dispara a conciliação automática com grau de confiança.
       requestBody:
         required: true
         content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [bankAccountId]
+              properties:
+                bankAccountId: { type: string }
+                format:
+                  type: string
+                  enum: [auto, ofx, csv]
+                  default: auto
+                  description: auto detecta por assinatura OFX/extensão do arquivo
+                arquivo:
+                  type: string
+                  format: binary
+                  description: Arquivo OFX/CSV exportado pelo banco (máx. 2 MB)
+                content:
+                  type: string
+                  description: Alternativa ao arquivo — conteúdo colado como texto
           application/json:
             schema:
               type: object

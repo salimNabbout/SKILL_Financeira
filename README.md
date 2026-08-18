@@ -48,8 +48,9 @@ Roteiro de demonstração sugerido:
    e depois **agende o pagamento** com a Carla: vira aprovação pendente.
 3. **Aprovações** — entre com o Diego e aprove (a Carla não consegue aprovar o que solicitou —
    segregação de funções).
-4. **Conciliação** — cole um OFX/CSV (há transações demo não conciliadas) e veja conciliação
-   automática + sugestões para revisão.
+4. **Conciliação** — envie o arquivo OFX/CSV do banco (ou cole o conteúdo; há transações demo
+   não conciliadas) e veja conciliação automática + sugestões para revisão. Formato e
+   codificação (UTF-8/ISO-8859-1) são detectados automaticamente.
 5. **Cobrança** — rode a régua: mensagens ficam aguardando aprovação; o envio é mock.
 6. **Fluxo de caixa, DRE, Indicadores, Orçamento, Relatórios** (com export CSV/PDF) e
    **Auditoria** (cadeia de hash verificada).
