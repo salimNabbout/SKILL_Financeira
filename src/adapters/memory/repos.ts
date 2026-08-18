@@ -58,6 +58,21 @@ import type { MemoryDb } from "./db";
 
 const clone = <T>(value: T): T => structuredClone(value);
 
+/** Paginação em memória com ordem determinística já aplicada pelo chamador. */
+function paginate<T>(
+  sorted: T[],
+  query: { offset?: number; limit?: number }
+): { items: T[]; total: number; offset: number; limit: number } {
+  const offset = Math.max(0, query.offset ?? 0);
+  const limit = Math.max(1, query.limit ?? 50);
+  return {
+    items: clone(sorted.slice(offset, offset + limit)),
+    total: sorted.length,
+    offset,
+    limit,
+  };
+}
+
 class MemBase<T extends { id: ID; companyId: ID }> implements BaseRepo<T> {
   constructor(protected readonly items: T[]) {}
 
@@ -200,6 +215,20 @@ class MemBankTransactionRepo extends MemBase<BankTransaction> implements BankTra
       this.items.filter((t) => t.companyId === companyId && t.date >= start && t.date <= end)
     );
   }
+  async listPage(
+    companyId: ID,
+    query: { offset?: number; limit?: number; bankAccountId?: ID; reconciled?: boolean }
+  ) {
+    const filtered = this.items
+      .filter(
+        (t) =>
+          t.companyId === companyId &&
+          (query.bankAccountId === undefined || t.bankAccountId === query.bankAccountId) &&
+          (query.reconciled === undefined || t.reconciled === query.reconciled)
+      )
+      .sort((a, b) => (a.date !== b.date ? (a.date > b.date ? -1 : 1) : a.id > b.id ? -1 : 1));
+    return paginate(filtered, query);
+  }
 }
 
 class MemPayableRepo extends MemBase<Payable> implements PayableRepo {
@@ -220,6 +249,21 @@ class MemPayableRepo extends MemBase<Payable> implements PayableRepo {
         (p) => p.companyId === companyId && p.dueDate >= start && p.dueDate <= end
       )
     );
+  }
+  async listPage(
+    companyId: ID,
+    query: { offset?: number; limit?: number; statuses?: PayableStatus[] }
+  ) {
+    const filtered = this.items
+      .filter(
+        (p) =>
+          p.companyId === companyId &&
+          (query.statuses === undefined || query.statuses.includes(p.status))
+      )
+      .sort((a, b) =>
+        a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
+      );
+    return paginate(filtered, query);
   }
 }
 
@@ -246,6 +290,21 @@ class MemReceivableRepo extends MemBase<Receivable> implements ReceivableRepo {
     return clone(
       this.items.filter((r) => r.companyId === companyId && r.customerId === customerId)
     );
+  }
+  async listPage(
+    companyId: ID,
+    query: { offset?: number; limit?: number; statuses?: ReceivableStatus[] }
+  ) {
+    const filtered = this.items
+      .filter(
+        (r) =>
+          r.companyId === companyId &&
+          (query.statuses === undefined || query.statuses.includes(r.status))
+      )
+      .sort((a, b) =>
+        a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
+      );
+    return paginate(filtered, query);
   }
 }
 
@@ -336,6 +395,20 @@ class MemEventRepo implements EventRepo {
       this.items.filter((e) => e.companyId === companyId && (!type || e.type === type))
     );
   }
+  async listPage(companyId: ID, query: { offset?: number; limit?: number; type?: string }) {
+    const filtered = this.items
+      .filter((e) => e.companyId === companyId && (!query.type || e.type === query.type))
+      .sort((a, b) =>
+        a.occurredAt !== b.occurredAt
+          ? a.occurredAt > b.occurredAt
+            ? -1
+            : 1
+          : a.id > b.id
+            ? -1
+            : 1
+      );
+    return paginate(filtered, query);
+  }
 }
 
 class MemSkillExecutionRepo implements SkillExecutionRepo {
@@ -371,6 +444,20 @@ class MemAuditRepo implements AuditRepo {
           (!filter?.entityId || r.entityId === filter.entityId)
       )
     );
+  }
+  async listPage(
+    companyId: ID,
+    query: { offset?: number; limit?: number; entityType?: string; entityId?: ID }
+  ) {
+    const filtered = this.items
+      .filter(
+        (r) =>
+          r.companyId === companyId &&
+          (!query.entityType || r.entityType === query.entityType) &&
+          (!query.entityId || r.entityId === query.entityId)
+      )
+      .sort((a, b) => b.seq - a.seq);
+    return paginate(filtered, query);
   }
 }
 

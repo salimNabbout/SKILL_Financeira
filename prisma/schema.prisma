@@ -209,6 +209,7 @@ model Payable {
 
   @@unique([companyId, originKey])
   @@index([companyId, status, dueDate])
+  @@index([companyId, dueDate]) // listagens paginadas ordenadas por vencimento
 }
 
 model Receivable {
@@ -247,6 +248,7 @@ model Receivable {
 
   @@unique([companyId, originKey])
   @@index([companyId, status, dueDate])
+  @@index([companyId, dueDate]) // listagens paginadas ordenadas por vencimento
 }
 
 // Pagamento de um título. NUNCA é executado sem Approval aprovada.

@@ -6,6 +6,7 @@ import { formatBR, formatBRL, statusLabel } from "@/lib/format";
 import { todayInTz } from "@/core/dates";
 import type { PayableStatus } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
+import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { createPayableAction, schedulePaymentAction } from "./actions";
 
 const STATUS_FILTERS: Array<{ value: PayableStatus | "todos"; label: string }> = [
@@ -22,16 +23,22 @@ const SCHEDULABLE: PayableStatus[] = ["open", "partially_paid"];
 export default async function ContasAPagarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; ok?: string; erro?: string }>;
+  searchParams: Promise<{ status?: string; p?: string; ok?: string; erro?: string }>;
 }) {
-  const { status, ok, erro } = await searchParams;
+  const { status, p, ok, erro } = await searchParams;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
   const today = todayInTz(clock.now(), session.config.timezone);
 
-  const [payables, suppliers, categories, costCenters, bankAccounts] = await Promise.all([
-    repos.payables.listAll(companyId),
+  const filter = STATUS_FILTERS.some((f) => f.value === status) ? status : "todos";
+  const [page, suppliers, categories, costCenters, bankAccounts] = await Promise.all([
+    // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
+    repos.payables.listPage(companyId, {
+      offset: pageOffset(p),
+      limit: PAGE_SIZE,
+      statuses: filter === "todos" ? undefined : [filter as PayableStatus],
+    }),
     repos.suppliers.listAll(companyId),
     repos.categories.listAll(companyId),
     repos.costCenters.listAll(companyId),
@@ -40,11 +47,7 @@ export default async function ContasAPagarPage({
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const expenseCategories = categories.filter((c) => c.kind === "expense" && c.active);
   const activeAccounts = bankAccounts.filter((b) => b.active);
-
-  const filter = STATUS_FILTERS.some((f) => f.value === status) ? status : "todos";
-  const rows = payables
-    .filter((p) => filter === "todos" || p.status === filter)
-    .sort((a, b) => (a.dueDate === b.dueDate ? a.id.localeCompare(b.id) : a.dueDate < b.dueDate ? -1 : 1));
+  const rows = page.items;
 
   return (
     <div>
@@ -130,6 +133,11 @@ export default async function ContasAPagarPage({
             })}
           </Table>
         )}
+        <Pager
+          page={page}
+          basePath="/contas-a-pagar"
+          extraQuery={{ status: filter === "todos" ? undefined : filter }}
+        />
       </Card>
 
       <Card title="Novo título">

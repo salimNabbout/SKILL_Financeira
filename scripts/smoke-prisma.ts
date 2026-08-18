@@ -148,6 +148,21 @@ async function main(): Promise<void> {
   const outbox = await repos.events.list(DEMO_COMPANY_ID);
   assert(outbox.length > 0, `outbox de eventos populado (${outbox.length} eventos)`);
 
+  console.log("\n5) Paginação no banco real");
+  const p1 = await repos.payables.listPage(DEMO_COMPANY_ID, { offset: 0, limit: 3 });
+  const p2 = await repos.payables.listPage(DEMO_COMPANY_ID, { offset: 3, limit: 3 });
+  assert(p1.items.length === 3 && p1.total >= 4, `página 1 com 3 itens de ${p1.total}`);
+  assert(
+    p1.items.every((a) => !p2.items.some((b) => b.id === a.id)),
+    "páginas sem sobreposição (ordem determinística por vencimento)"
+  );
+  const auditPage = await repos.audit.listPage(DEMO_COMPANY_ID, { offset: 0, limit: 5 });
+  assert(
+    auditPage.items.length > 0 &&
+      auditPage.items.every((r, i, arr) => i === 0 || arr[i - 1].seq > r.seq),
+    "auditoria paginada em ordem seq desc"
+  );
+
   await prisma.$disconnect();
   console.log("\nSmoke Prisma/PostgreSQL: TUDO OK ✅\n");
 }

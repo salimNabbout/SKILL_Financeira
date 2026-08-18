@@ -40,6 +40,7 @@ import type {
   User,
 } from "@/core/entities";
 import { DomainError, NotFoundError, PermissionError, ValidationError } from "@/core/errors";
+import type { Page } from "@/core/repositories";
 import type { EventBus } from "@/core/events";
 import type { IdGenerator } from "@/core/ids";
 import type {
@@ -489,7 +490,23 @@ export async function createBankAccount(
 // Títulos (somente leitura na API; escrita passa pelos fluxos do orquestrador)
 // ---------------------------------------------------------------------------
 
-export const listPayablesQuerySchema = z.object({
+/** Paginação padrão das listagens: ?limit= (1..200, default 50) e ?offset=. */
+export const pageQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/** Página calculada em memória (usada nos caminhos com filtros de data legados). */
+function pageOf<T>(sorted: T[], q: { offset: number; limit: number }): Page<T> {
+  return {
+    items: sorted.slice(q.offset, q.offset + q.limit),
+    total: sorted.length,
+    offset: q.offset,
+    limit: q.limit,
+  };
+}
+
+export const listPayablesQuerySchema = pageQuerySchema.extend({
   status: z.enum(["open", "scheduled", "partially_paid", "paid", "canceled"]).optional(),
   from: isoDateSchema.optional(),
   to: isoDateSchema.optional(),
@@ -500,14 +517,26 @@ export async function listPayables(
   deps: ApiDeps,
   session: ApiSession,
   rawQuery: unknown
-): Promise<Payable[]> {
+): Promise<Page<Payable>> {
   const query = parse(listPayablesQuerySchema, rawQuery);
-  const all = await deps.repos.payables.listAll(session.company.id);
-  return all
-    .filter((p) => (query.status ? p.status === query.status : true))
-    .filter((p) => (query.from ? p.dueDate >= query.from : true))
-    .filter((p) => (query.to ? p.dueDate <= query.to : true))
-    .sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+  // from/to não fazem parte do finder paginado do repositório: com eles, o
+  // filtro roda em memória (total correto); sem eles, a paginação é do banco.
+  if (query.from || query.to) {
+    const all = await deps.repos.payables.listAll(session.company.id);
+    const filtered = all
+      .filter((p) => (query.status ? p.status === query.status : true))
+      .filter((p) => (query.from ? p.dueDate >= query.from : true))
+      .filter((p) => (query.to ? p.dueDate <= query.to : true))
+      .sort((a, b) =>
+        a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
+      );
+    return pageOf(filtered, query);
+  }
+  return deps.repos.payables.listPage(session.company.id, {
+    offset: query.offset,
+    limit: query.limit,
+    statuses: query.status ? [query.status] : undefined,
+  });
 }
 
 export interface PayableDetail {
@@ -526,7 +555,7 @@ export async function getPayable(
   return { payable, payments };
 }
 
-export const listReceivablesQuerySchema = z.object({
+export const listReceivablesQuerySchema = pageQuerySchema.extend({
   status: z.enum(["open", "partially_received", "received", "canceled"]).optional(),
   from: isoDateSchema.optional(),
   to: isoDateSchema.optional(),
@@ -537,14 +566,24 @@ export async function listReceivables(
   deps: ApiDeps,
   session: ApiSession,
   rawQuery: unknown
-): Promise<Receivable[]> {
+): Promise<Page<Receivable>> {
   const query = parse(listReceivablesQuerySchema, rawQuery);
-  const all = await deps.repos.receivables.listAll(session.company.id);
-  return all
-    .filter((r) => (query.status ? r.status === query.status : true))
-    .filter((r) => (query.from ? r.dueDate >= query.from : true))
-    .filter((r) => (query.to ? r.dueDate <= query.to : true))
-    .sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+  if (query.from || query.to) {
+    const all = await deps.repos.receivables.listAll(session.company.id);
+    const filtered = all
+      .filter((r) => (query.status ? r.status === query.status : true))
+      .filter((r) => (query.from ? r.dueDate >= query.from : true))
+      .filter((r) => (query.to ? r.dueDate <= query.to : true))
+      .sort((a, b) =>
+        a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
+      );
+    return pageOf(filtered, query);
+  }
+  return deps.repos.receivables.listPage(session.company.id, {
+    offset: query.offset,
+    limit: query.limit,
+    statuses: query.status ? [query.status] : undefined,
+  });
 }
 
 export interface ReceivableDetail {
@@ -563,7 +602,7 @@ export async function getReceivable(
   return { receivable, receipts };
 }
 
-export const listBankTransactionsQuerySchema = z.object({
+export const listBankTransactionsQuerySchema = pageQuerySchema.extend({
   accountId: z.string().min(1).optional(),
   reconciled: z.enum(["true", "false"]).optional(),
 });
@@ -573,15 +612,14 @@ export async function listBankTransactions(
   deps: ApiDeps,
   session: ApiSession,
   rawQuery: unknown
-): Promise<BankTransaction[]> {
+): Promise<Page<BankTransaction>> {
   const query = parse(listBankTransactionsQuerySchema, rawQuery);
-  const all = query.accountId
-    ? await deps.repos.bankTransactions.listByAccount(session.company.id, query.accountId)
-    : await deps.repos.bankTransactions.listAll(session.company.id);
-  const wanted = query.reconciled === undefined ? undefined : query.reconciled === "true";
-  return all
-    .filter((t) => (wanted === undefined ? true : t.reconciled === wanted))
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  return deps.repos.bankTransactions.listPage(session.company.id, {
+    offset: query.offset,
+    limit: query.limit,
+    bankAccountId: query.accountId,
+    reconciled: query.reconciled === undefined ? undefined : query.reconciled === "true",
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -718,7 +756,7 @@ export async function executeFlow(
 // Auditoria, skills e eventos
 // ---------------------------------------------------------------------------
 
-export const auditQuerySchema = z.object({
+export const auditQuerySchema = pageQuerySchema.extend({
   entityType: z.string().min(1).optional(),
   entityId: z.string().min(1).optional(),
 });
@@ -727,10 +765,12 @@ export async function getAuditTrail(
   deps: ApiDeps,
   session: ApiSession,
   rawQuery: unknown
-): Promise<AuditRecord[]> {
+): Promise<Page<AuditRecord>> {
   requirePermission(session, "audit.view");
   const query = parse(auditQuerySchema, rawQuery);
-  return deps.repos.audit.list(session.company.id, {
+  return deps.repos.audit.listPage(session.company.id, {
+    offset: query.offset,
+    limit: query.limit,
     entityType: query.entityType,
     entityId: query.entityId,
   });
@@ -756,7 +796,7 @@ export function listSkills(deps: ApiDeps): SkillSummary[] {
   }));
 }
 
-export const eventsQuerySchema = z.object({
+export const eventsQuerySchema = pageQuerySchema.extend({
   type: z.string().min(1).optional(),
 });
 
@@ -764,9 +804,13 @@ export async function listEvents(
   deps: ApiDeps,
   session: ApiSession,
   rawQuery: unknown
-): Promise<EventRecordEntity[]> {
+): Promise<Page<EventRecordEntity>> {
   const query = parse(eventsQuerySchema, rawQuery);
-  return deps.repos.events.list(session.company.id, query.type);
+  return deps.repos.events.listPage(session.company.id, {
+    offset: query.offset,
+    limit: query.limit,
+    type: query.type,
+  });
 }
 
 // ---------------------------------------------------------------------------

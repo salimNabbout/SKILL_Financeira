@@ -6,6 +6,7 @@ import { formatBR, formatBRL, statusLabel } from "@/lib/format";
 import { todayInTz } from "@/core/dates";
 import type { ReceivableStatus } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
+import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { createReceivableAction, registerReceiptAction } from "./actions";
 
 const STATUS_FILTERS: Array<{ value: ReceivableStatus | "todos"; label: string }> = [
@@ -21,16 +22,22 @@ const RECEIVABLE_OPEN: ReceivableStatus[] = ["open", "partially_received"];
 export default async function ContasAReceberPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; ok?: string; erro?: string }>;
+  searchParams: Promise<{ status?: string; p?: string; ok?: string; erro?: string }>;
 }) {
-  const { status, ok, erro } = await searchParams;
+  const { status, p, ok, erro } = await searchParams;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
   const today = todayInTz(clock.now(), session.config.timezone);
 
-  const [receivables, customers, categories, bankAccounts] = await Promise.all([
-    repos.receivables.listAll(companyId),
+  const filter = STATUS_FILTERS.some((f) => f.value === status) ? status : "todos";
+  const [page, customers, categories, bankAccounts] = await Promise.all([
+    // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
+    repos.receivables.listPage(companyId, {
+      offset: pageOffset(p),
+      limit: PAGE_SIZE,
+      statuses: filter === "todos" ? undefined : [filter as ReceivableStatus],
+    }),
     repos.customers.listAll(companyId),
     repos.categories.listAll(companyId),
     repos.bankAccounts.listAll(companyId),
@@ -38,11 +45,7 @@ export default async function ContasAReceberPage({
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const incomeCategories = categories.filter((c) => c.kind === "income" && c.active);
   const activeAccounts = bankAccounts.filter((b) => b.active);
-
-  const filter = STATUS_FILTERS.some((f) => f.value === status) ? status : "todos";
-  const rows = receivables
-    .filter((r) => filter === "todos" || r.status === filter)
-    .sort((a, b) => (a.dueDate === b.dueDate ? a.id.localeCompare(b.id) : a.dueDate < b.dueDate ? -1 : 1));
+  const rows = page.items;
 
   return (
     <div>
@@ -140,6 +143,11 @@ export default async function ContasAReceberPage({
             })}
           </Table>
         )}
+        <Pager
+          page={page}
+          basePath="/contas-a-receber"
+          extraQuery={{ status: filter === "todos" ? undefined : filter }}
+        />
       </Card>
 
       <Card title="Novo título">
