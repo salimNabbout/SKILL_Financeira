@@ -21,7 +21,7 @@ export const REPORT_NAMES = ["daily_summary", "monthly_close", "executive_overvi
 export type ReportName = (typeof REPORT_NAMES)[number];
 
 export const reportQuerySchema = z.object({
-  format: z.enum(["json", "csv", "pdf"]).default("json"),
+  format: z.enum(["json", "csv", "xlsx", "pdf"]).default("json"),
   period: periodSchema.optional(),
 });
 export type ReportQuery = z.infer<typeof reportQuerySchema>;
@@ -46,6 +46,7 @@ const exportDataSchema = z.object({
 export type ReportOutput =
   | { kind: "json"; result: SkillResult }
   | { kind: "csv"; filename: string; content: string }
+  | { kind: "xlsx"; filename: string; bytes: Uint8Array }
   | { kind: "pdf"; filename: string; bytes: Uint8Array };
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,13 @@ interface ExportersModule {
       table?: { headers: string[]; rows: string[][] };
     }>;
   }): Promise<Uint8Array>;
+  buildXlsx(
+    sheets: Array<{
+      name: string;
+      columns?: Array<{ key: string; label: string; type?: "text" | "money" | "number" }>;
+      rows: Array<Record<string, unknown>>;
+    }>
+  ): Uint8Array;
 }
 
 async function loadExporters(): Promise<ExportersModule> {
@@ -180,6 +188,23 @@ export async function runReport(
       { key: "fonte", label: "fonte" },
     ]);
     return { kind: "csv", filename: `${filenameBase}.csv`, content };
+  }
+
+  if (query.format === "xlsx") {
+    // Tipos autodetectados: "valor" numérico vira célula numérica no Excel.
+    const bytes = exporters.buildXlsx([
+      {
+        name: title,
+        columns: [
+          { key: "metrica", label: "Métrica", type: "text" },
+          { key: "valor", label: "Valor" },
+          { key: "unidade", label: "Unidade", type: "text" },
+          { key: "fonte", label: "Fonte", type: "text" },
+        ],
+        rows: rows as Array<Record<string, unknown>>,
+      },
+    ]);
+    return { kind: "xlsx", filename: `${filenameBase}.xlsx`, bytes };
   }
 
   const bytes = await exporters.buildPdfReport({

@@ -918,11 +918,11 @@ paths:
   /reports/{report}:
     get:
       tags: [relatórios]
-      summary: Gera relatório gerencial (json, csv ou pdf)
+      summary: Gera relatório gerencial (json, csv, xlsx ou pdf)
       description: >
         Executa a skill `relatorios_gerenciais` diretamente. `monthly_close`
-        exige `period`. `format=json` devolve o envelope SkillResult; `csv` e
-        `pdf` usam a ação `export_data` da skill (linhas
+        exige `period`. `format=json` devolve o envelope SkillResult; `csv`,
+        `xlsx` (Excel) e `pdf` usam a ação `export_data` da skill (linhas
         metrica/valor/unidade/fonte) e respondem como download.
       parameters:
         - name: report
@@ -931,7 +931,7 @@ paths:
           schema: { type: string, enum: [daily_summary, monthly_close, executive_overview] }
         - name: format
           in: query
-          schema: { type: string, enum: [json, csv, pdf], default: json }
+          schema: { type: string, enum: [json, csv, xlsx, pdf], default: json }
         - name: period
           in: query
           description: Obrigatório para monthly_close
@@ -947,6 +947,8 @@ paths:
                   data: { $ref: "#/components/schemas/SkillResult" }
             text/csv:
               schema: { type: string }
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
             application/pdf:
               schema: { type: string, format: binary }
         "400": { $ref: "#/components/responses/ValidationError" }

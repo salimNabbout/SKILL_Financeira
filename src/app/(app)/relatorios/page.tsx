@@ -133,6 +133,9 @@ function DownloadLinks({ report, period }: { report: string; period?: string }) 
       <a href={href("csv")} className={cls}>
         Baixar CSV
       </a>
+      <a href={href("xlsx")} className={cls}>
+        Baixar Excel
+      </a>
       <a href={href("pdf")} className={cls}>
         Baixar PDF
       </a>
@@ -177,7 +180,7 @@ export default async function RelatoriosPage({
     <div>
       <PageHeader
         title="Relatórios gerenciais"
-        subtitle="Resumo diário, fechamento mensal e visão executiva — com download em CSV e PDF"
+        subtitle="Resumo diário, fechamento mensal e visão executiva — com download em CSV, Excel e PDF"
       />
 
       <div className="grid gap-4 xl:grid-cols-3">

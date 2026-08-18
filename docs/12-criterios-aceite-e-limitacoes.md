@@ -33,7 +33,7 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
 - Multiempresa operacional: troca de empresa na sessão pela barra lateral e gestão de usuários
   pela UI (convite mock com senha temporária — e-mail real na v1.2 —, papel, alçada,
   ativar/desativar, com guardas de governança). Multi-moeda: estrutura pronta, sem conversão.
-  Exportação Excel: não incluída (CSV com BOM abre no Excel).
+  Exportação em CSV, Excel (xlsx nativo) e PDF nos relatórios.
 - Conciliação: além do casamento 1↔1, cobre baixas parciais (sempre com revisão humana), rateio
   de uma transação entre 2–4 parcelas da mesma contraparte (soma exata) e transferências entre
   contas (pares opostos). Fora do escopo: rateio com soma aproximada e N transações agrupadas
