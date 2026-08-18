@@ -67,6 +67,39 @@ test("upload real de arquivo OFX na conciliação (com reimportação idempotent
   ).toBeVisible();
 });
 
+test("gestão de usuários (convite mock) e troca de empresa na sessão", async ({ page }) => {
+  await page.goto("/login");
+  await page.fill('input[name="email"]', "ana@cafeaurora.com.br");
+  await page.fill('input[name="password"]', "demo1234");
+  await page.click('button[type="submit"]');
+  await page.waitForURL(/\/$/);
+
+  // Convite: cria usuário com senha temporária exibida uma única vez (mock).
+  await page.goto("/cadastros/usuarios");
+  const invite = page
+    .locator("form")
+    .filter({ has: page.getByRole("button", { name: "Convidar" }) });
+  await invite.locator('input[name="name"]').fill("Usuária E2E");
+  await invite.locator('input[name="email"]').fill("usuaria.e2e@cafeaurora.com.br");
+  await invite.locator('select[name="role"]').selectOption("viewer");
+  await invite.getByRole("button", { name: "Convidar" }).click();
+
+  await expect(
+    page.getByText(/Senha temporária de usuaria\.e2e@cafeaurora\.com\.br/)
+  ).toBeVisible();
+  await expect(page.getByText("usuaria.e2e@cafeaurora.com.br").first()).toBeVisible();
+
+  // Troca de empresa: Ana atua em duas empresas; muda para a Express.
+  await page.selectOption('select[name="companyId"]', "co_demo_express");
+  await page.getByRole("button", { name: "Ir", exact: true }).click();
+  await page.waitForURL(/\/$/);
+  await expect(page.getByText("Aurora Café Express Ltda").first()).toBeVisible();
+
+  // Isolamento multiempresa: a usuária convidada pertence só à Café Aurora.
+  await page.goto("/cadastros/usuarios");
+  await expect(page.getByText("usuaria.e2e@cafeaurora.com.br")).toHaveCount(0);
+});
+
 test("credenciais inválidas são recusadas", async ({ page }) => {
   await page.goto("/login");
   await page.fill('input[name="email"]', "ana@cafeaurora.com.br");

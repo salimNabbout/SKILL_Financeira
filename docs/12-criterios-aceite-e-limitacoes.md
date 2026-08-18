@@ -30,9 +30,10 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
   detecção automática de formato e codificação UTF-8/ISO-8859-1) ou texto colado.
 
 **Escopo funcional**
-- Multiempresa está no modelo/RBAC, mas a UI opera na primeira empresa do usuário (sem troca de
-  empresa na sessão). Criação de usuários apenas via seed/banco (UI lista). Multi-moeda:
-  estrutura pronta, sem conversão. Exportação Excel: não incluída (CSV com BOM abre no Excel).
+- Multiempresa operacional: troca de empresa na sessão pela barra lateral e gestão de usuários
+  pela UI (convite mock com senha temporária — e-mail real na v1.2 —, papel, alçada,
+  ativar/desativar, com guardas de governança). Multi-moeda: estrutura pronta, sem conversão.
+  Exportação Excel: não incluída (CSV com BOM abre no Excel).
 - Conciliação: 1 transação ↔ 1 título/liquidação (parciais e transferências entre contas ficam
   na v1.1). DRE por competência usa data de emissão dos títulos; sem depreciação no EBITDA.
 - Orçamento por categoria×mês (centro de custo aceito no modelo; a UI edita por categoria).

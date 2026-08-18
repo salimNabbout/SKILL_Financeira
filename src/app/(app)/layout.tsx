@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
-import { isDemoMode } from "@/lib/container";
+import { getContainer, isDemoMode } from "@/lib/container";
 import { logoutAction } from "@/app/login/actions";
 import { ROLE_LABELS } from "@/lib/format";
+import { switchCompanyAction } from "./company-actions";
 
 const NAV: Array<{ href: string; label: string }> = [
   { href: "/", label: "Dashboard" },
@@ -25,12 +26,47 @@ const NAV: Array<{ href: string; label: string }> = [
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await requireSession();
 
+  // Multiempresa: com mais de um vínculo, o usuário troca a empresa ativa aqui.
+  const { repos } = await getContainer();
+  const memberships = await repos.memberships.listByUser(session.user.id);
+  const otherCompanies = (
+    await Promise.all(
+      memberships
+        .filter((m) => m.companyId !== session.company.id)
+        .map((m) => repos.companies.getById(m.companyId))
+    )
+  ).filter((c) => c !== null && c.active);
+
   return (
     <div className="flex min-h-screen">
       <aside className="hidden w-60 shrink-0 border-r border-[var(--line)] bg-white p-4 md:block">
         <div className="mb-6">
           <p className="text-lg font-semibold text-[var(--brand)]">Financeira PME</p>
           <p className="text-xs text-[var(--ink-muted)]">{session.company.name}</p>
+          {otherCompanies.length > 0 ? (
+            <form action={switchCompanyAction} className="mt-2 flex items-center gap-1">
+              <select
+                name="companyId"
+                className="w-full rounded-md border border-[var(--line)] bg-white px-1.5 py-1 text-xs"
+                defaultValue=""
+              >
+                <option value="" disabled>
+                  Trocar de empresa…
+                </option>
+                {otherCompanies.map((c) => (
+                  <option key={c!.id} value={c!.id}>
+                    {c!.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="submit"
+                className="rounded-md border border-[var(--line)] px-2 py-1 text-xs hover:bg-slate-50"
+              >
+                Ir
+              </button>
+            </form>
+          ) : null}
         </div>
         <nav className="space-y-0.5">
           {NAV.map((item) => (
