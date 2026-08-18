@@ -20,7 +20,9 @@ Escopo priorizado e implementado:
 - ✅ Upload de arquivo real OFX/CSV na conciliação (UI e API multipart, detecção de formato e
   codificação) — entregue. Pendente: CNAB240 e agendamento de importação.
 - Paginação/índices para volumetria (hoje: filtros em memória, ok até ~10⁴ registros/empresa).
-- Gestão de usuários pela UI (convite, troca de papel, desativação) e troca de empresa na sessão.
+- ✅ Gestão de usuários pela UI (convite mock com senha temporária, papel, alçada,
+  ativar/desativar, guardas de último admin/autoedição) e troca de empresa na sessão —
+  entregue. Pendente: convite por e-mail real (v1.2).
 - Baixa parcial em conciliação (uma transação ↔ várias parcelas e vice-versa) e transferências
   entre contas.
 - Exportação Excel (xlsx) além de CSV; relatórios agendados por e-mail.

@@ -20,6 +20,7 @@ import type { Repositories } from "@/core/repositories";
 import { hashPassword } from "@/lib/password";
 
 export const DEMO_COMPANY_ID = "co_demo";
+export const DEMO_COMPANY2_ID = "co_demo_express";
 export const DEMO_PASSWORD = "demo1234";
 export const DEMO_BANK_ITAU_ID = "ba_itau";
 export const DEMO_BANK_NUBANK_ID = "ba_nubank";
@@ -574,5 +575,67 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
     sentAt: instantOf(dunningSentDate),
     createdAt: instantOf(dunningSentDate),
     updatedAt: instantOf(dunningSentDate),
+  });
+
+  // -------------------------------------------------------------------------
+  // Segunda empresa: demonstra multiempresa (isolamento por companyId) e a
+  // troca de empresa na sessão. Ana (admin) e Bruno (gestor) atuam nas duas.
+  // -------------------------------------------------------------------------
+  await repos.companies.create({
+    id: DEMO_COMPANY2_ID,
+    name: "Aurora Café Express Ltda",
+    legalName: "Aurora Café Express Comércio de Bebidas Ltda",
+    cnpj: "22.333.444/0001-55",
+    timezone: "America/Sao_Paulo",
+    defaultCurrency: "BRL",
+    config: DEFAULT_COMPANY_CONFIG,
+    active: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repos.memberships.create({
+    id: "mem_ana_express",
+    userId: "usr_ana",
+    companyId: DEMO_COMPANY2_ID,
+    role: "admin",
+    approvalLimitCents: null,
+  });
+  await repos.memberships.create({
+    id: "mem_bruno_express",
+    userId: "usr_bruno",
+    companyId: DEMO_COMPANY2_ID,
+    role: "finance_manager",
+    approvalLimitCents: 5_000_000,
+  });
+  await repos.bankAccounts.create({
+    id: "ba_express",
+    companyId: DEMO_COMPANY2_ID,
+    name: "Conta Movimento Express",
+    bankCode: "077",
+    agency: "0001",
+    accountNumberMasked: "****-9077",
+    type: "checking",
+    currency: "BRL",
+    openingBalanceCents: 750_000, // R$ 7.500,00
+    openingBalanceDate: today,
+    active: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await repos.categories.create({
+    id: "cat2_vendas",
+    companyId: DEMO_COMPANY2_ID,
+    name: "Vendas de mercadorias",
+    kind: "income",
+    dreGroup: "receita_bruta",
+    active: true,
+  });
+  await repos.categories.create({
+    id: "cat2_insumos",
+    companyId: DEMO_COMPANY2_ID,
+    name: "Insumos e mercadorias",
+    kind: "expense",
+    dreGroup: "custos",
+    active: true,
   });
 }
