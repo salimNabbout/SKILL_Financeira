@@ -142,17 +142,18 @@ export default async function ConciliacaoPage({
               <option value="auto">Detectar automaticamente</option>
               <option value="ofx">OFX</option>
               <option value="csv">CSV</option>
+              <option value="cnab240">CNAB240 (retorno)</option>
             </select>
           </Field>
           <div className="flex items-end">
             <Button>Importar e conciliar</Button>
           </div>
           <div className="md:col-span-2">
-            <Field label="Arquivo do extrato (OFX ou CSV)">
+            <Field label="Arquivo do extrato (OFX, CSV ou CNAB240)">
               <input
                 type="file"
                 name="arquivo"
-                accept=".ofx,.csv,.txt"
+                accept=".ofx,.csv,.txt,.ret,.rem"
                 className={`${inputClass} file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1 file:text-xs file:font-medium`}
               />
             </Field>

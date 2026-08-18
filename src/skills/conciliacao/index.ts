@@ -28,7 +28,7 @@ import { hashPayload } from "@/core/ids";
 import { formatBRL } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
-import { normalizeText, parseCsvStatement, parseOfx } from "@/lib/importers";
+import { normalizeText, parseCnab240, parseCsvStatement, parseOfx } from "@/lib/importers";
 
 const SKILL = "conciliacao_bancaria" as const;
 const DATA_SOURCES = ["bank_transactions", "payables", "receivables", "payments", "receipts"];
@@ -43,7 +43,7 @@ const SETTLEMENT_ASSUMPTION =
 const importStatementSchema = z.object({
   action: z.literal("import_statement"),
   bankAccountId: z.string().min(1),
-  format: z.enum(["ofx", "csv"]),
+  format: z.enum(["ofx", "csv", "cnab240"]),
   content: z.string().min(1),
 });
 
@@ -89,7 +89,7 @@ export type ConciliacaoInput = z.infer<typeof conciliacaoInputSchema>;
 export interface ImportStatementData {
   bankAccountId: ID;
   importBatchId: string;
-  format: "ofx" | "csv";
+  format: "ofx" | "csv" | "cnab240";
   imported: number;
   duplicates: number;
   warnings: string[];
@@ -436,7 +436,12 @@ async function importStatement(
     throw new ValidationError(`Conta bancária inativa: ${account.name} (${account.id}).`);
   }
 
-  const parsed = input.format === "ofx" ? parseOfx(input.content) : parseCsvStatement(input.content);
+  const parsed =
+    input.format === "ofx"
+      ? parseOfx(input.content)
+      : input.format === "cnab240"
+        ? parseCnab240(input.content)
+        : parseCsvStatement(input.content);
   const importBatchId = ctx.ids.next("imp");
   const nowIso = ctx.clock.now().toISOString();
 

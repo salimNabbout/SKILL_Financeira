@@ -823,7 +823,7 @@ export async function listEvents(
  */
 export const importStatementSchema = z.object({
   bankAccountId: z.string().min(1, "informe a conta bancária"),
-  format: z.enum(["ofx", "csv"]),
+  format: z.enum(["ofx", "csv", "cnab240"]),
   content: z.string().min(1, "conteúdo do extrato vazio"),
 });
 export type ImportStatementInput = z.infer<typeof importStatementSchema>;

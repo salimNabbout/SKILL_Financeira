@@ -25,9 +25,11 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
 
 **Integrações são mocks/stubs identificados**
 - Execução bancária de pagamento, NF-e/NFS-e, envio de e-mail/WhatsApp da cobrança: mocks
-  declarados (nenhum efeito externo). API bancária/Open Finance: não implementadas; CNAB: stub
-  que declara indisponibilidade. Importação real é por upload de arquivo OFX/CSV (até 2 MB,
-  detecção automática de formato e codificação UTF-8/ISO-8859-1) ou texto colado.
+  declarados (nenhum efeito externo). API bancária/Open Finance: não implementadas. Importação
+  real por upload de arquivo OFX, CSV ou CNAB240 (até 2 MB, detecção automática de formato e
+  codificação UTF-8/ISO-8859-1) ou texto colado. O CNAB240 implementa o segmento E (extrato)
+  no layout FEBRABAN de referência — bancos publicam variantes; ajustes por banco entram como
+  configuração futura (as posições estão em constantes documentadas).
 
 **Escopo funcional**
 - Multiempresa operacional: troca de empresa na sessão pela barra lateral e gestão de usuários

@@ -17,8 +17,9 @@ Escopo priorizado e implementado:
 
 ## v1.1 — Operação diária (4–6 semanas)
 
-- ✅ Upload de arquivo real OFX/CSV na conciliação (UI e API multipart, detecção de formato e
-  codificação) — entregue. Pendente: CNAB240 e agendamento de importação.
+- ✅ Upload de arquivo real OFX/CSV/CNAB240 na conciliação (UI e API multipart, detecção de
+  formato e codificação; CNAB240 segmento E com layout FEBRABAN em constantes) — entregue.
+  Pendente: agendamento de importação.
 - ✅ Paginação/índices para volumetria — entregue: listagens (API e UI) paginadas no repositório
   com ordem determinística e índices dedicados; skills que agregam continuam com leitura
   completa (cálculo, não listagem).

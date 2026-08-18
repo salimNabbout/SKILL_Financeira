@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { IntegrationUnavailableError } from "@/core/errors";
 import {
   parseCnab,
   parseCsv,
@@ -211,9 +210,10 @@ describe("parsers de valores monetários", () => {
   });
 });
 
-describe("parseCnab (stub honesto)", () => {
-  it("lança IntegrationUnavailableError orientando a usar OFX ou CSV", () => {
-    expect(() => parseCnab("qualquer conteúdo")).toThrowError(IntegrationUnavailableError);
-    expect(() => parseCnab("qualquer conteúdo")).toThrowError(/CNAB240.*use OFX ou CSV/);
+describe("parseCnab (agora implementado — alias de parseCnab240)", () => {
+  it("não lança mais; conteúdo não-CNAB devolve warning tolerante", () => {
+    const parsed = parseCnab("qualquer conteúdo");
+    expect(parsed.transactions).toHaveLength(0);
+    expect(parsed.warnings.length).toBeGreaterThan(0);
   });
 });

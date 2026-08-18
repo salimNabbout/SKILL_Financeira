@@ -7,10 +7,12 @@
  * Funções puras — testáveis sem navegador nem Next.
  */
 
+import { looksLikeCnab240 } from "./cnab";
+
 export const MAX_STATEMENT_FILE_BYTES = 2 * 1024 * 1024; // 2 MB
 
 export type StatementEncoding = "utf-8" | "windows-1252";
-export type StatementFormat = "ofx" | "csv";
+export type StatementFormat = "ofx" | "csv" | "cnab240";
 
 const UTF8_BOM = [0xef, 0xbb, 0xbf];
 
@@ -53,10 +55,12 @@ export function detectStatementFormat(params: {
   const head = content.slice(0, 4096);
 
   if (/OFXHEADER|<OFX[\s>]/i.test(head)) return "ofx";
+  if (looksLikeCnab240(content)) return "cnab240";
 
   const ext = filename?.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
   if (ext === "ofx") return "ofx";
   if (ext === "csv") return "csv";
+  if (ext === "ret" || ext === "rem") return "cnab240";
 
   // Heurística CSV: primeiras linhas não vazias compartilham um separador tabular.
   const lines = head

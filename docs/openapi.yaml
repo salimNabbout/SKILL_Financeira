@@ -986,9 +986,9 @@ paths:
                 bankAccountId: { type: string }
                 format:
                   type: string
-                  enum: [auto, ofx, csv]
+                  enum: [auto, ofx, csv, cnab240]
                   default: auto
-                  description: auto detecta por assinatura OFX/extensão do arquivo
+                  description: auto detecta por assinatura OFX, estrutura CNAB240 ou extensão
                 arquivo:
                   type: string
                   format: binary
@@ -1002,7 +1002,7 @@ paths:
               required: [bankAccountId, format, content]
               properties:
                 bankAccountId: { type: string }
-                format: { type: string, enum: [ofx, csv] }
+                format: { type: string, enum: [ofx, csv, cnab240] }
                 content: { type: string, description: Conteúdo do arquivo como texto }
       responses:
         "200":
