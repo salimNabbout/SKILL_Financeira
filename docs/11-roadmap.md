@@ -19,7 +19,9 @@ Escopo priorizado e implementado:
 
 - ✅ Upload de arquivo real OFX/CSV na conciliação (UI e API multipart, detecção de formato e
   codificação) — entregue. Pendente: CNAB240 e agendamento de importação.
-- Paginação/índices para volumetria (hoje: filtros em memória, ok até ~10⁴ registros/empresa).
+- ✅ Paginação/índices para volumetria — entregue: listagens (API e UI) paginadas no repositório
+  com ordem determinística e índices dedicados; skills que agregam continuam com leitura
+  completa (cálculo, não listagem).
 - ✅ Gestão de usuários pela UI (convite mock com senha temporária, papel, alçada,
   ativar/desativar, guardas de último admin/autoedição) e troca de empresa na sessão —
   entregue. Pendente: convite por e-mail real (v1.2).
@@ -28,7 +30,9 @@ Escopo priorizado e implementado:
   opostos com detecção por palavra-chave) — entregue.
 - ✅ Exportação Excel (xlsx) além de CSV — entregue (gerador SpreadsheetML próprio, sem
   dependências; célula monetária numérica com formato). Pendente: relatórios agendados por e-mail.
-- Fila real: EventBus sobre Redis/BullMQ com workers, retry e DLQ (mesma interface).
+- ✅ Fila real: EventBus sobre Redis/BullMQ com worker dedicado, retry exponencial e fila morta
+  (mesma interface; ativação por EVENT_BUS=bullmq + REDIS_URL) — entregue, com integração
+  validada contra Redis real no CI. O in-process com outbox segue como padrão.
 
 ## v1.2 — Integrações reais (6–10 semanas)
 
