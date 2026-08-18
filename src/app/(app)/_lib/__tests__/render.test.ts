@@ -4,9 +4,15 @@
  * renderizam sem quebrar, inclusive nos casos vazios/erro.
  */
 
+import * as React from "react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+
+// O transform do vitest (esbuild) usa o runtime JSX clássico, que referencia o
+// identificador global `React` — o Next usa o runtime automático, então os
+// componentes não importam React. Suprimos o global apenas no teste.
+(globalThis as { React?: typeof React }).React = React;
 import type { SkillResult } from "@/core/types";
 import { BalanceLineChart, InOutBarChart } from "../charts";
 import { SkillResultMeta, SkillUnavailableCard } from "../result-meta";

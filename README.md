@@ -71,6 +71,9 @@ npm run typecheck     # TypeScript strict
 npm run test:e2e      # smoke E2E (Playwright; sobe o app em modo demo na porta 3100)
 ```
 
+Para o E2E, instale os navegadores com `npx playwright install chromium` — ou, se já houver um
+Chromium no ambiente, aponte `PLAYWRIGHT_CHROMIUM_PATH=/caminho/do/chromium`.
+
 ## API
 
 REST em `/api/v1` (mesma sessão por cookie da UI) — especificação em

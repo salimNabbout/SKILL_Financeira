@@ -28,7 +28,9 @@ type RouteExtra<P> = { params: Promise<P> };
  */
 export function withAuth<P = Record<string, string>>(
   handler: (req: Request, ctx: AuthedContext<P>) => Promise<Response>
-): (req: Request, extra?: RouteExtra<P>) => Promise<Response> {
+): (req: Request, extra: RouteExtra<P>) => Promise<Response> {
+  // O validador de tipos de rota do Next 15 exige o segundo argumento não-opcional;
+  // em rotas estáticas ele chega sem params úteis, então o acesso continua defensivo.
   return async (req, extra) => {
     try {
       const session = await getSession();

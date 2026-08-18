@@ -16,7 +16,7 @@ test("login demo e navegação pelas telas principais", async ({ page }) => {
   // Dashboard autenticado
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await expect(page.getByText("Café Aurora")).toBeVisible();
+  await expect(page.getByText("Café Aurora").first()).toBeVisible();
 
   // Telas principais respondem sem erro
   for (const path of [
