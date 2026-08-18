@@ -101,6 +101,8 @@ export interface AutoMatchData {
   autoConfirmed: number;
   suggested: number;
   unmatched: number;
+  /** Pares de transferência entre contas identificados nesta rodada. */
+  transferPairs: number;
   /** Matches criados nesta rodada (auto-confirmados e sugeridos). */
   matches: ReconciliationMatch[];
   formula: string;
@@ -110,11 +112,16 @@ export interface AutoMatchData {
 
 export interface ConfirmMatchData {
   match: ReconciliationMatch;
+  /** Todos os matches do grupo quando a decisão envolve rateio/transferência. */
+  matches?: ReconciliationMatch[];
   receipt?: Receipt;
+  receipts?: Receipt[];
 }
 
 export interface RejectMatchData {
   match: ReconciliationMatch;
+  /** Todos os matches do grupo quando a decisão envolve rateio/transferência. */
+  matches?: ReconciliationMatch[];
 }
 
 export interface ReconciliationStatusData {
@@ -126,6 +133,8 @@ export interface ReconciliationStatusData {
     bankTransactionId: ID;
     targetType: ReconciliationMatch["targetType"];
     targetId?: ID;
+    amountCents?: number;
+    groupId?: ID;
     confidence: number;
   }>;
   period: { start: ISODate; end: ISODate };
@@ -184,7 +193,12 @@ function confidenceFormula(ctx: SkillContext): string {
     `confiança do par = valor (igual: 0,55; diferença <= ${reconciliationAmountToleranceCents} centavos: 0,40) ` +
     `+ data (mesmo dia: +0,25; até ${reconciliationDateToleranceDays} dia(s): +0,15) ` +
     `+ descrição contém parte (>=4 letras) do nome da contraparte: +0,20; ` +
-    `casa se > 0,50; baixa automática se >= ${reconciliationAutoConfirmThreshold}`
+    `casa se > 0,50; baixa automática se >= ${reconciliationAutoConfirmThreshold}. ` +
+    `Fallbacks (nesta ordem): transferência entre contas (par oposto exato em outra conta = 0,55 ` +
+    `+ data + palavra-chave transf/ted/doc +0,20); rateio 1 transação ↔ 2..4 parcelas da mesma ` +
+    `contraparte com soma exata (0,55 + nome +0,20 + vencimentos na tolerância +0,15); baixa ` +
+    `parcial sobre título maior (0,45 + nome obrigatório +0,20 + data) — parcial NUNCA é ` +
+    `automática, sempre exige revisão humana.`
   );
 }
 
@@ -260,13 +274,41 @@ async function markTransactionReconciled(ctx: SkillContext, tx: BankTransaction)
 async function applySettlement(
   ctx: SkillContext,
   tx: BankTransaction,
-  match: Pick<ReconciliationMatch, "targetType" | "targetId">
+  match: Pick<ReconciliationMatch, "targetType" | "targetId" | "amountCents">
 ): Promise<{ receipt?: Receipt; assumptions: string[] }> {
   if (!match.targetId) {
     throw new ValidationError("Conciliação sem alvo definido não pode ser aplicada.");
   }
   const nowIso = ctx.clock.now().toISOString();
   const assumptions: string[] = [];
+
+  // Porção aplicada a ESTE alvo (baixa parcial/rateio); ausente = valor integral.
+  const txAbs = Math.abs(tx.amountCents);
+  const applied = match.amountCents ?? txAbs;
+  if (applied <= 0 || applied > txAbs) {
+    throw new ValidationError(
+      `Porção inválida na conciliação: ${formatBRL(applied)} sobre transação de ${formatBRL(txAbs)}.`
+    );
+  }
+
+  if (match.targetType === "transfer") {
+    // Transferência entre contas: nenhuma receita/despesa — apenas marca o par.
+    const other = await ctx.repos.bankTransactions.getById(ctx.companyId, match.targetId);
+    if (!other) throw new NotFoundError("Transação contraparte", match.targetId);
+    if (other.bankAccountId === tx.bankAccountId) {
+      throw new ValidationError("Transferência exige transações em contas diferentes.");
+    }
+    if (other.amountCents !== -tx.amountCents) {
+      throw new ValidationError(
+        `Par de transferência inválido: valores não são opostos (${formatBRL(tx.amountCents)} vs ${formatBRL(other.amountCents)}).`
+      );
+    }
+    if (!other.reconciled) await markTransactionReconciled(ctx, other);
+    assumptions.push(
+      "Transferência entre contas da própria empresa: as duas transações foram conciliadas entre si e NENHUMA receita ou despesa foi registrada."
+    );
+    return { assumptions };
+  }
 
   if (match.targetType === "receivable") {
     if (tx.amountCents <= 0) {
@@ -287,7 +329,7 @@ async function applySettlement(
       companyId: ctx.companyId,
       receivableId: receivable.id,
       bankAccountId: tx.bankAccountId,
-      amountCents: tx.amountCents,
+      amountCents: applied,
       receivedDate: tx.date,
       method: "transfer",
       registeredBy: "system",
@@ -295,7 +337,7 @@ async function applySettlement(
     };
     await ctx.repos.receipts.create(receipt);
     const before = { ...receivable };
-    receivable.receivedCents += tx.amountCents;
+    receivable.receivedCents += applied;
     receivable.status = receivable.receivedCents >= receivable.amountCents ? "received" : "partially_received";
     receivable.updatedAt = nowIso;
     await ctx.repos.receivables.update(receivable);
@@ -316,9 +358,13 @@ async function applySettlement(
       after: receivable,
       correlationId: ctx.correlationId,
     });
-    if (tx.amountCents !== remaining) {
+    if (applied < remaining) {
       assumptions.push(
-        `Diferença de ${formatBRL(Math.abs(tx.amountCents - remaining))} entre o crédito bancário e o saldo do título ${receivable.id} absorvida dentro da tolerância configurada.`
+        `Baixa PARCIAL de ${formatBRL(applied)} no título ${receivable.id}; saldo restante de ${formatBRL(remaining - applied)} segue em aberto.`
+      );
+    } else if (applied !== remaining) {
+      assumptions.push(
+        `Diferença de ${formatBRL(Math.abs(applied - remaining))} entre o crédito bancário e o saldo do título ${receivable.id} absorvida dentro da tolerância configurada.`
       );
     }
     return { receipt, assumptions };
@@ -328,7 +374,7 @@ async function applySettlement(
     if (tx.amountCents >= 0) {
       throw new ValidationError(`Transação ${tx.id} não é um débito; não pode baixar título a pagar.`);
     }
-    const amount = -tx.amountCents;
+    const amount = applied;
     const payable = await ctx.repos.payables.getById(ctx.companyId, match.targetId);
     if (!payable) throw new NotFoundError("Título a pagar", match.targetId);
     const remaining = payable.amountCents - payable.paidCents;
@@ -352,7 +398,11 @@ async function applySettlement(
       correlationId: ctx.correlationId,
     });
     assumptions.push(SETTLEMENT_ASSUMPTION);
-    if (amount !== remaining) {
+    if (amount < remaining) {
+      assumptions.push(
+        `Baixa PARCIAL de ${formatBRL(amount)} no título ${payable.id}; saldo restante de ${formatBRL(remaining - amount)} segue em aberto.`
+      );
+    } else if (amount !== remaining) {
       assumptions.push(
         `Diferença de ${formatBRL(Math.abs(amount - remaining))} entre o débito bancário e o saldo do título ${payable.id} absorvida dentro da tolerância configurada.`
       );
@@ -578,9 +628,8 @@ async function autoMatch(
       .filter((m) => m.targetType === "payment" && m.targetId && activeStatuses.has(m.status))
       .map((m) => m.targetId as ID)
   );
-  const pendingByTx = new Map(
-    allMatches.filter((m) => m.status === "suggested").map((m) => [m.bankTransactionId, m])
-  );
+  const pendingMatches = allMatches.filter((m) => m.status === "suggested");
+  const pendingTxIds = new Set(pendingMatches.map((m) => m.bankTransactionId));
   // Par transação+alvo já rejeitado por humano não é sugerido novamente.
   const rejectedPairs = new Set(
     allMatches
@@ -594,17 +643,21 @@ async function autoMatch(
   const receivableRemaining = new Map(
     receivables.map((r) => [r.id, r.amountCents - r.receivedCents])
   );
-  // Sugestões pendentes de rodadas anteriores também reservam saldo do alvo.
-  for (const m of pendingByTx.values()) {
+  // Sugestões pendentes de rodadas anteriores também reservam saldo do alvo
+  // (a porção do match, quando presente; senão o valor da transação).
+  for (const m of pendingMatches) {
     if (!m.targetId) continue;
-    const pendingTx = await ctx.repos.bankTransactions.getById(ctx.companyId, m.bankTransactionId);
-    const abs = pendingTx ? Math.abs(pendingTx.amountCents) : 0;
+    let reserved = m.amountCents;
+    if (reserved === undefined) {
+      const pendingTx = await ctx.repos.bankTransactions.getById(ctx.companyId, m.bankTransactionId);
+      reserved = pendingTx ? Math.abs(pendingTx.amountCents) : 0;
+    }
     if (m.targetType === "payable" && payableRemaining.has(m.targetId)) {
-      payableRemaining.set(m.targetId, Math.max(0, (payableRemaining.get(m.targetId) ?? 0) - abs));
+      payableRemaining.set(m.targetId, Math.max(0, (payableRemaining.get(m.targetId) ?? 0) - reserved));
     } else if (m.targetType === "receivable" && receivableRemaining.has(m.targetId)) {
       receivableRemaining.set(
         m.targetId,
-        Math.max(0, (receivableRemaining.get(m.targetId) ?? 0) - abs)
+        Math.max(0, (receivableRemaining.get(m.targetId) ?? 0) - reserved)
       );
     }
   }
@@ -613,16 +666,368 @@ async function autoMatch(
   let suggested = 0;
   let unmatched = 0;
   let skippedPending = 0;
+  let transferPairs = 0;
   const matches: ReconciliationMatch[] = [];
   const alerts: SkillAlert[] = [];
   const pendingItems: PendingItem[] = [];
   const assumptions: string[] = [];
 
+  // -------------------------------------------------------------------------
+  // Fases de fallback (rodam quando o casamento 1↔1 exato não encontra alvo)
+  // -------------------------------------------------------------------------
+  const consumedTransfer = new Set<ID>();
+  const TRANSFER_KEYWORDS = /\btransf|\bted\b|\bdoc\b|entre contas/;
+
+  async function createMatchRecord(
+    tx: BankTransaction,
+    data: Pick<ReconciliationMatch, "targetType" | "targetId" | "amountCents" | "groupId" | "confidence" | "notes">,
+    isAuto: boolean
+  ): Promise<ReconciliationMatch> {
+    const nowIso = ctx.clock.now().toISOString();
+    const match: ReconciliationMatch = {
+      id: ctx.ids.next("rec"),
+      companyId: ctx.companyId,
+      bankTransactionId: tx.id,
+      status: isAuto ? "auto_confirmed" : "suggested",
+      matchedBy: "system",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      ...data,
+    };
+    await ctx.repos.reconciliations.create(match);
+    await ctx.audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: isAuto ? "reconciliation.auto_matched" : "reconciliation.suggested",
+      entityType: "reconciliation_match",
+      entityId: match.id,
+      after: match,
+      correlationId: ctx.correlationId,
+    });
+    matches.push(match);
+    return match;
+  }
+
+  async function registerSuggestion(match: ReconciliationMatch, description: string): Promise<void> {
+    await ctx.events.publish({
+      companyId: ctx.companyId,
+      type: "reconciliation.suggested",
+      payload: {
+        matchId: match.id,
+        bankTransactionId: match.bankTransactionId,
+        targetType: match.targetType,
+        targetId: match.targetId,
+        groupId: match.groupId,
+        confidence: match.confidence,
+        amountCents: match.amountCents,
+      },
+      source: SKILL,
+      correlationId: ctx.correlationId,
+    });
+    pendingItems.push({
+      code: "reconciliation_suggested",
+      description,
+      entityType: "reconciliation_match",
+      entityId: match.id,
+      suggestedAction: "Revisar e usar confirm_match ou reject_match.",
+    });
+    const alert: SkillAlert = {
+      severity: "info",
+      code: "reconciliation_review",
+      message: `Sugestão de conciliação aguardando revisão humana: ${description}`,
+      entityType: "reconciliation_match",
+      entityId: match.id,
+    };
+    alerts.push(alert);
+    await persistAlertDeduped(ctx, alert);
+  }
+
+  /**
+   * Fase 2 — transferência entre contas: contraparte em OUTRA conta com valor
+   * exatamente oposto e data dentro da tolerância.
+   * Confiança: 0,55 (par oposto exato) + data (0,25 igual / 0,15 tolerância)
+   * + 0,20 se alguma descrição contém palavra de transferência (transf/ted/doc).
+   */
+  async function tryTransferPair(tx: BankTransaction): Promise<boolean> {
+    const counterparts = unreconciled
+      .filter(
+        (o) =>
+          o.id !== tx.id &&
+          o.bankAccountId !== tx.bankAccountId &&
+          o.amountCents === -tx.amountCents &&
+          !consumedTransfer.has(o.id) &&
+          !pendingTxIds.has(o.id) &&
+          !rejectedPairs.has(`${tx.id}|${o.id}`) &&
+          !rejectedPairs.has(`${o.id}|${tx.id}`) &&
+          Math.abs(diffDays(o.date, tx.date)) <= ctx.config.reconciliationDateToleranceDays
+      )
+      .map((o) => {
+        const dateDiff = Math.abs(diffDays(o.date, tx.date));
+        const dateComponent = dateDiff === 0 ? 0.25 : 0.15;
+        const keyword =
+          TRANSFER_KEYWORDS.test(normalizeText(tx.description)) ||
+          TRANSFER_KEYWORDS.test(normalizeText(o.description));
+        const score = roundScore(0.55 + dateComponent + (keyword ? 0.2 : 0));
+        return { other: o, dateDiff, score, keyword };
+      })
+      .sort((a, b) =>
+        a.score !== b.score
+          ? b.score - a.score
+          : a.dateDiff !== b.dateDiff
+            ? a.dateDiff - b.dateDiff
+            : a.other.id < b.other.id
+              ? -1
+              : 1
+      );
+    const best = counterparts[0];
+    if (!best) return false;
+
+    const groupId = ctx.ids.next("grp");
+    const isAuto = best.score >= ctx.config.reconciliationAutoConfirmThreshold;
+    const notes =
+      `transferência entre contas: par oposto exato=0,55; data=${best.dateDiff === 0 ? "0,25" : "0,15"} ` +
+      `(${best.dateDiff} dia(s)); palavra-chave=${best.keyword ? "0,20" : "0,00"}`;
+    const txAbs = Math.abs(tx.amountCents);
+    const matchA = await createMatchRecord(
+      tx,
+      { targetType: "transfer", targetId: best.other.id, amountCents: txAbs, groupId, confidence: best.score, notes },
+      isAuto
+    );
+    await createMatchRecord(
+      best.other,
+      { targetType: "transfer", targetId: tx.id, amountCents: txAbs, groupId, confidence: best.score, notes },
+      isAuto
+    );
+    consumedTransfer.add(best.other.id);
+    transferPairs++;
+
+    if (isAuto) {
+      const settlement = await applySettlement(ctx, tx, matchA); // marca a contraparte
+      for (const a of settlement.assumptions) if (!assumptions.includes(a)) assumptions.push(a);
+      await markTransactionReconciled(ctx, tx);
+      await ctx.events.publish({
+        companyId: ctx.companyId,
+        type: "reconciliation.auto_matched",
+        payload: {
+          groupId,
+          bankTransactionIds: [tx.id, best.other.id],
+          targetType: "transfer",
+          confidence: best.score,
+          amountCents: txAbs,
+        },
+        source: SKILL,
+        correlationId: ctx.correlationId,
+      });
+      autoConfirmed++;
+    } else {
+      await registerSuggestion(
+        matchA,
+        `transferência entre contas ${formatBRL(txAbs)} (${tx.id} ↔ ${best.other.id}, confiança ${best.score.toFixed(2)}).`
+      );
+      suggested++;
+    }
+    return true;
+  }
+
+  /** Busca determinística de subconjunto (2..4 títulos) com soma EXATA. */
+  function findExactSubset(
+    items: Array<{ id: ID; remaining: number; dueDate: ISODate }>,
+    target: number
+  ): Array<{ id: ID; remaining: number; dueDate: ISODate }> | null {
+    const sorted = [...items].sort((a, b) =>
+      a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
+    );
+    const pick: typeof sorted = [];
+    function dfs(start: number, sum: number): boolean {
+      if (sum === target && pick.length >= 2) return true;
+      if (sum >= target || pick.length >= 4) return false;
+      for (let i = start; i < sorted.length; i++) {
+        pick.push(sorted[i]);
+        if (dfs(i + 1, sum + sorted[i].remaining)) return true;
+        pick.pop();
+      }
+      return false;
+    }
+    return dfs(0, 0) ? [...pick] : null;
+  }
+
+  /**
+   * Fase 3 — rateio 1 transação ↔ N parcelas (2..4) da MESMA contraparte com
+   * soma exata dos saldos. Confiança: 0,55 (soma exata) + 0,20 (nome na
+   * descrição) + 0,15 (todos os vencimentos dentro da tolerância de dias).
+   */
+  async function tryInstallmentGroup(tx: BankTransaction): Promise<boolean> {
+    const txAbs = Math.abs(tx.amountCents);
+    const isCredit = tx.amountCents > 0;
+    const byCounterparty = new Map<ID, Array<{ id: ID; remaining: number; dueDate: ISODate }>>();
+    if (isCredit) {
+      for (const r of receivables) {
+        const remaining = receivableRemaining.get(r.id) ?? 0;
+        if (remaining <= 0 || rejectedPairs.has(`${tx.id}|${r.id}`)) continue;
+        const list = byCounterparty.get(r.customerId) ?? [];
+        list.push({ id: r.id, remaining, dueDate: r.dueDate });
+        byCounterparty.set(r.customerId, list);
+      }
+    } else {
+      for (const p of payables) {
+        const remaining = payableRemaining.get(p.id) ?? 0;
+        if (remaining <= 0 || rejectedPairs.has(`${tx.id}|${p.id}`)) continue;
+        const list = byCounterparty.get(p.supplierId) ?? [];
+        list.push({ id: p.id, remaining, dueDate: p.dueDate });
+        byCounterparty.set(p.supplierId, list);
+      }
+    }
+
+    const description = normalizeText(tx.description);
+    let best:
+      | { counterpartyId: ID; subset: NonNullable<ReturnType<typeof findExactSubset>>; score: number; breakdown: string }
+      | null = null;
+    for (const counterpartyId of [...byCounterparty.keys()].sort()) {
+      const subset = findExactSubset(byCounterparty.get(counterpartyId)!, txAbs);
+      if (!subset) continue;
+      const name = isCredit ? customers.get(counterpartyId) : suppliers.get(counterpartyId);
+      const nameComponent = nameTokens(name).some((t) => description.includes(t)) ? 0.2 : 0;
+      const allWithinDate = subset.every(
+        (s) => Math.abs(diffDays(s.dueDate, tx.date)) <= ctx.config.reconciliationDateToleranceDays
+      );
+      const dateComponent = allWithinDate ? 0.15 : 0;
+      const score = roundScore(0.55 + nameComponent + dateComponent);
+      const breakdown =
+        `rateio ${subset.length} parcela(s), soma exata=0,55; nome=${nameComponent.toFixed(2)}; ` +
+        `vencimentos na tolerância=${dateComponent.toFixed(2)}`;
+      if (!best || score > best.score) best = { counterpartyId, subset, score, breakdown };
+    }
+    if (!best) return false;
+
+    const groupId = ctx.ids.next("grp");
+    const isAuto = best.score >= ctx.config.reconciliationAutoConfirmThreshold;
+    const targetType = isCredit ? ("receivable" as const) : ("payable" as const);
+    const groupMatches: ReconciliationMatch[] = [];
+    for (const item of best.subset) {
+      groupMatches.push(
+        await createMatchRecord(
+          tx,
+          { targetType, targetId: item.id, amountCents: item.remaining, groupId, confidence: best.score, notes: best.breakdown },
+          isAuto
+        )
+      );
+      const map = isCredit ? receivableRemaining : payableRemaining;
+      map.set(item.id, Math.max(0, (map.get(item.id) ?? 0) - item.remaining));
+    }
+
+    if (isAuto) {
+      for (const m of groupMatches) {
+        const settlement = await applySettlement(ctx, tx, m);
+        for (const a of settlement.assumptions) if (!assumptions.includes(a)) assumptions.push(a);
+      }
+      await markTransactionReconciled(ctx, tx);
+      await ctx.events.publish({
+        companyId: ctx.companyId,
+        type: "reconciliation.auto_matched",
+        payload: {
+          groupId,
+          bankTransactionId: tx.id,
+          targetType,
+          targetIds: best.subset.map((s) => s.id),
+          confidence: best.score,
+          amountCents: txAbs,
+        },
+        source: SKILL,
+        correlationId: ctx.correlationId,
+      });
+      autoConfirmed++;
+    } else {
+      await registerSuggestion(
+        groupMatches[0],
+        `rateio de ${formatBRL(txAbs)} entre ${best.subset.length} parcela(s) da mesma contraparte (confiança ${best.score.toFixed(2)}).`
+      );
+      suggested++;
+    }
+    return true;
+  }
+
+  /**
+   * Fase 4 — baixa parcial: transação MENOR que o saldo de um único título da
+   * contraparte. Exige o nome da contraparte na descrição e NUNCA é automática
+   * (baixa parcial sempre passa por revisão humana — política declarada).
+   * Confiança: 0,45 (parcial) + 0,20 (nome, obrigatório) + data (0,25/0,15).
+   */
+  async function tryPartialSuggestion(tx: BankTransaction): Promise<boolean> {
+    const txAbs = Math.abs(tx.amountCents);
+    const isCredit = tx.amountCents > 0;
+    const description = normalizeText(tx.description);
+    const tolerance = ctx.config.reconciliationAmountToleranceCents;
+
+    interface PartialCandidate {
+      targetId: ID;
+      score: number;
+      dateDiff: number;
+      breakdown: string;
+    }
+    const found: PartialCandidate[] = [];
+    const pool = isCredit
+      ? receivables.map((r) => ({
+          id: r.id,
+          remaining: receivableRemaining.get(r.id) ?? 0,
+          dueDate: r.dueDate,
+          name: customers.get(r.customerId),
+        }))
+      : payables.map((p) => ({
+          id: p.id,
+          remaining: payableRemaining.get(p.id) ?? 0,
+          dueDate: p.dueDate,
+          name: suppliers.get(p.supplierId),
+        }));
+    for (const item of pool) {
+      if (item.remaining <= txAbs + tolerance) continue; // não é parcial (fase 1 cobre)
+      if (rejectedPairs.has(`${tx.id}|${item.id}`)) continue;
+      const token = nameTokens(item.name).find((t) => description.includes(t));
+      if (!token) continue; // nome é obrigatório para propor baixa parcial
+      const dateDiff = Math.abs(diffDays(item.dueDate, tx.date));
+      const dateComponent =
+        dateDiff === 0 ? 0.25 : dateDiff <= ctx.config.reconciliationDateToleranceDays ? 0.15 : 0;
+      found.push({
+        targetId: item.id,
+        score: roundScore(0.45 + 0.2 + dateComponent),
+        dateDiff,
+        breakdown:
+          `baixa parcial=0,45; nome=0,20 ("${token}"); data=${dateComponent.toFixed(2)} (${dateDiff} dia(s)); ` +
+          `porção ${formatBRL(txAbs)} sobre saldo maior`,
+      });
+    }
+    if (found.length === 0) return false;
+    found.sort((a, b) =>
+      a.score !== b.score
+        ? b.score - a.score
+        : a.dateDiff !== b.dateDiff
+          ? a.dateDiff - b.dateDiff
+          : a.targetId < b.targetId
+            ? -1
+            : 1
+    );
+    const best = found[0];
+    const targetType = isCredit ? ("receivable" as const) : ("payable" as const);
+
+    const match = await createMatchRecord(
+      tx,
+      { targetType, targetId: best.targetId, amountCents: txAbs, groupId: undefined, confidence: best.score, notes: best.breakdown },
+      false // parcial NUNCA é automática
+    );
+    const map = isCredit ? receivableRemaining : payableRemaining;
+    map.set(best.targetId, Math.max(0, (map.get(best.targetId) ?? 0) - txAbs));
+    await registerSuggestion(
+      match,
+      `baixa PARCIAL de ${formatBRL(txAbs)} no ${targetType} ${best.targetId} (confiança ${best.score.toFixed(2)}; sempre exige revisão humana).`
+    );
+    suggested++;
+    return true;
+  }
+
   for (const tx of txs) {
-    if (pendingByTx.has(tx.id)) {
+    if (pendingTxIds.has(tx.id)) {
       skippedPending++;
       continue;
     }
+    if (consumedTransfer.has(tx.id)) continue; // contraparte já pareada nesta rodada
     const txAbs = Math.abs(tx.amountCents);
     const candidates: Candidate[] = [];
 
@@ -654,6 +1059,11 @@ async function autoMatch(
     }
 
     if (candidates.length === 0) {
+      // Fases de fallback: transferência entre contas → rateio multi-parcela →
+      // baixa parcial (sempre sugestão). Ordem deterministicamente documentada.
+      if (await tryTransferPair(tx)) continue;
+      if (await tryInstallmentGroup(tx)) continue;
+      if (await tryPartialSuggestion(tx)) continue;
       unmatched++;
       continue;
     }
@@ -668,6 +1078,7 @@ async function autoMatch(
       bankTransactionId: tx.id,
       targetType: best.targetType,
       targetId: best.targetId,
+      amountCents: txAbs,
       confidence: best.score,
       status: isAuto ? "auto_confirmed" : "suggested",
       matchedBy: "system",
@@ -782,6 +1193,7 @@ async function autoMatch(
       autoConfirmed,
       suggested,
       unmatched,
+      transferPairs,
       matches,
       formula: confidenceFormula(ctx),
       period,
@@ -797,6 +1209,18 @@ async function autoMatch(
   );
 }
 
+/** Carrega o grupo do match (rateio/transferência) ou [match] quando avulso. */
+async function loadMatchGroup(
+  ctx: SkillContext,
+  match: ReconciliationMatch
+): Promise<ReconciliationMatch[]> {
+  if (!match.groupId) return [match];
+  const group = (await ctx.repos.reconciliations.listAll(ctx.companyId))
+    .filter((m) => m.groupId === match.groupId)
+    .sort((a, b) => (a.id < b.id ? -1 : 1));
+  return group.length > 0 ? group : [match];
+}
+
 async function confirmMatch(
   ctx: SkillContext,
   input: ConfirmMatchInput
@@ -805,68 +1229,104 @@ async function confirmMatch(
 
   const match = await ctx.repos.reconciliations.getById(ctx.companyId, input.matchId);
   if (!match) throw new NotFoundError("Conciliação", input.matchId);
-  if (match.status === "confirmed" || match.status === "auto_confirmed") {
+  // Rateios e transferências são decididos EM CONJUNTO: confirmar um match do
+  // grupo aplica o grupo inteiro (as porções somam a transação).
+  const group = await loadMatchGroup(ctx, match);
+
+  const applied = (s: ReconciliationMatch["status"]) => s === "confirmed" || s === "auto_confirmed";
+  if (group.every((m) => applied(m.status))) {
     return makeResult(
       SKILL,
       ctx,
-      { match },
+      { match, matches: group.length > 1 ? group : undefined },
       {
         assumptions: [
-          `Conciliação ${match.id} já estava aplicada (status "${match.status}"); confirmação idempotente sem novo efeito.`,
+          `Conciliação ${match.id}${match.groupId ? ` (grupo ${match.groupId})` : ""} já estava aplicada; confirmação idempotente sem novo efeito.`,
         ],
         dataSources: DATA_SOURCES,
       }
     );
   }
-  if (match.status === "rejected") {
+  if (group.some((m) => m.status === "rejected") || group.some((m) => applied(m.status))) {
     throw new ValidationError(
-      `Conciliação ${match.id} foi rejeitada; execute auto_match novamente para gerar nova sugestão.`
+      `Conciliação ${match.id}${match.groupId ? ` (grupo ${match.groupId})` : ""} está em estado misto/rejeitado; execute auto_match novamente para gerar nova sugestão.`
     );
   }
 
-  const tx = await ctx.repos.bankTransactions.getById(ctx.companyId, match.bankTransactionId);
-  if (!tx) throw new NotFoundError("Transação bancária", match.bankTransactionId);
-  if (tx.reconciled) {
-    throw new ValidationError(`Transação ${tx.id} já está conciliada por outro caminho.`);
+  const txIds = [...new Set(group.map((m) => m.bankTransactionId))];
+  const txById = new Map<ID, BankTransaction>();
+  for (const id of txIds) {
+    const tx = await ctx.repos.bankTransactions.getById(ctx.companyId, id);
+    if (!tx) throw new NotFoundError("Transação bancária", id);
+    if (tx.reconciled) {
+      throw new ValidationError(`Transação ${tx.id} já está conciliada por outro caminho.`);
+    }
+    txById.set(id, tx);
   }
 
-  const { receipt, assumptions } = await applySettlement(ctx, tx, match);
+  const assumptions: string[] = [];
+  const receipts: Receipt[] = [];
+  if (match.targetType === "transfer") {
+    // Par de transferência: aplica uma vez (marca a contraparte) e o próprio tx.
+    const first = group[0];
+    const firstTx = txById.get(first.bankTransactionId)!;
+    const settlement = await applySettlement(ctx, firstTx, first);
+    assumptions.push(...settlement.assumptions);
+    await markTransactionReconciled(ctx, firstTx);
+  } else {
+    const tx = txById.get(match.bankTransactionId)!;
+    for (const m of group) {
+      const settlement = await applySettlement(ctx, tx, m);
+      if (settlement.receipt) receipts.push(settlement.receipt);
+      for (const a of settlement.assumptions) if (!assumptions.includes(a)) assumptions.push(a);
+    }
+    await markTransactionReconciled(ctx, tx);
+  }
 
-  const before = { ...match };
   const nowIso = ctx.clock.now().toISOString();
-  match.status = "confirmed";
-  match.matchedBy = ctx.actor.id;
-  match.updatedAt = nowIso;
-  await ctx.repos.reconciliations.update(match);
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "reconciliation.confirmed",
-    entityType: "reconciliation_match",
-    entityId: match.id,
-    before,
-    after: match,
-    correlationId: ctx.correlationId,
-  });
-  await markTransactionReconciled(ctx, tx);
-  await ctx.events.publish({
-    companyId: ctx.companyId,
-    type: "reconciliation.confirmed",
-    payload: {
-      matchId: match.id,
-      bankTransactionId: tx.id,
-      targetType: match.targetType,
-      targetId: match.targetId,
-      confidence: match.confidence,
-      confirmedBy: ctx.actor.id,
-    },
-    source: SKILL,
-    correlationId: ctx.correlationId,
-  });
+  for (const m of group) {
+    const before = { ...m };
+    m.status = "confirmed";
+    m.matchedBy = ctx.actor.id;
+    m.updatedAt = nowIso;
+    await ctx.repos.reconciliations.update(m);
+    await ctx.audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "reconciliation.confirmed",
+      entityType: "reconciliation_match",
+      entityId: m.id,
+      before,
+      after: m,
+      correlationId: ctx.correlationId,
+    });
+    await ctx.events.publish({
+      companyId: ctx.companyId,
+      type: "reconciliation.confirmed",
+      payload: {
+        matchId: m.id,
+        groupId: m.groupId,
+        bankTransactionId: m.bankTransactionId,
+        targetType: m.targetType,
+        targetId: m.targetId,
+        amountCents: m.amountCents,
+        confidence: m.confidence,
+        confirmedBy: ctx.actor.id,
+      },
+      source: SKILL,
+      correlationId: ctx.correlationId,
+    });
+  }
 
+  const confirmed = group.find((m) => m.id === match.id) ?? group[0];
   return makeResult(
     SKILL,
     ctx,
-    { match, receipt },
+    {
+      match: confirmed,
+      matches: group.length > 1 ? group : undefined,
+      receipt: receipts[0],
+      receipts: receipts.length > 0 ? receipts : undefined,
+    },
     { assumptions, confidence: 1.0, dataSources: DATA_SOURCES }
   );
 }
@@ -879,76 +1339,85 @@ async function rejectMatch(
 
   const match = await ctx.repos.reconciliations.getById(ctx.companyId, input.matchId);
   if (!match) throw new NotFoundError("Conciliação", input.matchId);
-  if (match.status === "rejected") {
+  // Rejeitar um match de grupo rejeita o grupo inteiro (rateio/transferência).
+  const group = await loadMatchGroup(ctx, match);
+
+  if (group.every((m) => m.status === "rejected")) {
     return makeResult(
       SKILL,
       ctx,
-      { match },
+      { match, matches: group.length > 1 ? group : undefined },
       {
         assumptions: [`Conciliação ${match.id} já estava rejeitada; rejeição idempotente sem novo efeito.`],
         dataSources: DATA_SOURCES,
       }
     );
   }
-  if (match.status !== "suggested") {
+  if (group.some((m) => m.status !== "suggested" && m.status !== "rejected")) {
     throw new ValidationError(
-      `Conciliação ${match.id} já foi aplicada (status "${match.status}"); estorno não é suportado no MVP.`
+      `Conciliação ${match.id} já foi aplicada; estorno não é suportado no MVP.`
     );
   }
 
-  const before = { ...match };
   const nowIso = ctx.clock.now().toISOString();
-  match.status = "rejected";
-  match.matchedBy = ctx.actor.id;
-  if (input.notes) match.notes = input.notes;
-  match.updatedAt = nowIso;
-  await ctx.repos.reconciliations.update(match);
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "reconciliation.rejected",
-    entityType: "reconciliation_match",
-    entityId: match.id,
-    before,
-    after: match,
-    correlationId: ctx.correlationId,
-  });
-
-  // Defensivo: sugestão nunca concilia a transação, mas garantimos o estado.
-  const tx = await ctx.repos.bankTransactions.getById(ctx.companyId, match.bankTransactionId);
-  if (tx && tx.reconciled) {
-    const txBefore = { ...tx };
-    tx.reconciled = false;
-    await ctx.repos.bankTransactions.update(tx);
+  for (const m of group) {
+    if (m.status === "rejected") continue;
+    const before = { ...m };
+    m.status = "rejected";
+    m.matchedBy = ctx.actor.id;
+    if (input.notes) m.notes = input.notes;
+    m.updatedAt = nowIso;
+    await ctx.repos.reconciliations.update(m);
     await ctx.audit.record(ctx.companyId, {
       actor: ctx.actor,
-      action: "bank_transaction.unreconciled",
-      entityType: "bank_transaction",
-      entityId: tx.id,
-      before: txBefore,
-      after: tx,
+      action: "reconciliation.rejected",
+      entityType: "reconciliation_match",
+      entityId: m.id,
+      before,
+      after: m,
+      correlationId: ctx.correlationId,
+    });
+    await ctx.events.publish({
+      companyId: ctx.companyId,
+      type: "reconciliation.rejected",
+      payload: {
+        matchId: m.id,
+        groupId: m.groupId,
+        bankTransactionId: m.bankTransactionId,
+        targetType: m.targetType,
+        targetId: m.targetId,
+        rejectedBy: ctx.actor.id,
+        notes: input.notes,
+      },
+      source: SKILL,
       correlationId: ctx.correlationId,
     });
   }
 
-  await ctx.events.publish({
-    companyId: ctx.companyId,
-    type: "reconciliation.rejected",
-    payload: {
-      matchId: match.id,
-      bankTransactionId: match.bankTransactionId,
-      targetType: match.targetType,
-      targetId: match.targetId,
-      rejectedBy: ctx.actor.id,
-      notes: input.notes,
-    },
-    source: SKILL,
-    correlationId: ctx.correlationId,
-  });
+  // Defensivo: sugestão nunca concilia a transação, mas garantimos o estado.
+  for (const txId of new Set(group.map((m) => m.bankTransactionId))) {
+    const tx = await ctx.repos.bankTransactions.getById(ctx.companyId, txId);
+    if (tx && tx.reconciled) {
+      const txBefore = { ...tx };
+      tx.reconciled = false;
+      await ctx.repos.bankTransactions.update(tx);
+      await ctx.audit.record(ctx.companyId, {
+        actor: ctx.actor,
+        action: "bank_transaction.unreconciled",
+        entityType: "bank_transaction",
+        entityId: tx.id,
+        before: txBefore,
+        after: tx,
+        correlationId: ctx.correlationId,
+      });
+    }
+  }
 
+  const rejected = group.find((m) => m.id === match.id) ?? group[0];
   return makeResult(
     SKILL,
     ctx,
-    { match },
+    { match: rejected, matches: group.length > 1 ? group : undefined },
     {
       assumptions: [
         "Transação volta a ficar não conciliada e elegível em novas rodadas de auto_match; o mesmo par rejeitado não é sugerido novamente.",
@@ -994,6 +1463,8 @@ async function reconciliationStatus(
         bankTransactionId: m.bankTransactionId,
         targetType: m.targetType,
         targetId: m.targetId,
+        amountCents: m.amountCents,
+        groupId: m.groupId,
         confidence: m.confidence,
       })),
       period: { start, end },

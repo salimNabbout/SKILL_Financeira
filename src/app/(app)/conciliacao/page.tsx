@@ -89,6 +89,16 @@ export default async function ConciliacaoPage({
         date: pmt.scheduledDate,
       };
     }
+    if (match.targetType === "transfer") {
+      const other = txById.get(match.targetId);
+      if (!other) return null;
+      return {
+        label: "Transferência entre contas",
+        description: `${accountName.get(other.bankAccountId) ?? other.bankAccountId} — ${other.description}`,
+        amountCents: other.amountCents,
+        date: other.date,
+      };
+    }
     return null;
   }
 
@@ -210,6 +220,17 @@ export default async function ConciliacaoPage({
                         Confiança: <strong>{Math.round(m.confidence * 100)}%</strong>
                         {m.notes ? ` — ${m.notes}` : ""}
                       </p>
+                      {typeof m.amountCents === "number" && tx && m.amountCents < Math.abs(tx.amountCents) ? (
+                        <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                          Porção aplicada a este alvo: <strong>{formatBRL(m.amountCents)}</strong>
+                        </p>
+                      ) : null}
+                      {m.groupId ? (
+                        <p className="mt-1 text-xs text-amber-700">
+                          Decisão em grupo (rateio/transferência): confirmar ou rejeitar aplica todas
+                          as partes de uma vez.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <form action={confirmMatchAction}>

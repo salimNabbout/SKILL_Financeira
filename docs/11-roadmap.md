@@ -23,8 +23,9 @@ Escopo priorizado e implementado:
 - ✅ Gestão de usuários pela UI (convite mock com senha temporária, papel, alçada,
   ativar/desativar, guardas de último admin/autoedição) e troca de empresa na sessão —
   entregue. Pendente: convite por e-mail real (v1.2).
-- Baixa parcial em conciliação (uma transação ↔ várias parcelas e vice-versa) e transferências
-  entre contas.
+- ✅ Baixa parcial em conciliação (sempre com revisão humana), rateio 1 transação ↔ 2–4 parcelas
+  da mesma contraparte (soma exata, decisão em grupo) e transferências entre contas (pares
+  opostos com detecção por palavra-chave) — entregue.
 - Exportação Excel (xlsx) além de CSV; relatórios agendados por e-mail.
 - Fila real: EventBus sobre Redis/BullMQ com workers, retry e DLQ (mesma interface).
 
