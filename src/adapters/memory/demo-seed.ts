@@ -578,6 +578,38 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
   });
 
   // -------------------------------------------------------------------------
+  // Par de transferência entre contas (Itaú → Nubank), não conciliado: a demo
+  // mostra a detecção automática de transferências na conciliação.
+  // -------------------------------------------------------------------------
+  const transferDate = addDays(today, -2);
+  await repos.bankTransactions.create({
+    id: "btx_transf_out",
+    companyId: DEMO_COMPANY_ID,
+    bankAccountId: DEMO_BANK_ITAU_ID,
+    date: transferDate,
+    amountCents: -500_000, // R$ 5.000,00
+    currency: "BRL",
+    description: "TED TRANSFERENCIA ENTRE CONTAS AURORA",
+    externalId: "seed-transf-out",
+    source: "csv",
+    reconciled: false,
+    createdAt: instantOf(transferDate),
+  });
+  await repos.bankTransactions.create({
+    id: "btx_transf_in",
+    companyId: DEMO_COMPANY_ID,
+    bankAccountId: DEMO_BANK_NUBANK_ID,
+    date: transferDate,
+    amountCents: 500_000,
+    currency: "BRL",
+    description: "TED RECEBIDA CONTA AURORA",
+    externalId: "seed-transf-in",
+    source: "csv",
+    reconciled: false,
+    createdAt: instantOf(transferDate),
+  });
+
+  // -------------------------------------------------------------------------
   // Segunda empresa: demonstra multiempresa (isolamento por companyId) e a
   // troca de empresa na sessão. Ana (admin) e Bruno (gestor) atuam nas duas.
   // -------------------------------------------------------------------------

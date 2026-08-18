@@ -34,8 +34,11 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
   pela UI (convite mock com senha temporária — e-mail real na v1.2 —, papel, alçada,
   ativar/desativar, com guardas de governança). Multi-moeda: estrutura pronta, sem conversão.
   Exportação Excel: não incluída (CSV com BOM abre no Excel).
-- Conciliação: 1 transação ↔ 1 título/liquidação (parciais e transferências entre contas ficam
-  na v1.1). DRE por competência usa data de emissão dos títulos; sem depreciação no EBITDA.
+- Conciliação: além do casamento 1↔1, cobre baixas parciais (sempre com revisão humana), rateio
+  de uma transação entre 2–4 parcelas da mesma contraparte (soma exata) e transferências entre
+  contas (pares opostos). Fora do escopo: rateio com soma aproximada e N transações agrupadas
+  para 1 título numa mesma decisão (parciais sequenciais cobrem o caso comum). DRE por
+  competência usa data de emissão dos títulos; sem depreciação no EBITDA.
 - Orçamento por categoria×mês (centro de custo aceito no modelo; a UI edita por categoria).
 
 **Técnica**

@@ -356,7 +356,16 @@ export interface ReconciliationMatch {
   companyId: ID;
   bankTransactionId: ID;
   targetType: ReconciliationTargetType;
+  /** Título/liquidação alvo; para "transfer", a transação bancária contraparte. */
   targetId?: ID;
+  /**
+   * Porção (valor absoluto, centavos) da transação aplicada a este alvo.
+   * Ausente = comportamento integral (valor da transação). Permite baixas
+   * parciais e o rateio de uma transação entre várias parcelas.
+   */
+  amountCents?: number;
+  /** Matches decididos em conjunto (rateio multi-parcela ou par de transferência). */
+  groupId?: ID;
   confidence: number;
   status: ReconciliationStatus;
   matchedBy: string; // "system" | userId

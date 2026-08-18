@@ -427,6 +427,8 @@ model ReconciliationMatch {
   bankTransactionId String
   targetType        String // payment | receipt | payable | receivable | transfer | unknown
   targetId          String?
+  amountCents       BigInt? // porção aplicada (baixa parcial/rateio); null = integral
+  groupId           String? // matches decididos em conjunto (rateio ou transferência)
   confidence        Float
   status            String // auto_confirmed | suggested | confirmed | rejected
   matchedBy         String // system | userId
