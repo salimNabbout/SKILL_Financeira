@@ -308,4 +308,11 @@ export interface Repositories {
   accountingEntries: AccountingEntryRepo;
   flowRuns: FlowRunRepo;
   idempotency: IdempotencyRepo;
+  /**
+   * Executa `fn` numa transação: as escritas feitas pelos repositórios passados
+   * a `fn` commitam juntas, ou são revertidas por completo se `fn` lançar.
+   * Prisma: transação real do banco. Memória: snapshot/restaura em caso de erro.
+   * Usado onde negócio + auditoria + evento precisam ser atômicos.
+   */
+  withTransaction<T>(fn: (txRepos: Repositories) => Promise<T>): Promise<T>;
 }

@@ -941,7 +941,10 @@ const idempotencyToDb = (e: IdempotencyRecord): Prisma.IdempotencyRecordUnchecke
 // Fábrica de repositórios
 // ---------------------------------------------------------------------------
 
-export function createPrismaRepositories(prisma: PrismaClient): Repositories {
+/** Cliente Prisma completo OU cliente de transação (subconjunto com os modelos). */
+type PrismaLike = PrismaClient | Prisma.TransactionClient;
+
+export function createPrismaRepositories(prisma: PrismaLike): Repositories {
   const companies: CompanyRepo = {
     async getById(id: ID) {
       const row = await prisma.company.findUnique({ where: { id } });
@@ -1950,5 +1953,15 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
     accountingEntries,
     flowRuns,
     idempotency,
+    async withTransaction<T>(fn: (txRepos: Repositories) => Promise<T>): Promise<T> {
+      // Transação real do Postgres. Se já estivermos dentro de uma transação
+      // (cliente sem $transaction), reutiliza o mesmo escopo (sem aninhar).
+      if (typeof (prisma as PrismaClient).$transaction !== "function") {
+        return fn(createPrismaRepositories(prisma));
+      }
+      return (prisma as PrismaClient).$transaction((tx) =>
+        fn(createPrismaRepositories(tx))
+      );
+    },
   };
 }

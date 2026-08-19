@@ -447,14 +447,18 @@ class MemSkillExecutionRepo implements SkillExecutionRepo {
 
 /** Append-only: não há update nem delete — imutabilidade da trilha. */
 class MemAuditRepo implements AuditRepo {
-  private readonly heads = new Map<ID, AuditHead>();
-  constructor(private readonly items: AuditRecord[]) {}
+  constructor(
+    private readonly items: AuditRecord[],
+    private readonly heads: AuditHead[]
+  ) {}
   async getHead(companyId: ID) {
-    const head = this.heads.get(companyId);
+    const head = this.heads.find((h) => h.companyId === companyId);
     return head ? { ...head } : null;
   }
   async setHead(head: AuditHead) {
-    this.heads.set(head.companyId, { ...head });
+    const idx = this.heads.findIndex((h) => h.companyId === head.companyId);
+    if (idx >= 0) this.heads[idx] = { ...head };
+    else this.heads.push({ ...head });
   }
   async append(record: AuditRecord) {
     // Espelha o unique (companyId, seq) do Postgres: rejeita seq duplicado por
@@ -560,7 +564,7 @@ class MemIdempotencyRepo implements IdempotencyRepo {
 }
 
 export function createMemoryRepositories(db: MemoryDb): Repositories {
-  return {
+  const repos: Repositories = {
     companies: new MemCompanyRepo(db.companies),
     users: new MemUserRepo(db.users),
     memberships: new MemMembershipRepo(db.memberships),
@@ -583,11 +587,29 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     alerts: new MemAlertRepo(db.alerts),
     events: new MemEventRepo(db.events),
     skillExecutions: new MemSkillExecutionRepo(db.skillExecutions),
-    audit: new MemAuditRepo(db.auditRecords),
+    audit: new MemAuditRepo(db.auditRecords, db.auditHeads),
     invoices: new MemBase(db.invoices),
     collectionMessages: new MemCollectionMessageRepo(db.collectionMessages),
     accountingEntries: new MemAccountingEntryRepo(db.accountingEntries),
     flowRuns: new MemFlowRunRepo(db.flowRuns),
     idempotency: new MemIdempotencyRepo(db.idempotencyRecords),
+    async withTransaction<T>(fn: (txRepos: Repositories) => Promise<T>): Promise<T> {
+      // Transação em memória (single-thread): snapshot do conteúdo de cada tabela;
+      // em caso de erro, restaura tudo no lugar (os repos apontam para os mesmos
+      // arrays, então a restauração desfaz as escritas). Sem isolamento entre
+      // transações concorrentes — suficiente para demo/testes.
+      const arrays = Object.values(db).filter((v): v is unknown[] => Array.isArray(v));
+      const snapshots = arrays.map((arr) => arr.map((item) => clone(item)));
+      try {
+        return await fn(repos);
+      } catch (error) {
+        arrays.forEach((arr, i) => {
+          arr.length = 0;
+          arr.push(...snapshots[i]);
+        });
+        throw error;
+      }
+    },
   };
+  return repos;
 }
