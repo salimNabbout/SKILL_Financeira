@@ -58,15 +58,16 @@ model Company {
 }
 
 model User {
-  id           String   @id
-  name         String
-  email        String   @unique
-  passwordHash String
-  totpSecret   String? // segredo TOTP base32 — nunca exposto em respostas
-  totpEnabled  Boolean  @default(false)
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id
+  name            String
+  email           String   @unique
+  passwordHash    String
+  totpSecret      String? // segredo TOTP base32 — nunca exposto em respostas
+  totpEnabled     Boolean  @default(false)
+  totpLastCounter Int? // último counter TOTP consumido (anti-replay)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   memberships Membership[]
 }
@@ -405,22 +406,22 @@ model BudgetLine {
 // ---------------------------------------------------------------------------
 
 model Approval {
-  id                 String    @id
-  companyId          String
-  targetType         String // payment | collection_message | bank_change | deletion | flow_step
-  targetId           String
-  flowRunId          String?
-  summary            String
-  amountCents        BigInt?
-  requestedBy        String
-  requiredRole       String // papel mínimo para decidir
-  approvalsRequired  Int       @default(1) // dupla aprovação (four-eyes) por faixa
-  approverIds        String[]  @default([]) // quem já aprovou (aprovações parciais)
-  status             String // pending | approved | rejected | expired
-  decidedBy          String?
-  decidedAt          DateTime?
-  justification      String?
-  createdAt          DateTime  @default(now())
+  id                String    @id
+  companyId         String
+  targetType        String // payment | collection_message | bank_change | deletion | flow_step
+  targetId          String
+  flowRunId         String?
+  summary           String
+  amountCents       BigInt?
+  requestedBy       String
+  requiredRole      String // papel mínimo para decidir
+  approvalsRequired Int       @default(1) // dupla aprovação (four-eyes) por faixa
+  approverIds       String[]  @default([]) // quem já aprovou (aprovações parciais)
+  status            String // pending | approved | rejected | expired
+  decidedBy         String?
+  decidedAt         DateTime?
+  justification     String?
+  createdAt         DateTime  @default(now())
 
   company Company @relation(fields: [companyId], references: [id])
 
@@ -483,18 +484,18 @@ model Alert {
 }
 
 model SkillExecution {
-  id           String   @id
-  companyId    String
-  flowRunId    String?
-  skill        String
-  action       String
-  inputHash    String
-  status       String // success | warning | error | awaiting_approval
-  confidence   Float
-  resultJson   Json
-  startedAt    DateTime
-  finishedAt   DateTime
-  createdAt    DateTime @default(now())
+  id         String   @id
+  companyId  String
+  flowRunId  String?
+  skill      String
+  action     String
+  inputHash  String
+  status     String // success | warning | error | awaiting_approval
+  confidence Float
+  resultJson Json
+  startedAt  DateTime
+  finishedAt DateTime
+  createdAt  DateTime @default(now())
 
   company Company @relation(fields: [companyId], references: [id])
 

@@ -6,6 +6,8 @@ import {
   otpauthUrl,
   totpCode,
   verifyTotp,
+  verifyTotpConsume,
+  TOTP_STEP_SECONDS,
 } from "../totp";
 
 // Segredo dos vetores oficiais da RFC 6238 (ASCII "12345678901234567890").
@@ -55,6 +57,36 @@ describe("totp / verificação", () => {
     expect(verifyTotp(RFC_SECRET_B32, "12345", now)).toBe(false);
     expect(verifyTotp(RFC_SECRET_B32, "", now)).toBe(false);
     expect(verifyTotp(RFC_SECRET_B32, "287 082", now)).toBe(true);
+  });
+});
+
+describe("totp / anti-replay (verifyTotpConsume)", () => {
+  const now = 1111111111;
+  const counterNow = Math.floor(now / TOTP_STEP_SECONDS);
+
+  it("devolve o counter que casou para códigos válidos", () => {
+    expect(verifyTotpConsume(RFC_SECRET_B32, totpCode(RFC_SECRET_B32, now), now)).toBe(counterNow);
+    // Código da janela anterior casa e devolve o counter anterior.
+    expect(verifyTotpConsume(RFC_SECRET_B32, totpCode(RFC_SECRET_B32, now - 30), now)).toBe(
+      counterNow - 1
+    );
+  });
+
+  it("devolve null para código inválido", () => {
+    expect(verifyTotpConsume(RFC_SECRET_B32, "000000", now)).toBeNull();
+  });
+
+  it("rejeita reuso: counter <= lastCounter volta null (anti-replay)", () => {
+    // Já consumimos o counter atual: reapresentá-lo é rejeitado.
+    expect(verifyTotpConsume(RFC_SECRET_B32, totpCode(RFC_SECRET_B32, now), now, counterNow)).toBeNull();
+    // Um código da janela anterior (counter-1) também é rejeitado se já passamos por counterNow.
+    expect(
+      verifyTotpConsume(RFC_SECRET_B32, totpCode(RFC_SECRET_B32, now - 30), now, counterNow)
+    ).toBeNull();
+    // Mas um código NOVO (counter+1, janela seguinte) é aceito.
+    expect(
+      verifyTotpConsume(RFC_SECRET_B32, totpCode(RFC_SECRET_B32, now + 30), now, counterNow)
+    ).toBe(counterNow + 1);
   });
 });
 

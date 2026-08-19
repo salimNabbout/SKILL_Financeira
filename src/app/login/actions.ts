@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getContainer } from "@/lib/container";
 import { verifyPasswordAsync } from "@/lib/password";
 import { InMemoryRateLimiter } from "@/lib/rate-limit";
-import { verifyTotp } from "@/lib/totp";
+import { verifyTotpConsume } from "@/lib/totp";
 import { setSessionCookie, clearSessionCookie } from "@/lib/session";
 import { HashChainAuditTrail } from "@/core/audit";
 
@@ -35,15 +35,19 @@ export async function loginAction(formData: FormData): Promise<void> {
     redirect(`/login?erro=${encodeURIComponent("E-mail ou senha inválidos.")}`);
   }
 
-  // 2FA: com TOTP ativo, o código é obrigatório e validado contra o relógio
-  // injetado (tolerância de ±1 janela de 30s).
+  // 2FA: com TOTP ativo, o código é obrigatório, validado contra o relógio
+  // injetado (tolerância de ±1 janela de 30s) e com anti-replay por counter.
   if (user.totpEnabled && user.totpSecret) {
     const nowSeconds = Math.floor(clock.now().getTime() / 1000);
-    if (!totp || !verifyTotp(user.totpSecret, totp, nowSeconds)) {
+    const matchedCounter = totp
+      ? verifyTotpConsume(user.totpSecret, totp, nowSeconds, user.totpLastCounter)
+      : null;
+    if (matchedCounter === null) {
       redirect(
-        `/login?erro=${encodeURIComponent("Código 2FA ausente ou inválido (sua conta exige verificação em duas etapas).")}`
+        `/login?erro=${encodeURIComponent("Código 2FA ausente, inválido ou já utilizado (sua conta exige verificação em duas etapas).")}`
       );
     }
+    await repos.users.update({ ...user, totpLastCounter: matchedCounter });
   }
 
   const memberships = await repos.memberships.listByUser(user.id);

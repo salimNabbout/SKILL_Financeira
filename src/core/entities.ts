@@ -46,6 +46,8 @@ export interface User {
   totpSecret?: string;
   /** 2FA ativo: login passa a exigir código TOTP válido. Ausente = falso. */
   totpEnabled?: boolean;
+  /** Último counter TOTP consumido — bloqueia reuso do mesmo código (anti-replay). */
+  totpLastCounter?: number;
   active: boolean;
   createdAt: string;
   updatedAt: string;

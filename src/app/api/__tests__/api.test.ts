@@ -385,6 +385,26 @@ describe("auth/login", () => {
     expect(JSON.stringify(result)).not.toContain(secret);
   });
 
+  it("anti-replay: o mesmo código TOTP não pode ser reutilizado", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const seeded = await seedLoginUser(env);
+    const secret = generateTotpSecret();
+    await env.repos.users.update({ ...seeded, totpSecret: secret, totpEnabled: true });
+
+    const credentials = { email: "maria@teste.com.br", password: "Segredo#123" };
+    const nowSeconds = Math.floor(env.clock.now().getTime() / 1000);
+    const code = totpCode(secret, nowSeconds);
+
+    // 1º uso do código: aceito.
+    await login(deps, { ...credentials, totpCode: code });
+    // 2º uso do MESMO código (mesma janela): rejeitado (anti-replay).
+    await expect(login(deps, { ...credentials, totpCode: code })).rejects.toThrow(/duas etapas/);
+    // O counter consumido foi persistido no usuário.
+    const updated = await env.repos.users.getById(seeded.id);
+    expect(updated?.totpLastCounter).toBe(Math.floor(nowSeconds / 30));
+  });
+
   it("senha errada e e-mail inexistente falham com a mesma mensagem (401)", async () => {
     const env = createTestEnv();
     const deps = buildDeps(env);

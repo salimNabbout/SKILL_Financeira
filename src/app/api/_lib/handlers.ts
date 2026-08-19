@@ -55,7 +55,7 @@ import { runSkill, type SkillContext } from "@/core/skill";
 import type { SkillResult } from "@/core/types";
 import { verifyPasswordAsync } from "@/lib/password";
 import { InMemoryRateLimiter } from "@/lib/rate-limit";
-import { verifyTotp } from "@/lib/totp";
+import { verifyTotpConsume } from "@/lib/totp";
 import { EXPORT_LAYOUT_IDS } from "@/skills/contabil/layouts";
 import type { ExportBatchData } from "@/skills/contabil";
 import { maskSensitive, publicCompany, publicUser, type PublicCompany, type PublicUser } from "./respond";
@@ -169,12 +169,17 @@ export async function login(
   }
   if (user.totpEnabled && user.totpSecret) {
     const nowSeconds = Math.floor(deps.clock.now().getTime() / 1000);
-    if (!input.totpCode || !verifyTotp(user.totpSecret, input.totpCode, nowSeconds)) {
+    const matchedCounter = input.totpCode
+      ? verifyTotpConsume(user.totpSecret, input.totpCode, nowSeconds, user.totpLastCounter)
+      : null;
+    if (matchedCounter === null) {
       throw new DomainError(
         "totp_required",
-        "Conta com verificação em duas etapas: informe um código 2FA válido em totpCode."
+        "Conta com verificação em duas etapas: informe um código 2FA válido e não reutilizado em totpCode."
       );
     }
+    // Anti-replay: registra o counter consumido para bloquear o reuso do código.
+    await deps.repos.users.update({ ...user, totpLastCounter: matchedCounter });
   }
   // Autenticação bem-sucedida: zera o contador para não punir o usuário legítimo.
   rateLimiter.reset(rateKey);
