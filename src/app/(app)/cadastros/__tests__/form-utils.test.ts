@@ -47,6 +47,17 @@ describe("parseBRLToCents", () => {
     expect(() => parseBRLToCents("1,2,3")).toThrow();
     expect(() => parseBRLToCents("R$")).toThrow();
   });
+
+  it("rejeita grupos de milhar malformados (evita ler 2.500.00 como 250.000,00)", () => {
+    // Formato americano com typo: "2.500.00" NÃO deve virar R$ 250.000,00.
+    expect(() => parseBRLToCents("2.500.00")).toThrow();
+    // Grupo de milhar com dígitos a menos/mais também é inválido.
+    expect(() => parseBRLToCents("1.23.456")).toThrow();
+    expect(() => parseBRLToCents("1.2345")).toThrow();
+    // Casos legítimos continuam valendo.
+    expect(parseBRLToCents("1.234.567")).toBe(123456700);
+    expect(parseBRLToCents("12.345")).toBe(1234500);
+  });
 });
 
 describe("brDateToISO", () => {

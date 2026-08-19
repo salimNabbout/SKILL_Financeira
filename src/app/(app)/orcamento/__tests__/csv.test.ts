@@ -31,6 +31,15 @@ describe("parseMoneyToCents", () => {
     expect(parseMoneyToCents("1.234,567")).toBeNull(); // 3 casas decimais
   });
 
+  it("rejeita grupos de milhar malformados (2.500.00 não é 250.000)", () => {
+    expect(parseMoneyToCents("2.500.00")).toBeNull();
+    expect(parseMoneyToCents("1.23.456")).toBeNull();
+    expect(parseMoneyToCents("1.2345")).toBeNull();
+    // Legítimos continuam.
+    expect(parseMoneyToCents("1.234.567")).toBe(123456700);
+    expect(parseMoneyToCents("12.345")).toBe(1234500);
+  });
+
   it("única vírgula seguida de 3 dígitos é milhar (consistente com ponto)", () => {
     expect(parseMoneyToCents("12,345")).toBe(1234500);
   });

@@ -50,7 +50,17 @@ export function parseBRLToCents(raw: string): number {
     const afterLastDot = s.slice(lastDot + 1);
     const dotCount = s.split(".").length - 1;
     if (dotCount > 1 || afterLastDot.length === 3) {
-      // Pontos como separador de milhar: "1.234" ou "1.234.567".
+      // Pontos como separador de milhar: "1.234" ou "1.234.567". Cada grupo
+      // após o primeiro deve ter EXATAMENTE 3 dígitos; senão a entrada é
+      // ambígua/malformada (ex.: "2.500.00" não é R$ 250.000,00).
+      const groups = s.split(".");
+      const wellFormed =
+        /^\d{1,3}$/.test(groups[0]) && groups.slice(1).every((g) => /^\d{3}$/.test(g));
+      if (!wellFormed) {
+        throw new ValidationError(
+          `Valor monetário inválido: "${raw}". Grupos de milhar devem ter 3 dígitos (ex.: 1.234.567,89).`
+        );
+      }
       intPart = s.replace(/\./g, "");
       decPart = "";
     } else {
