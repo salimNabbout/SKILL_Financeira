@@ -42,9 +42,10 @@ COPY --from=build /app/.next/static ./.next/static
 # (Este projeto não tem pasta public/. Se adicionar assets estáticos lá,
 #  descomente: COPY --from=build /app/public ./public)
 
-# Prisma: CLI + engines + migrações, para rodar `prisma migrate deploy` no start.
-# (A CLI e o client vêm de node_modules; o standalone não os inclui por padrão.)
-COPY --from=build /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
+# Prisma: pacote CLI (com os .wasm) + engines + client + migrações, para rodar
+# `prisma migrate deploy` no start. NÃO copiamos o symlink .bin/prisma: ele
+# reloca o __dirname e a CLI não acha os .wasm. O entrypoint chama o entrypoint
+# real do pacote (prisma/build/index.js), que resolve os .wasm ao lado dele.
 COPY --from=build /app/node_modules/prisma ./node_modules/prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
