@@ -192,6 +192,47 @@ describe("controles_internos_auditoria — validate_payables", () => {
     expect(data.checks[0].duplicates).toEqual([p3.id]);
   });
 
+  it("não acusa duplicidade entre parcelas legítimas do mesmo documento", async () => {
+    const env = createTestEnv();
+    const supplier = seedSupplier(env);
+    // Compra parcelada em 3x com o MESMO documento fiscal — parcelas distintas.
+    const parcela1 = seedPayable(env, {
+      supplierId: supplier.id,
+      documentId: "doc_nf",
+      installmentNumber: 1,
+      installmentCount: 3,
+      amountCents: 100_000,
+      dueDate: "2026-09-01",
+      originKey: "nf:1/3",
+    });
+    seedPayable(env, {
+      supplierId: supplier.id,
+      documentId: "doc_nf",
+      installmentNumber: 2,
+      installmentCount: 3,
+      amountCents: 100_000,
+      dueDate: "2026-10-01",
+      originKey: "nf:2/3",
+    });
+    seedPayable(env, {
+      supplierId: supplier.id,
+      documentId: "doc_nf",
+      installmentNumber: 3,
+      installmentCount: 3,
+      amountCents: 100_000,
+      dueDate: "2026-11-01",
+      originKey: "nf:3/3",
+    });
+
+    const res = await runSkill(controlesInternosSkill, env.ctx(), {
+      action: "validate_payables",
+      payableIds: [parcela1.id],
+    });
+
+    const data = res.data as ValidatePayablesData;
+    expect(data.checks[0].duplicates).toEqual([]);
+  });
+
   it("aponta alçada por faixa e fornecedor sem documento", async () => {
     const env = createTestEnv();
     const supplierNoDoc = seedSupplier(env, { document: undefined });

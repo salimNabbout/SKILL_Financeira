@@ -209,7 +209,11 @@ async function validatePayables(
             other.amountCents === payable.amountCents &&
             other.dueDate === payable.dueDate &&
             other.originKey !== payable.originKey) ||
-            (payable.documentId !== undefined && other.documentId === payable.documentId))
+            // Mesmo documento fiscal só é duplicidade na MESMA parcela — parcelas
+            // distintas do mesmo documento são legítimas (compra parcelada).
+            (payable.documentId !== undefined &&
+              other.documentId === payable.documentId &&
+              other.installmentNumber === payable.installmentNumber))
       )
       .map((other) => other.id)
       .sort();

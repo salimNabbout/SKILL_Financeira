@@ -252,6 +252,7 @@ model Receivable {
   @@unique([companyId, originKey])
   @@index([companyId, status, dueDate])
   @@index([companyId, dueDate]) // listagens paginadas ordenadas por vencimento
+  @@index([companyId, customerId]) // listByCustomer
 }
 
 // Pagamento de um título. NUNCA é executado sem Approval aprovada.
@@ -276,6 +277,7 @@ model Payment {
   bankAccount BankAccount @relation(fields: [bankAccountId], references: [id])
 
   @@index([companyId, status])
+  @@index([companyId, payableId]) // listByPayable
 }
 
 model Receipt {
@@ -294,6 +296,7 @@ model Receipt {
   bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
 
   @@index([companyId, receivedDate])
+  @@index([companyId, receivableId]) // listByReceivable
 }
 
 model FinancialDocument {
@@ -448,6 +451,7 @@ model ReconciliationMatch {
   bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id])
 
   @@index([companyId, status])
+  @@index([companyId, bankTransactionId]) // listByBankTransaction
 }
 
 // Outbox de eventos de domínio (barramento in-process persistido; evolui p/ BullMQ)
@@ -464,6 +468,7 @@ model EventRecord {
   company Company @relation(fields: [companyId], references: [id])
 
   @@index([companyId, type, occurredAt])
+  @@index([companyId, occurredAt]) // listagem sem filtro de tipo
 }
 
 model Alert {
@@ -623,6 +628,7 @@ model FlowRun {
   company Company @relation(fields: [companyId], references: [id])
 
   @@index([companyId, status])
+  @@index([companyId, approvalId]) // findByApprovalId
 }
 
 model IdempotencyRecord {
