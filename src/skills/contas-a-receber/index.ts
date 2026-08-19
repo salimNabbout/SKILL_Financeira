@@ -15,6 +15,7 @@ import { computeLateFee, formatBRL, splitInstallments } from "@/core/money";
 import type { Receipt, Receivable } from "@/core/entities";
 import type { ChargeResult } from "@/core/integrations";
 import { hashPayload } from "@/core/ids";
+import { ValidationError } from "@/core/errors";
 import { errorResult, makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -126,6 +127,13 @@ export interface RegisterReceiptData {
   receipt: Receipt;
   receivable: Receivable;
   remainingCents: number;
+  /** Parte do recebimento aplicada ao principal do título (nunca excede o saldo). */
+  principalCents: number;
+  /**
+   * Excedente sobre o saldo reconhecido como encargo financeiro (multa+juros).
+   * Zero quando o recebimento não ultrapassa o saldo do título.
+   */
+  chargesCents: number;
   formula: string;
 }
 
@@ -412,13 +420,38 @@ async function createFromInvoice(
     plan = input.installments.map((p) => ({ dueDate: p.dueDate, amountCents: p.amountCents }));
   }
 
+  // Guarda de refaturamento: a idempotência por originKey é por parcela
+  // (`inv:{invoiceId}:{n}/{total}`). Se a MESMA fatura for reprocessada com um
+  // número de parcelas diferente, todas as chaves mudam e nenhum título ativo
+  // pré-existente seria detectado — o que duplicaria o valor da fatura (cliente
+  // cobrado em dobro). Antes de criar, verificamos se já existem títulos ATIVOS
+  // (status != canceled) desta fatura; se existirem com plano diferente do
+  // solicitado, rejeitamos. Com o MESMO plano, seguimos o fluxo idempotente.
+  const originKeyFor = (n: number, total: number) => `inv:${invoice.id}:${n}/${total}`;
+  const total = plan.length;
+  const requestedOriginKeys = new Set(
+    plan.map((_, i) => originKeyFor(i + 1, total))
+  );
+  const existingActive = (await ctx.repos.receivables.listByCustomer(ctx.companyId, invoice.customerId))
+    .filter((r) => r.invoiceId === invoice.id && r.status !== "canceled");
+  if (existingActive.length > 0) {
+    const samePlan =
+      existingActive.length === requestedOriginKeys.size &&
+      existingActive.every((r) => requestedOriginKeys.has(r.originKey));
+    if (!samePlan) {
+      throw new ValidationError(
+        `Fatura ${invoice.id} já possui ${existingActive.length} título(s) ativo(s) com plano de parcelas diferente do solicitado (${total} parcela(s)); cancele-os antes de refaturar para evitar duplicar a cobrança.`
+      );
+    }
+  }
+
   const { receivables, reused } = await createInstallments(ctx, {
     customerId: invoice.customerId,
     invoiceId: invoice.id,
     description: invoice.description,
     issueDate: invoice.issueDate ?? ctx.today(),
     plan,
-    originKeyFor: (n, total) => `inv:${invoice.id}:${n}/${total}`,
+    originKeyFor,
     method: input.method,
   });
 
@@ -546,12 +579,40 @@ async function registerReceipt(
   }
 
   const remainingBefore = receivable.amountCents - receivable.receivedCents;
+  const assumptions: string[] = [];
+
+  // Decomposição principal vs. encargos:
+  // - o principal aplicado ao título NUNCA excede o saldo (invariante do título);
+  // - um recebimento ACIMA do saldo só é aceito quando o excedente corresponde
+  //   aos encargos por atraso (multa+juros) calculados para o título na data do
+  //   recebimento, com a política padrão da empresa (config.lateFeeDefaults) —
+  //   a mesma régua que a cobrança usa (late.totalCents). Fora dessa correspondência
+  //   (tolerância pequena de arredondamento), o excedente é rejeitado.
+  const CHARGES_TOLERANCE_CENTS = 2; // absorve ruído de arredondamento do pró-rata
+  let principalCents = input.amountCents;
+  let chargesCents = 0;
   if (input.amountCents > remainingBefore) {
-    return errorResult(
-      SKILL_NAME,
-      ctx,
-      "receipt_exceeds_balance",
-      `Recebimento de ${formatBRL(input.amountCents)} excede o saldo do título (${formatBRL(remainingBefore)}).`
+    const excessCents = input.amountCents - remainingBefore;
+    const daysLate = Math.max(0, diffDays(receivable.dueDate, input.receivedDate));
+    const late = computeLateFee(remainingBefore, daysLate, ctx.config.lateFeeDefaults);
+    const expectedCharges = late.fineCents + late.interestCents;
+    if (daysLate <= 0 || Math.abs(excessCents - expectedCharges) > CHARGES_TOLERANCE_CENTS) {
+      return errorResult(
+        SKILL_NAME,
+        ctx,
+        "receipt_exceeds_balance",
+        `Recebimento de ${formatBRL(input.amountCents)} excede o saldo do título (${formatBRL(remainingBefore)})` +
+          (daysLate > 0
+            ? ` e o excedente de ${formatBRL(excessCents)} não corresponde aos encargos calculados (${formatBRL(expectedCharges)}: multa ${formatBRL(late.fineCents)} + juros ${formatBRL(late.interestCents)} por ${daysLate} dia(s) de atraso).`
+            : ` (título não vencido na data do recebimento — sem encargos a reconhecer).`)
+      );
+    }
+    // Excedente reconhecido como encargo: baixa o principal até o saldo e
+    // registra o excedente (multa+juros) como receita financeira.
+    principalCents = remainingBefore;
+    chargesCents = excessCents;
+    assumptions.push(
+      `Recebimento de ${formatBRL(input.amountCents)} decomposto: ${formatBRL(principalCents)} de principal (quita o saldo do título) + ${formatBRL(chargesCents)} de encargo financeiro (multa ${formatBRL(late.fineCents)} + juros ${formatBRL(late.interestCents)} por ${daysLate} dia(s) de atraso, política padrão da empresa). O excedente é reconhecido como receita financeira; nenhuma tabela nova é criada — a decomposição é exposta neste resultado e no evento receivable.received.`
     );
   }
 
@@ -568,6 +629,7 @@ async function registerReceipt(
     companyId: ctx.companyId,
     receivableId: receivable.id,
     bankAccountId: input.bankAccountId,
+    // Registra o valor TOTAL de fato recebido (principal + encargos).
     amountCents: input.amountCents,
     receivedDate: input.receivedDate,
     method: input.method,
@@ -577,7 +639,8 @@ async function registerReceipt(
   await ctx.repos.receipts.create(receipt);
 
   const before = { ...receivable };
-  receivable.receivedCents += input.amountCents;
+  // Só o PRINCIPAL baixa o saldo do título — o excedente é encargo, não principal.
+  receivable.receivedCents += principalCents;
   // Quitação com tolerância zero: só é "received" quando o saldo chega exatamente a 0.
   receivable.status = receivable.receivedCents === receivable.amountCents ? "received" : "partially_received";
   receivable.updatedAt = now;
@@ -602,6 +665,8 @@ async function registerReceipt(
       receiptId: receipt.id,
       customerId: receivable.customerId,
       amountCents: input.amountCents,
+      principalCents,
+      chargesCents,
       receivedDate: input.receivedDate,
       method: input.method,
       remainingCents,
@@ -615,10 +680,14 @@ async function registerReceipt(
     receipt,
     receivable,
     remainingCents,
-    formula: "saldo_restante = valor do título - soma dos recebimentos",
+    principalCents,
+    chargesCents,
+    formula:
+      "principal_aplicado = min(recebido, saldo); encargo = recebido - principal (só aceito se = multa+juros do atraso); saldo_restante = valor do título - Σ principais recebidos",
   };
 
   return makeResult(SKILL_NAME, ctx, data as ContasAReceberData, {
+    assumptions,
     dataSources: ["receivables", "receipts"],
   });
 }

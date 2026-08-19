@@ -290,4 +290,48 @@ describe("transferências entre contas", () => {
     expect(data.transferPairs).toBe(0);
     expect(data.unmatched).toBe(2);
   });
+
+  it("[D4] transação já conciliada na fase 1 NÃO é reusada como contraparte de transferência", async () => {
+    // Débito -500 (conta A) casa EXATO com um payable na fase 1 (auto-confirmado).
+    const payable = seedPayable({
+      amountCents: 50_000,
+      dueDate: "2026-08-16",
+      supplierId: "sup_1",
+    });
+    const debit = seedTx({
+      amountCents: -50_000,
+      bankAccountId: "ba_1",
+      date: "2026-08-16",
+      description: "PAGTO FORNECEDORA GAMA",
+    });
+    // Crédito +500 (conta B, 1 dia depois, "TED"): valor oposto ao débito A.
+    const credit = seedTx({
+      amountCents: 50_000,
+      bankAccountId: "ba_2",
+      date: "2026-08-17",
+      description: "TED RECEBIDA",
+    });
+
+    const data = await autoMatch();
+
+    // A transação A casou com o payable, virou reconciled e NÃO pode ser
+    // reaproveitada como par de transferência do crédito B.
+    expect(data.transferPairs).toBe(0);
+    const updatedPayable = await env.repos.payables.getById(env.company.id, payable.id);
+    expect(updatedPayable?.status).toBe("paid");
+
+    // No máximo 1 match ATIVO por transação — em especial, a transação A (débito)
+    // não pode ter dois matches ativos (payable + transfer).
+    const active = env.db.reconciliations.filter(
+      (m) => m.status === "auto_confirmed" || m.status === "suggested" || m.status === "confirmed"
+    );
+    const debitMatches = active.filter((m) => m.bankTransactionId === debit.id);
+    expect(debitMatches).toHaveLength(1);
+    expect(debitMatches[0].targetType).toBe("payable");
+    // O crédito B não deve ter recebido um match de transferência apontando para A.
+    const creditTransferMatches = active.filter(
+      (m) => m.bankTransactionId === credit.id && m.targetType === "transfer"
+    );
+    expect(creditTransferMatches).toHaveLength(0);
+  });
 });
