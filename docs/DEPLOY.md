@@ -137,3 +137,62 @@ EVENT_BUS=bullmq REDIS_URL=redis://HOST:6379 npx tsx scripts/event-worker.ts
   conta em separado; para um limite global, evolua para um limitador em Redis.
 - **Backups** do PostgreSQL: a trilha de auditoria e a âncora de head garantem
   integridade *lógica*, não durabilidade — configure backups automáticos.
+
+---
+
+## 8. Ligar integrações externas reais (pós-publicação)
+
+No MVP, as quatro integrações são **mock** (nenhum efeito externo). Elas podem
+ser ligadas **depois da publicação**, uma de cada vez, sem reescrever o app: a
+camada de negócio fala com **portas** (`src/core/integrations.ts`), e trocar o
+mock por um provedor real é implementar a interface e registrá-la em
+`src/integrations/registry.ts`. Um provedor real declarado mas não implementado
+**falha na inicialização** (mock nunca é fallback silencioso).
+
+**Molde pronto:** `src/integrations/providers/example-charge-provider.ts` é um
+esqueleto comentado do adaptador de cobrança (credenciais via env, chamada HTTP,
+mapeamento request/response e o webhook). Use-o como referência para qualquer uma
+das quatro.
+
+### Passo a passo (para cada adaptador)
+
+1. **Implementar** a interface da porta num arquivo em `src/integrations/providers/`
+   (copie o molde). Ler credenciais de env; falhar alto se faltarem.
+2. **Registrar** em `src/integrations/registry.ts`: trocar o `assertMockOnly(...)`
+   correspondente por uma seleção que aceite o novo provedor
+   (ex.: `INTEGRATION_CHARGES=meupsp → new MeuPspChargeProvider(...)`).
+3. **Configurar** as variáveis de ambiente do provedor + a variável de seleção.
+4. **Homologar** primeiro em ambiente de teste do provedor (§ crítico p/ fiscal).
+5. **Deploy** com a variável de seleção apontando para o provedor real.
+
+### O que cada uma exige
+
+| Integração | Variável de seleção | Credenciais/config (exemplos) | Homolog. | Webhook |
+|---|---|---|---|---|
+| **Cobrança** (Pix/boleto) | `INTEGRATION_CHARGES` | chaves do PSP (API key/OAuth), `CHARGES_PSP_BASE_URL` | recomendada | **SIM** (confirmação de pagamento) |
+| **Dados bancários** (extrato) | `INTEGRATION_BANK` | agregador Open Finance (ex.: client id/secret) + **consentimento** do cliente | recomendada | opcional (atualização) |
+| **Fiscal** (NF-e/NFS-e) | `INTEGRATION_FISCAL` | **certificado digital**, inscrição na SEFAZ/prefeitura | **obrigatória** | opcional (status) |
+| **Mensageria** (e-mail/WhatsApp) | `INTEGRATION_MESSAGING` | credenciais do provedor de envio + opt-in/descadastro | opcional | opcional (entrega) |
+
+### Webhook de confirmação de pagamento (cobrança) — peça NOVA
+
+O mock só **emite** o código de cobrança. Com um PSP real, a **baixa automática**
+depende de o PSP notificar o pagamento via **webhook**. É preciso criar uma rota
+(ex.: `src/app/api/v1/webhooks/charges/route.ts`) que:
+
+1. **valide a assinatura** do PSP (HMAC/segredo) **antes** de confiar no corpo —
+   sem isso, um "pago" poderia ser forjado;
+2. extraia o `external_reference` (o `receivableId` enviado ao criar a cobrança)
+   e o valor/data pagos;
+3. dispare a baixa **idempotente** pela skill `contas_a_receber` /
+   `register_receipt` (mesmo caminho da baixa manual) — PSPs reenviam webhooks;
+4. responda 200 rapidamente.
+
+A rota de webhook é **pública** (o PSP chama de fora): autentica-se pela
+assinatura do PSP, **não** pelo cookie de sessão. Ao criá-la, avalie isentá-la do
+middleware CSRF (o matcher cobre `/api/v1/**`) ou validar por assinatura.
+
+### Ordem sugerida de adoção
+
+Do menor ao maior risco: **mensageria → cobrança → fiscal** (o fiscal tem peso
+regulatório maior — sempre homologue antes de produção).
