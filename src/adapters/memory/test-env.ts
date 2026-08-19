@@ -11,6 +11,8 @@ import { todayInTz } from "@/core/dates";
 import type { Actor, Company, Membership, RoleName, User } from "@/core/entities";
 import { InMemoryEventBus } from "@/core/events";
 import { SequentialIdGenerator } from "@/core/ids";
+import type { Integrations } from "@/core/integrations";
+import { buildIntegrations } from "@/integrations/registry";
 import { Orchestrator } from "@/core/orchestrator/orchestrator";
 import type { SkillRegistry } from "@/core/orchestrator/registry";
 import type { Repositories } from "@/core/repositories";
@@ -26,6 +28,7 @@ export interface TestEnv {
   clock: FixedClock;
   ids: SequentialIdGenerator;
   ai: HeuristicClassifier;
+  integrations: Integrations;
   config: CompanyConfig;
   company: Company;
   users: Record<"admin" | "manager" | "analyst" | "approver" | "viewer", User>;
@@ -52,6 +55,7 @@ export function createTestEnv(nowIso = "2026-08-18T15:00:00Z"): TestEnv {
   const events = new InMemoryEventBus(repos.events, clock, ids);
   const audit = new HashChainAuditTrail(repos.audit, clock, ids);
   const ai = new HeuristicClassifier();
+  const integrations = buildIntegrations({}); // mocks determinísticos
   const config = DEFAULT_COMPANY_CONFIG;
   const now = clock.now().toISOString();
 
@@ -107,12 +111,13 @@ export function createTestEnv(nowIso = "2026-08-18T15:00:00Z"): TestEnv {
     ids,
     config,
     ai,
+    integrations,
     correlationId: "corr_test",
     today: () => todayInTz(clock.now(), config.timezone),
   });
 
   const orchestrator = (registry: SkillRegistry) =>
-    new Orchestrator({ repos, events, clock, ids, ai, registry });
+    new Orchestrator({ repos, events, clock, ids, ai, integrations, registry });
 
   return {
     db,
@@ -122,6 +127,7 @@ export function createTestEnv(nowIso = "2026-08-18T15:00:00Z"): TestEnv {
     clock,
     ids,
     ai,
+    integrations,
     config,
     company,
     users,

@@ -18,6 +18,7 @@ import type { Clock } from "./clock";
 import { hashPayload, type IdGenerator } from "./ids";
 import type { CompanyConfig } from "./config";
 import type { AiClassifier } from "./ai";
+import type { Integrations } from "./integrations";
 import { todayInTz, type ISODate } from "./dates";
 import { DomainError } from "./errors";
 import type { PendingItem, SkillAlert, SkillResult, SkillStatus } from "./types";
@@ -56,6 +57,8 @@ export interface SkillContext {
   ids: IdGenerator;
   config: CompanyConfig;
   ai: AiClassifier;
+  /** Portas de integração externa (mock por padrão — ver src/integrations). */
+  integrations: Integrations;
   correlationId: string;
   flowRunId?: ID;
   approval?: ApprovalDecision;

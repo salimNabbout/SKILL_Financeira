@@ -13,7 +13,9 @@ e trilha de auditoria imutável.
 - **Regras financeiras determinísticas** em código, com fórmula/período/fonte declarados; IA
   (mock heurístico plugável) apenas sugere classificação e explica.
 - **Nenhuma skill movimenta dinheiro sem aprovação humana** — e toda integração externa do MVP
-  (banco, NF-e, envio de mensagens) é **mock identificado**.
+  (banco, cobrança Pix/boleto, NF-e, envio de mensagens) é **mock identificado**, atrás de
+  portas formais (`src/core/integrations.ts`) selecionadas por env `INTEGRATION_*`; declarar um
+  provedor real ainda não implementado falha na inicialização (mock nunca é fallback silencioso).
 
 Documentação completa (entregáveis): [`docs/`](docs/) — resumo e premissas, perguntas em aberto,
 arquitetura (diagramas), catálogo e contratos das skills, orquestrador (regras + pseudocódigo),

@@ -6,7 +6,7 @@ import type { ISODate } from "@/core/dates";
 import type { ReconciliationMatch } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
-import { confirmMatchAction, importStatementAction, rejectMatchAction } from "./actions";
+import { confirmMatchAction, importStatementAction, rejectMatchAction, syncBankAction } from "./actions";
 
 interface TargetInfo {
   label: string;
@@ -175,6 +175,42 @@ export default async function ConciliacaoPage({
               idempotente: transações já existentes não são duplicadas.
             </p>
           </div>
+        </form>
+      </Card>
+
+      <Card className="mb-6" title="1b — Sincronizar com o banco (mock)">
+        <form action={syncBankAction} className="grid gap-4 md:grid-cols-3">
+          <Field label="Conta bancária">
+            <select name="bankAccountId" required className={inputClass}>
+              <option value="">Selecione…</option>
+              {bankAccounts
+                .filter((b) => b.active)
+                .map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.accountNumberMasked})
+                  </option>
+                ))}
+            </select>
+          </Field>
+          <Field label="Período (dias para trás)">
+            <input
+              type="number"
+              name="sinceDays"
+              min={1}
+              max={90}
+              defaultValue={30}
+              className={inputClass}
+            />
+          </Field>
+          <div className="flex items-end">
+            <Button>Sincronizar e conciliar</Button>
+          </div>
+          <p className="md:col-span-3 text-xs text-[var(--ink-muted)]">
+            Busca transações via provedor de dados bancários configurado (porta de integração). No
+            MVP o provedor é <strong>mock</strong>: gera um extrato sintético determinístico —
+            nenhum banco real é consultado. Sincronizar de novo o mesmo período não duplica
+            transações.
+          </p>
         </form>
       </Card>
 

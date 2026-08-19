@@ -37,6 +37,12 @@ Escopo priorizado e implementado:
 
 ## v1.2 — Integrações reais (6–10 semanas)
 
+- ◐ Camada de portas de integração entregue: `BankDataProvider` (extrato), `ChargeProvider`
+  (Pix/boleto), `FiscalProvider` (NF-e/NFS-e) e `MessagingProvider` (mensageria), com
+  adaptadores mock determinísticos e seleção por env (`INTEGRATION_*`; provedor real não
+  implementado falha alto — mock nunca é fallback silencioso). Fluxo `bank_sync`, emissão de
+  cobrança por título (UI + API) e envio da régua/emissão fiscal já passam pelas portas.
+  Pendente (depende de credenciais/contratos): os provedores REAIS abaixo.
 - Open Finance / agregador bancário (Pluggy/Belvo) para extrato automático diário.
 - Emissão de cobrança real: Pix (PSP), boleto registrado; webhooks de liquidação → baixa automática.
 - NFS-e/NF-e via provedor (ex.: Focus NFe) substituindo o mock por adaptador real.

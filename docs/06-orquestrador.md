@@ -99,6 +99,7 @@ função decidir_aprovação(companyId, approvalId, decisão, actor, justificati
 | `supplier_invoice_intake` | AP → Controles → Tesouraria → Orçamento | — |
 | `schedule_payment` | AP (agenda→**aprova**→executa) → Controles → Tesouraria → Contábil | Pagamento |
 | `bank_statement_import` | Conciliação (importa → concilia) → Tesouraria → Controles | — |
+| `bank_sync` | Conciliação (sincroniza via porta de banco, mock → concilia) → Tesouraria → Controles | — |
 | `customer_invoice_intake` | Faturamento → AR → Tesouraria | — |
 | `dunning_run` | AR (vencidos) → Cobrança (**aprova** envio) → Cobrança (indicadores) | Mensagens |
 | `daily_summary` | Tesouraria → AR → Relatórios | — |

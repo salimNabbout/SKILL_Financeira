@@ -5,6 +5,7 @@ import { runSkill } from "@/core/skill";
 import {
   contasAReceberSkill,
   type CreateReceivableData,
+  type IssueChargeData,
   type ListOverdueData,
   type ProjectionData,
   type RegisterReceiptData,
@@ -585,5 +586,81 @@ describe("contas_a_receber / validação de entrada", () => {
     );
     expect(badDate.status).toBe("error");
     expect(badDate.alerts[0].code).toBe("invalid_input");
+  });
+});
+
+describe("contas_a_receber / issue_charge", () => {
+  it("gera código pix determinístico pelo saldo em aberto, anota no título, audita e publica evento", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const receivable = seedReceivable(env, {
+      id: "rcv_chg",
+      amountCents: 100_000,
+      receivedCents: 40_000,
+      status: "partially_received",
+    });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "issue_charge",
+      receivableId: receivable.id,
+      kind: "pix",
+    });
+
+    expect(res.status).toBe("success");
+    const data = res.data as IssueChargeData;
+    expect(data.charge.provider).toBe("mock");
+    expect(data.charge.kind).toBe("pix");
+    // Cobrança sempre pelo SALDO em aberto, não pelo valor de face.
+    expect(data.remainingCents).toBe(60_000);
+    expect(data.charge.code).toContain("MOCK");
+    expect(data.receivable.notes).toContain(data.charge.chargeId);
+    // Mock claramente identificado.
+    expect(res.assumptions.join(" ").toLowerCase()).toContain("mock");
+
+    expect(env.db.auditRecords.some((a) => a.action === "receivable.charge_issued")).toBe(true);
+    const events = env.db.events.filter((e) => e.type === "receivable.updated");
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toMatchObject({ chargeId: data.charge.chargeId, kind: "pix" });
+  });
+
+  it("reemitir é idempotente: mesmo chargeId, anotação única, sem novo evento", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedReceivable(env, { id: "rcv_chg2", amountCents: 50_000 });
+    const input = { action: "issue_charge", receivableId: "rcv_chg2", kind: "boleto" };
+
+    const first = await runSkill(contasAReceberSkill, env.ctx(), input);
+    const second = await runSkill(contasAReceberSkill, env.ctx(), input);
+
+    const a = first.data as IssueChargeData;
+    const b = second.data as IssueChargeData;
+    expect(b.charge.chargeId).toBe(a.charge.chargeId);
+    expect(b.charge.code).toMatch(/^\d{47}$/); // linha digitável fake do boleto
+    const occurrences = (b.receivable.notes ?? "").split(a.charge.chargeId).length - 1;
+    expect(occurrences).toBe(1);
+    expect(env.db.events.filter((e) => e.type === "receivable.updated")).toHaveLength(1);
+    expect(second.assumptions.join(" ")).toContain("idempotente");
+  });
+
+  it("rejeita título sem saldo em aberto ou inexistente", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedReceivable(env, { id: "rcv_done", amountCents: 30_000, receivedCents: 30_000, status: "received" });
+
+    const settled = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "issue_charge",
+      receivableId: "rcv_done",
+      kind: "pix",
+    });
+    expect(settled.status).toBe("error");
+    expect(settled.alerts[0].code).toBe("invalid_state");
+
+    const missing = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "issue_charge",
+      receivableId: "rcv_404",
+      kind: "pix",
+    });
+    expect(missing.status).toBe("error");
+    expect(missing.alerts[0].code).toBe("not_found");
   });
 });

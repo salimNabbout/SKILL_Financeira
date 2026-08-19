@@ -13,6 +13,7 @@ assinado (`financeira_session`); respostas padronizadas `{ data }` / `{ error: {
 | `GET|POST /suppliers`, `/customers`, `/categories`, `/cost-centers`, `/bank-accounts` | Cadastros (POST exige `master_data.manage` / `bank_account.manage`) |
 | `GET /users` | Usuários da empresa (sem hash de senha) |
 | `GET /payables[/:id]` · `GET /receivables[/:id]` | Títulos com liquidações |
+| `POST /receivables/:id/charge` | Gera código de cobrança Pix/boleto do saldo em aberto via porta `ChargeProvider` (mock: código fake, nada em PSP/banco) |
 | `GET /bank-transactions` | Extrato importado (filtros conta/conciliada) |
 | `GET /flows` | Fluxos disponíveis do orquestrador (passos e permissões) |
 | `POST /flows/:flow/execute` | **Porta de entrada do orquestrador** — `{ payload, idempotencyKey? }` → `OrchestratorResponse` |

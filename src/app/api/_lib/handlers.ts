@@ -41,6 +41,7 @@ import type {
 } from "@/core/entities";
 import { DomainError, NotFoundError, PermissionError, ValidationError } from "@/core/errors";
 import type { Page } from "@/core/repositories";
+import type { Integrations } from "@/core/integrations";
 import type { EventBus } from "@/core/events";
 import type { IdGenerator } from "@/core/ids";
 import type {
@@ -49,6 +50,9 @@ import type {
 } from "@/core/orchestrator/orchestrator";
 import type { SkillRegistry } from "@/core/orchestrator/registry";
 import type { Repositories } from "@/core/repositories";
+import { todayInTz } from "@/core/dates";
+import { runSkill, type SkillContext } from "@/core/skill";
+import type { SkillResult } from "@/core/types";
 import { verifyPassword } from "@/lib/password";
 import { maskSensitive, publicCompany, publicUser, type PublicCompany, type PublicUser } from "./respond";
 
@@ -63,6 +67,7 @@ export interface ApiDeps {
   clock: Clock;
   ids: IdGenerator;
   ai: AiClassifier;
+  integrations: Integrations;
   registry: SkillRegistry;
   orchestrator: Orchestrator;
 }
@@ -600,6 +605,45 @@ export async function getReceivable(
   if (!receivable) throw new NotFoundError("Título a receber", id);
   const receipts = await deps.repos.receipts.listByReceivable(session.company.id, id);
   return { receivable, receipts };
+}
+
+export const issueChargeSchema = z.object({
+  kind: z.enum(["pix", "boleto"]),
+});
+export type IssueChargeApiInput = z.infer<typeof issueChargeSchema>;
+
+/**
+ * Gera código de cobrança (Pix/boleto) para o saldo em aberto do título via a
+ * porta ChargeProvider. No MVP o provedor é MOCK: código fake, nada registrado
+ * em PSP/banco. Idempotente: reemitir não duplica a anotação no título.
+ */
+export async function issueReceivableCharge(
+  deps: ApiDeps,
+  session: ApiSession,
+  receivableId: string,
+  rawInput: unknown
+): Promise<SkillResult<unknown>> {
+  requirePermission(session, "receivable.create");
+  const input = parse(issueChargeSchema, rawInput);
+  const ctx: SkillContext = {
+    companyId: session.company.id,
+    actor: session.actor,
+    repos: deps.repos,
+    events: deps.events,
+    audit: deps.audit,
+    clock: deps.clock,
+    ids: deps.ids,
+    config: session.config,
+    ai: deps.ai,
+    integrations: deps.integrations,
+    correlationId: deps.ids.next("corr"),
+    today: () => todayInTz(deps.clock.now(), session.config.timezone),
+  };
+  return runSkill(deps.registry.get("contas_a_receber"), ctx, {
+    action: "issue_charge",
+    receivableId,
+    kind: input.kind,
+  });
 }
 
 export const listBankTransactionsQuerySchema = pageQuerySchema.extend({

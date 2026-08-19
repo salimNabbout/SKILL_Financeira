@@ -448,8 +448,8 @@ export interface Invoice {
   totalCents: number;
   issueDate?: ISODate;
   status: InvoiceStatus;
-  /** Integração NF-e/NFS-e é MOCK identificado no MVP. */
-  nfeMock?: { number: string; accessKey: string; issuedAt: string; provider: "mock" };
+  /** Dados fiscais emitidos via porta FiscalProvider (provider "mock" no MVP). */
+  nfeMock?: { number: string; accessKey: string; issuedAt: string; provider: string };
   createdBy: ID;
   createdAt: string;
   updatedAt: string;

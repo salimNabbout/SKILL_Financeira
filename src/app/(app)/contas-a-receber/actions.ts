@@ -74,6 +74,39 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
   ok(`Título criado: ${receivables.length} parcela(s) somando ${formatBRL(amountCents)}.`);
 }
 
+export async function issueChargeAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+
+  const receivableId = fdString(formData, "receivableId");
+  const kind = fdString(formData, "kind");
+  if (!receivableId || (kind !== "pix" && kind !== "boleto")) {
+    fail("Selecione o título e o tipo de cobrança (Pix ou boleto).");
+  }
+
+  let result: SkillResult<unknown>;
+  try {
+    assertPermission(session.actor, "receivable.create");
+    result = await callSkill(session, "contas_a_receber", {
+      action: "issue_charge",
+      receivableId,
+      kind,
+    });
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+
+  if (result.status === "error") fail(skillErrorMessage(result));
+  const charge = (result.data as {
+    charge?: { provider?: string; chargeId?: string; code?: string };
+  } | null)?.charge;
+  const code = charge?.code ?? "";
+  const preview = code.length > 60 ? `${code.slice(0, 60)}…` : code;
+  ok(
+    `Cobrança ${kind} gerada via provedor "${charge?.provider ?? "mock"}" (código fake — nada registrado em PSP/banco). ` +
+      `Código: ${preview} (íntegra anotada no título).`
+  );
+}
+
 export async function registerReceiptAction(formData: FormData): Promise<void> {
   const session = await requireSession();
 

@@ -321,7 +321,7 @@ describe("cobranca_inadimplencia — run_dunning", () => {
     expect(res.status).toBe("success");
     expect(data.sent).toBe(2);
     expect(data.messages).toHaveLength(2);
-    expect(res.assumptions.join(" ")).toContain("MOCK");
+    expect(res.assumptions.join(" ").toLowerCase()).toContain("mock");
 
     const persisted = await env.repos.collectionMessages.listAll(env.company.id);
     expect(persisted).toHaveLength(2);

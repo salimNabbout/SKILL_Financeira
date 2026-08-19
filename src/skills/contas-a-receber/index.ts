@@ -13,6 +13,7 @@ import { addDays, addMonths, diffDays, formatBR, minDate, type ISODate } from "@
 import type { CurrencyCode, LateFeeResult } from "@/core/money";
 import { computeLateFee, formatBRL, splitInstallments } from "@/core/money";
 import type { Receipt, Receivable } from "@/core/entities";
+import type { ChargeResult } from "@/core/integrations";
 import { hashPayload } from "@/core/ids";
 import { errorResult, makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
@@ -73,15 +74,23 @@ const projectionSchema = z.object({
   horizonDays: z.number().int().min(1).max(365).optional(),
 });
 
+const issueChargeSchema = z.object({
+  action: z.literal("issue_charge"),
+  receivableId: z.string().min(1),
+  kind: z.enum(["pix", "boleto"]),
+});
+
 export const contasAReceberInputSchema = z.discriminatedUnion("action", [
   createReceivableSchema,
   createFromInvoiceSchema,
   listOverdueSchema,
   registerReceiptSchema,
   projectionSchema,
+  issueChargeSchema,
 ]);
 
 export type ContasAReceberInput = z.infer<typeof contasAReceberInputSchema>;
+export type IssueChargeInput = z.infer<typeof issueChargeSchema>;
 export type CreateReceivableInput = z.infer<typeof createReceivableSchema>;
 export type CreateFromInvoiceInput = z.infer<typeof createFromInvoiceSchema>;
 export type ListOverdueInput = z.infer<typeof listOverdueSchema>;
@@ -136,11 +145,18 @@ export interface ProjectionData {
   period: { start: ISODate; end: ISODate };
 }
 
+export interface IssueChargeData {
+  charge: ChargeResult;
+  receivable: Receivable;
+  remainingCents: number;
+}
+
 export type ContasAReceberData =
   | CreateReceivableData
   | ListOverdueData
   | RegisterReceiptData
   | ProjectionData
+  | IssueChargeData
   | null;
 
 // ---------------------------------------------------------------------------
@@ -683,6 +699,96 @@ export const contasAReceberSkill: SkillDefinition<ContasAReceberInput, ContasARe
         return registerReceipt(ctx, input);
       case "projection":
         return projection(ctx, input);
+      case "issue_charge":
+        return issueCharge(ctx, input);
     }
   },
 };
+
+/**
+ * Emite código de cobrança (Pix copia-e-cola ou linha digitável de boleto) para
+ * o saldo em aberto do título, via porta ChargeProvider — MOCK no MVP: o código
+ * é fake e nada é registrado em PSP/banco. Idempotente: o mesmo título+tipo
+ * gera sempre o mesmo chargeId; reemitir não duplica a anotação.
+ */
+async function issueCharge(
+  ctx: SkillContext,
+  input: IssueChargeInput
+): Promise<SkillResult<ContasAReceberData>> {
+  const receivable = await ctx.repos.receivables.getById(ctx.companyId, input.receivableId);
+  if (!receivable) {
+    return errorResult(SKILL_NAME, ctx, "not_found", `Título a receber não encontrado: ${input.receivableId}.`);
+  }
+  const remaining = receivable.amountCents - receivable.receivedCents;
+  if (remaining <= 0 || receivable.status === "canceled" || receivable.status === "received") {
+    return errorResult(
+      SKILL_NAME,
+      ctx,
+      "invalid_state",
+      `Título ${receivable.id} não possui saldo em aberto para cobrança (status: ${receivable.status}).`
+    );
+  }
+  const customer = await ctx.repos.customers.getById(ctx.companyId, receivable.customerId);
+  if (!customer) {
+    return errorResult(SKILL_NAME, ctx, "not_found", `Cliente não encontrado: ${receivable.customerId}.`);
+  }
+
+  const charge = await ctx.integrations.charges.createCharge({
+    kind: input.kind,
+    amountCents: remaining,
+    dueDate: receivable.dueDate,
+    customerName: customer.name,
+    customerDocument: customer.document,
+    receivableId: receivable.id,
+  });
+
+  // Idempotência da anotação: reemitir a mesma cobrança não duplica a nota.
+  const noteLine = `Cobrança ${input.kind} (${charge.provider} ${charge.chargeId}): ${charge.code}`;
+  const alreadyNoted = receivable.notes?.includes(charge.chargeId) ?? false;
+  if (!alreadyNoted) {
+    const before = { ...receivable };
+    receivable.notes = receivable.notes ? `${receivable.notes}\n${noteLine}` : noteLine;
+    receivable.updatedAt = ctx.clock.now().toISOString();
+    await ctx.repos.receivables.update(receivable);
+    await ctx.audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "receivable.charge_issued",
+      entityType: "receivable",
+      entityId: receivable.id,
+      before,
+      after: { ...receivable, chargeId: charge.chargeId, provider: charge.provider },
+      correlationId: ctx.correlationId,
+    });
+    await ctx.events.publish({
+      companyId: ctx.companyId,
+      type: "receivable.updated",
+      payload: {
+        receivableId: receivable.id,
+        chargeId: charge.chargeId,
+        kind: input.kind,
+        provider: charge.provider,
+        amountCents: remaining,
+      },
+      source: SKILL_NAME,
+      correlationId: ctx.correlationId,
+    });
+  }
+
+  const data: IssueChargeData = { charge, receivable, remainingCents: remaining };
+
+  return makeResult(
+    SKILL_NAME,
+    ctx,
+    data as ContasAReceberData,
+    {
+      assumptions: [
+        `Código gerado pela porta de cobrança "${charge.provider}" — no provedor mock o código é fake e NENHUM registro é feito em PSP/banco; a liquidação real continua entrando pela conciliação do extrato.`,
+        ...(alreadyNoted
+          ? [`Cobrança ${charge.chargeId} já estava registrada no título; reemissão idempotente.`]
+          : []),
+      ],
+      confidence: 1.0,
+      dataSources: ["receivables", "customers", "integration:charges"],
+    }
+  );
+}

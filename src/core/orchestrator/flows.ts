@@ -203,6 +203,51 @@ const bankStatementImport: FlowDefinition = {
 };
 
 /**
+ * Sincronização de extrato via provedor de dados bancários (porta BankDataProvider).
+ * No MVP o provedor é MOCK (claramente identificado): gera um extrato sintético
+ * determinístico — nenhum banco real é consultado.
+ * payload: { bankAccountId, sinceDays? }
+ */
+const bankSync: FlowDefinition = {
+  name: "bank_sync",
+  description:
+    "Sincroniza transações da conta via provedor de dados bancários (mock no MVP), deduplica, concilia automaticamente, atualiza caixa e varre anomalias.",
+  requiredPermission: "reconciliation.manage",
+  steps: [
+    {
+      id: "sync",
+      skill: "conciliacao_bancaria",
+      description: "Buscar transações no provedor e deduplicar",
+      buildInput: (f) => ({
+        action: "sync_bank",
+        bankAccountId: f.payload.bankAccountId,
+        sinceDays: f.payload.sinceDays,
+      }),
+    },
+    {
+      id: "match",
+      skill: "conciliacao_bancaria",
+      description: "Conciliação automática com grau de confiança",
+      buildInput: (f) => ({ action: "auto_match", bankAccountId: f.payload.bankAccountId }),
+    },
+    {
+      id: "treasury_refresh",
+      skill: "tesouraria_fluxo_caixa",
+      description: "Atualizar posição de caixa",
+      buildInput: () => ({ action: "refresh_projection", horizonDays: 90 }),
+      continueOnError: true,
+    },
+    {
+      id: "controls_scan",
+      skill: "controles_internos_auditoria",
+      description: "Varredura de anomalias nas transações",
+      buildInput: () => ({ action: "scan_anomalies" }),
+      continueOnError: true,
+    },
+  ],
+};
+
+/**
  * Faturamento de venda: gera cobrança e títulos a receber.
  * payload: { customerId, description, totalCents, saleRef?,
  *            installments?: [{ dueDate, amountCents }], method? }
@@ -373,6 +418,7 @@ export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
   bankStatementImport,
+  bankSync,
   customerInvoiceIntake,
   dunningRun,
   dailySummary,

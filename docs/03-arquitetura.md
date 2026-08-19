@@ -40,11 +40,12 @@ flowchart TB
         MEM[("Memória<br/>modo demo/testes")]
     end
 
-    subgraph Externos["Integrações (adaptadores)"]
-        OFX["OFX / CSV<br/>importadores reais"]
-        BANK["API bancária /<br/>Open Finance — MOCK"]
-        NFE["NF-e / NFS-e — MOCK"]
-        MSG["E-mail / WhatsApp — MOCK"]
+    subgraph Externos["Integrações (portas em core/integrations.ts, seleção por INTEGRATION_*)"]
+        OFX["OFX / CSV / CNAB240<br/>importadores reais"]
+        BANK["BankDataProvider<br/>extrato — adaptador MOCK"]
+        CHG["ChargeProvider<br/>Pix/boleto — adaptador MOCK"]
+        NFE["FiscalProvider<br/>NF-e/NFS-e — adaptador MOCK"]
+        MSG["MessagingProvider<br/>e-mail/WhatsApp — adaptador MOCK"]
     end
 
     UI --> ORQ
@@ -58,6 +59,7 @@ flowchart TB
     REPO --> MEM
     CON --> OFX
     CON -.-> BANK
+    AR -.-> CHG
     FAT -.-> NFE
     COB -.-> MSG
 ```
@@ -76,6 +78,7 @@ flowchart TB
 | Aprovação humana | Fluxo suspenso → `Approval` → retomada com decisão | Segregação de funções e alçada verificadas no motor |
 | Auditoria | Append-only com hash encadeado | Adulteração detectável (`verifyChain`) |
 | Multiempresa | `companyId` em toda entidade + RBAC por vínculo | Isolamento lógico por empresa |
+| Integrações externas | Portas em `core/integrations.ts` + adaptadores por env (`INTEGRATION_*`) | Mock determinístico como padrão explícito; provedor real não implementado falha alto (nunca fallback silencioso) |
 
 ## Ciclo de vida de uma solicitação
 

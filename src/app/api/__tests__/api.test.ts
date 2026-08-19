@@ -149,6 +149,7 @@ function buildDeps(env: TestEnv, registry: SkillRegistry = buildFakeRegistry()):
     clock: env.clock,
     ids: env.ids,
     ai: env.ai,
+    integrations: env.integrations,
     registry,
     orchestrator: env.orchestrator(registry),
   };

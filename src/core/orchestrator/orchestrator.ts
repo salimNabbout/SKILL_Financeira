@@ -24,6 +24,7 @@ import { hashPayload, type IdGenerator } from "../ids";
 import type { Repositories } from "../repositories";
 import { runSkill, type ApprovalDecision, type SkillContext } from "../skill";
 import type { AiClassifier } from "../ai";
+import type { Integrations } from "../integrations";
 import type { ApprovalRequestData, PendingItem, SkillAlert, SkillResult } from "../types";
 import { buildFlowMap, type FlowDefinition, type FlowStepContext } from "./flows";
 import type { SkillRegistry } from "./registry";
@@ -62,6 +63,7 @@ export interface OrchestratorEnv {
   clock: Clock;
   ids: IdGenerator;
   ai: AiClassifier;
+  integrations: Integrations;
   registry: SkillRegistry;
   flows?: Map<string, FlowDefinition>;
 }
@@ -426,7 +428,7 @@ export class Orchestrator {
     config: CompanyConfig,
     approval?: ApprovalDecision
   ): SkillContext {
-    const { repos, events, clock, ids, ai } = this.env;
+    const { repos, events, clock, ids, ai, integrations } = this.env;
     return {
       companyId: flowRun.companyId,
       actor,
@@ -437,6 +439,7 @@ export class Orchestrator {
       ids,
       config,
       ai,
+      integrations,
       correlationId: flowRun.correlationId,
       flowRunId: flowRun.id,
       approval,
