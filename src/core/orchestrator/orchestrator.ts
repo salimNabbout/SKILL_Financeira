@@ -396,8 +396,10 @@ export class Orchestrator {
       summary: req.summary,
       amountCents: req.amountCents,
       requestedBy: flowRun.requestedBy,
-      requiredRole: requiredRoleForAmount(config, req.amountCents ?? 0),
-      approvalsRequired: requiredApprovalsForAmount(config, req.amountCents ?? 0),
+      // A alçada usa tierAmountCents quando informado (ex.: valor do título
+      // inteiro), evitando que um pagamento fracionado rebaixe o papel exigido.
+      requiredRole: requiredRoleForAmount(config, req.tierAmountCents ?? req.amountCents ?? 0),
+      approvalsRequired: requiredApprovalsForAmount(config, req.tierAmountCents ?? req.amountCents ?? 0),
       approverIds: [],
       status: "pending",
       createdAt: this.env.clock.now().toISOString(),

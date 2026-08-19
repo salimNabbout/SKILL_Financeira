@@ -199,6 +199,43 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(actions).toContain("flow.completed");
   });
 
+  it("não permite burlar a alçada fracionando o pagamento de um título grande", async () => {
+    // Título de R$ 60.000 (acima de R$ 50.000 → exige admin).
+    const res0 = await orch.execute({
+      flow: "supplier_invoice_intake",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {
+        supplierId: "sup_1",
+        description: "NF 9002 — máquina",
+        issueDate: "2026-08-01",
+        dueDate: "2026-08-25",
+        amountCents: 6_000_000,
+        categoryId: "cat_insumos",
+      },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bigPayableId = (res0.results[0].result.data as any).payables[0].id;
+
+    // Agenda apenas R$ 4.999 (abaixo da faixa de approver) — a alçada exigida
+    // deve refletir o TAMANHO DO TÍTULO (admin), não o do pagamento fracionado.
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {
+        payableId: bigPayableId,
+        bankAccountId: "ba_1",
+        scheduledDate: "2026-08-20",
+        method: "pix",
+        amountCents: 499_900,
+      },
+    });
+
+    expect(res.status).toBe("awaiting_approval");
+    expect(res.approval?.requiredRole).toBe("admin");
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

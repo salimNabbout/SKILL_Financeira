@@ -231,6 +231,45 @@ describe("contas_a_pagar — create_payable", () => {
     expect(second.assumptions.some((a) => a.includes("reutilizado"))).toBe(true);
   });
 
+  it("cria obrigações recorrentes distintas quando muda o vencimento (mesmo nome/valor)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedCategory(env, { id: "cat_alu" });
+
+    // Aluguel de agosto (sem documento): descrição e valor iguais aos de setembro,
+    // mudando apenas emissão/vencimento — devem ser títulos SEPARADOS.
+    const agosto = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        description: "Aluguel",
+        amountCents: 200_000,
+        issueDate: "2026-08-01",
+        dueDate: "2026-08-10",
+        categoryId: "cat_alu",
+      })
+    );
+    const setembro = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        description: "Aluguel",
+        amountCents: 200_000,
+        issueDate: "2026-09-01",
+        dueDate: "2026-09-10",
+        categoryId: "cat_alu",
+      })
+    );
+
+    expect(agosto.status).toBe("success");
+    expect(setembro.status).toBe("success");
+    const idAgosto = (agosto.data as CreatePayableData).payables[0].id;
+    const idSetembro = (setembro.data as CreatePayableData).payables[0].id;
+    expect(idSetembro).not.toBe(idAgosto);
+    expect(env.db.payables).toHaveLength(2);
+    expect(setembro.assumptions.some((a) => a.includes("reutilizado"))).toBe(false);
+  });
+
   it("detecta documento duplicado por hash e reutiliza o registro", async () => {
     const env = createTestEnv();
     seedSupplier(env);
@@ -342,6 +381,45 @@ describe("contas_a_pagar — schedule_payment e aprovação", () => {
     expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("scheduled");
     expect(env.db.events.some((e) => e.type === "payment.scheduled")).toBe(true);
     expect(env.db.events.some((e) => e.type === "payment.executed")).toBe(false);
+  });
+
+  it("recusa segundo agendamento que ultrapassa o saldo já reservado por pagamento pendente", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+
+    // 1º agendamento reserva o valor integral (fica pending_approval).
+    const first = await schedule(env, payable.id);
+    expect(first.res.status).toBe("awaiting_approval");
+
+    // 2º agendamento do valor integral deve ser recusado: o saldo já está
+    // comprometido por um pagamento pendente (evita dupla baixa).
+    const second = await schedule(env, payable.id);
+    expect(second.res.status).toBe("error");
+    expect(second.res.alerts.some((a) => /saldo|reservad|pendente/i.test(a.message))).toBe(true);
+
+    // Só existe UM pagamento pendente para o título.
+    const pendentes = env.db.payments.filter(
+      (p) => p.payableId === payable.id && p.status === "pending_approval"
+    );
+    expect(pendentes).toHaveLength(1);
+  });
+
+  it("permite dois agendamentos parciais que somados cabem no saldo", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+
+    const first = await schedule(env, payable.id, 20_000);
+    expect(first.res.status).toBe("awaiting_approval");
+    const second = await schedule(env, payable.id, 30_000);
+    expect(second.res.status).toBe("awaiting_approval");
+
+    // Um terceiro de qualquer valor não cabe (saldo todo reservado).
+    const third = await schedule(env, payable.id, 1_000);
+    expect(third.res.status).toBe("error");
   });
 
   it("aprovação executa (mock), quita o título e publica payment.executed", async () => {
