@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { getContainer, isDemoMode } from "@/lib/container";
 import { logoutAction } from "@/app/login/actions";
 import { ROLE_LABELS } from "@/lib/format";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { switchCompanyAction } from "./company-actions";
 
 const NAV: Array<{ href: string; label: string }> = [
@@ -83,6 +84,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="mt-8 border-t border-[var(--line)] pt-4 text-xs text-[var(--ink-muted)]">
           <p className="font-medium text-[var(--ink)]">{session.user.name}</p>
           <p>{ROLE_LABELS[session.membership.role] ?? session.membership.role}</p>
+          <div className="mt-3">
+            <ThemeToggle />
+          </div>
           <form action={logoutAction} className="mt-2">
             <button type="submit" className="text-[var(--brand)] hover:underline">
               Sair

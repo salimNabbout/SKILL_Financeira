@@ -11,7 +11,71 @@
   --ok: #1a7f4e;
   --warn: #a86400;
   --crit: #b3261e;
+  /* Superfícies e fundos semânticos suaves (usados pelo tema escuro). */
+  --surface-2: #f1f3f6;
+  --ok-soft: #e6f3ec;
+  --warn-soft: #fbf1e0;
+  --crit-soft: #fbeae9;
+  --info-soft: #e7eff7;
 }
+
+/*
+ * Tema escuro. O atributo data-theme é escrito no <html> pelo script inline do
+ * layout raiz (antes da primeira pintura, para não piscar) e alternado pelo
+ * botão em ThemeToggle. Sem o atributo, vale o tema claro acima.
+ */
+:root[data-theme="dark"] {
+  --bg: #121722;
+  --surface: #1a2130;
+  --surface-2: #222b3d;
+  --ink: #e6eaf0;
+  --ink-muted: #9aa4b6;
+  --line: #2a3346;
+  --brand: #7fb2e0;
+  --brand-ink: #0b1220;
+  --ok: #5cc38d;
+  --warn: #e0a852;
+  --crit: #f08a80;
+  --ok-soft: #16281f;
+  --warn-soft: #2b2314;
+  --crit-soft: #2e1a19;
+  --info-soft: #1b2a3d;
+  color-scheme: dark;
+}
+
+/*
+ * Compatibilidade com as telas existentes.
+ *
+ * As páginas usam utilitários de cor fixos do Tailwind (bg-white, bg-slate-50,
+ * bg-amber-50…), que no escuro apareceriam como manchas claras. Em vez de
+ * reescrever ~70 ocorrências em 25 arquivos, o tema escuro remapeia essas
+ * classes para os tokens — o HTML das telas fica intacto e o tema claro não
+ * muda em nada. Ao criar telas novas, prefira os tokens diretamente.
+ */
+:root[data-theme="dark"] .bg-white { background-color: var(--surface); }
+:root[data-theme="dark"] .bg-slate-50 { background-color: var(--surface-2); }
+:root[data-theme="dark"] .bg-slate-100 { background-color: var(--surface-2); }
+:root[data-theme="dark"] .hover\:bg-slate-50:hover { background-color: var(--surface-2); }
+:root[data-theme="dark"] .hover\:bg-slate-100:hover { background-color: var(--surface-2); }
+:root[data-theme="dark"] .border-slate-200 { border-color: var(--line); }
+:root[data-theme="dark"] .text-slate-700 { color: var(--ink); }
+
+:root[data-theme="dark"] .bg-amber-50 { background-color: var(--warn-soft); }
+:root[data-theme="dark"] .border-amber-200,
+:root[data-theme="dark"] .border-amber-300 { border-color: var(--warn); }
+:root[data-theme="dark"] .text-amber-700,
+:root[data-theme="dark"] .text-amber-800,
+:root[data-theme="dark"] .text-amber-900 { color: var(--warn); }
+
+:root[data-theme="dark"] .bg-emerald-50 { background-color: var(--ok-soft); }
+:root[data-theme="dark"] .border-emerald-200 { border-color: var(--ok); }
+
+:root[data-theme="dark"] .bg-red-50 { background-color: var(--crit-soft); }
+:root[data-theme="dark"] .border-red-200,
+:root[data-theme="dark"] .border-red-300 { border-color: var(--crit); }
+
+:root[data-theme="dark"] .bg-blue-50 { background-color: var(--info-soft); }
+:root[data-theme="dark"] .border-blue-200 { border-color: var(--brand); }
 
 html {
   background: var(--bg);
