@@ -216,7 +216,7 @@ export class Orchestrator {
     justification?: string;
   }): Promise<OrchestratorResponse | { approval: Approval }> {
     const { companyId, approvalId, decision, actor, justification } = params;
-    const approval = await this.env.repos.approvals.getById(companyId, approvalId);
+    let approval = await this.env.repos.approvals.getById(companyId, approvalId);
     if (!approval) throw new NotFoundError("Aprovação", approvalId);
     if (approval.status !== "pending") {
       throw new ValidationError(`Aprovação ${approvalId} já decidida (${approval.status}).`);
@@ -242,39 +242,74 @@ export class Orchestrator {
         "Você já registrou aprovação nesta solicitação — as demais aprovações devem vir de OUTRAS pessoas (dupla aprovação)."
       );
     }
-    const approverIds = decision === "approved" ? [...priorApprovers, actor.id] : priorApprovers;
 
-    if (decision === "approved" && approverIds.length < approvalsRequired) {
-      const partial: Approval = {
-        ...approval,
-        approverIds,
-        justification: justification ?? approval.justification,
-      };
-      await this.env.repos.approvals.update(partial);
-      await this.audit.record(companyId, {
-        actor,
-        action: "approval.partially_approved",
-        entityType: "Approval",
-        entityId: approval.id,
-        before: { approvals: priorApprovers.length, required: approvalsRequired },
-        after: { approvals: approverIds.length, required: approvalsRequired, justification },
-      });
-      await this.env.events.publish({
-        companyId,
-        type: "approval.partially_approved",
-        payload: {
-          approvalId: approval.id,
-          approvedBy: actor.id,
-          approvals: approverIds.length,
-          approvalsRequired,
-        },
-        source: "orchestrator",
-        correlationId: approval.flowRunId ?? approval.id,
-      });
-      // Fluxo continua suspenso aguardando a(s) próxima(s) aprovação(ões).
-      return { approval: partial };
+    // Aprovação PARCIAL (ainda não atinge o total exigido): registra o voto com
+    // trava otimista por versão, para que dois votos concorrentes não se percam.
+    // A perdedora do compare-and-set relê a versão nova e reaplica seu voto.
+    // approverIds finais (com o voto deste ator, se aprovação). Pode ser
+    // recalculado pelo laço parcial abaixo ao relê após conflito de versão.
+    let finalApprovers = decision === "approved" ? [...priorApprovers, actor.id] : priorApprovers;
+
+    if (decision === "approved" && finalApprovers.length < approvalsRequired) {
+      // Aprovação PARCIAL: registra o voto com trava otimista por versão, para
+      // que dois votos concorrentes não se percam. A perdedora do compare-and-set
+      // relê a versão nova e reaplica seu voto.
+      let current = approval;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const before = current.approverIds ?? [];
+        if (before.includes(actor.id)) {
+          throw new ValidationError(
+            "Você já registrou aprovação nesta solicitação — as demais aprovações devem vir de OUTRAS pessoas (dupla aprovação)."
+          );
+        }
+        finalApprovers = [...before, actor.id];
+        // Se, com o voto reaplicado, o total foi atingido, sai para o terminal.
+        if (finalApprovers.length >= approvalsRequired) {
+          approval = current;
+          break;
+        }
+        const partial: Approval = {
+          ...current,
+          approverIds: finalApprovers,
+          justification: justification ?? current.justification,
+          version: (current.version ?? 0) + 1,
+        };
+        const claimed = await this.env.repos.approvals.updateIfVersion(partial, current.version ?? 0);
+        if (!claimed) {
+          const reread = await this.env.repos.approvals.getById(companyId, approvalId);
+          if (!reread) throw new NotFoundError("Aprovação", approvalId);
+          if (reread.status !== "pending") {
+            throw new ValidationError(`Aprovação ${approvalId} já decidida (${reread.status}).`);
+          }
+          current = reread;
+          continue;
+        }
+        await this.audit.record(companyId, {
+          actor,
+          action: "approval.partially_approved",
+          entityType: "Approval",
+          entityId: approval.id,
+          before: { approvals: before.length, required: approvalsRequired },
+          after: { approvals: finalApprovers.length, required: approvalsRequired, justification },
+        });
+        await this.env.events.publish({
+          companyId,
+          type: "approval.partially_approved",
+          payload: {
+            approvalId: approval.id,
+            approvedBy: actor.id,
+            approvals: finalApprovers.length,
+            approvalsRequired,
+          },
+          source: "orchestrator",
+          correlationId: approval.flowRunId ?? approval.id,
+        });
+        // Fluxo continua suspenso aguardando a(s) próxima(s) aprovação(ões).
+        return { approval: partial };
+      }
     }
 
+    const approverIds = finalApprovers;
     const decided: Approval = {
       ...approval,
       approverIds,

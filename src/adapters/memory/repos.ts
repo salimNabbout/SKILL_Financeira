@@ -374,6 +374,15 @@ class MemApprovalRepo extends MemBase<import("@/core/entities").Approval> implem
     this.items[idx] = clone(next);
     return true;
   }
+  async updateIfVersion(next: import("@/core/entities").Approval, expectedVersion: number) {
+    const idx = this.items.findIndex(
+      (a) => a.companyId === next.companyId && a.id === next.id
+    );
+    if (idx < 0) return false;
+    if ((this.items[idx].version ?? 0) !== expectedVersion) return false;
+    this.items[idx] = clone(next);
+    return true;
+  }
 }
 
 class MemReconciliationRepo extends MemBase<ReconciliationMatch> implements ReconciliationRepo {

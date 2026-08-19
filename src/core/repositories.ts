@@ -185,6 +185,13 @@ export interface ApprovalRepo extends BaseRepo<Approval> {
     next: Approval,
     expectedStatus: ApprovalStatus
   ): Promise<boolean>;
+  /**
+   * Compare-and-set por VERSÃO: grava `next` (com version incrementada) apenas
+   * se a versão persistida for `expectedVersion`. Devolve true se gravou. Usado
+   * nas aprovações parciais (four-eyes) para não perder votos concorrentes: a
+   * decisão perdedora relê e reaplica sobre a versão nova.
+   */
+  updateIfVersion(next: Approval, expectedVersion: number): Promise<boolean>;
 }
 
 export interface ReconciliationRepo extends BaseRepo<ReconciliationMatch> {

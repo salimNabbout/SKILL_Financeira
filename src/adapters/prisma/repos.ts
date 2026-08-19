@@ -633,6 +633,7 @@ const approvalToDomain = (r: DbApproval): Approval => ({
   decidedBy: strOpt(r.decidedBy),
   decidedAt: fromInstantOpt(r.decidedAt),
   justification: strOpt(r.justification),
+  version: r.version,
   createdAt: fromInstant(r.createdAt),
 });
 const approvalToDb = (e: Approval): Prisma.ApprovalUncheckedCreateInput => ({
@@ -651,6 +652,7 @@ const approvalToDb = (e: Approval): Prisma.ApprovalUncheckedCreateInput => ({
   decidedBy: strNull(e.decidedBy),
   decidedAt: toInstantOpt(e.decidedAt),
   justification: strNull(e.justification),
+  version: e.version ?? 0,
   createdAt: toInstant(e.createdAt),
 });
 
@@ -1571,6 +1573,14 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
       const data = approvalToDb(next);
       const result = await prisma.approval.updateMany({
         where: { id: next.id, companyId: next.companyId, status: expectedStatus },
+        data,
+      });
+      return result.count === 1;
+    },
+    async updateIfVersion(next: Approval, expectedVersion: number) {
+      const data = approvalToDb(next);
+      const result = await prisma.approval.updateMany({
+        where: { id: next.id, companyId: next.companyId, version: expectedVersion },
         data,
       });
       return result.count === 1;

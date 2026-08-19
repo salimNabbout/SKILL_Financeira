@@ -348,6 +348,8 @@ export interface Approval {
   decidedBy?: ID;
   decidedAt?: string;
   justification?: string;
+  /** Versão para trava otimista (four-eyes sem lost-update). Ausente = 0. */
+  version?: number;
   createdAt: string;
 }
 
