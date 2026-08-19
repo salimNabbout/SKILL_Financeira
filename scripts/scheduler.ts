@@ -19,7 +19,7 @@
 import { PrismaClient } from "@prisma/client";
 
 import { createPrismaRepositories } from "../src/adapters/prisma/repos";
-import { HeuristicClassifier } from "../src/core/ai";
+import { buildAi } from "../src/adapters/ai/registry";
 import { SystemClock } from "../src/core/clock";
 import { resolveCompanyConfig } from "../src/core/config";
 import type { Actor } from "../src/core/entities";
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     events,
     clock,
     ids,
-    ai: new HeuristicClassifier(),
+    ai: buildAi(),
     integrations: buildIntegrations(),
     registry: buildRegistry(),
   });

@@ -58,9 +58,11 @@ Escopo priorizado e implementado:
 
 ## v1.3 — Inteligência e escala
 
-- IA com LLM real atrás da interface `AiClassifier` (classificação de lançamentos, explicações,
-  resumo narrativo dos relatórios) com validação determinística, redação de dados sensíveis e
-  política de privacidade LGPD para envio a terceiros.
+- ◐ IA com LLM real atrás da interface `AiClassifier` — adaptador Anthropic entregue
+  (`AI_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`; sem chave a inicialização falha alto):
+  classificação de lançamentos com redação LGPD antes do envio, validação determinística
+  contra a lista fechada de categorias, teto de confiança 0.9 e degradação explícita para a
+  heurística local por chamada. Pendente: explicações/resumo narrativo dos relatórios via LLM.
 - ◐ Previsão de fluxo de caixa estatística entregue de forma determinística (antecipada da
   v1.3): ação `forecast_cash` da tesouraria com mediana/MAD, tendência robusta Theil–Sen,
   sazonalidade mensal (ativada com ≥ 52 semanas de histórico) e banda de incerteza ± MAD×1.4826×√k;
