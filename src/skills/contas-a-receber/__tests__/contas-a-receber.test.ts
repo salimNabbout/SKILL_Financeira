@@ -137,6 +137,21 @@ describe("contas_a_receber / create_receivable", () => {
     expect(env.db.auditRecords.some((a) => a.action === "receivable.created" && a.entityId === r.id)).toBe(true);
   });
 
+  it("rejeita vencimento anterior à emissão (paridade com contas a pagar)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+
+    const res = await runSkill(
+      contasAReceberSkill,
+      env.ctx(),
+      baseCreateInput({ issueDate: "2026-09-10", dueDate: "2026-08-10" })
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts?.[0]?.message).toMatch(/vencimento|anterior/i);
+    expect(env.db.receivables).toHaveLength(0);
+  });
+
   it("divide parcelas somando exatamente o total e vence mês a mês", async () => {
     const env = createTestEnv();
     seedCustomer(env);

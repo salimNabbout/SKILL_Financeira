@@ -609,12 +609,17 @@ async function resumePaymentDecision(ctx: SkillContext): Promise<SkillResult<Sch
     payment.executedBy = decision.decidedBy;
     payment.approvalId = decision.id;
     payment.updatedAt = nowIso;
-    await ctx.repos.payments.update(payment);
 
     payable.paidCents += payment.amountCents;
     payable.status = payable.paidCents >= payable.amountCents ? "paid" : "partially_paid";
     payable.updatedAt = nowIso;
-    await ctx.repos.payables.update(payable);
+
+    // Atômico: pagamento executado e título baixado commitam juntos — um crash
+    // entre os dois não deixa mais o pagamento "executed" com o título em aberto.
+    await ctx.repos.withTransaction(async (tx) => {
+      await tx.payments.update(payment);
+      await tx.payables.update(payable);
+    });
 
     await ctx.audit.record(ctx.companyId, {
       actor: ctx.actor,

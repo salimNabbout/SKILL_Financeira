@@ -124,6 +124,18 @@ describe("parseOfx", () => {
     expect(parsed.warnings).toHaveLength(2);
   });
 
+  it("decodifica entidades SGML/XML na descrição (&amp; &lt; &#233;)", () => {
+    const content = `<STMTTRN>
+<DTPOSTED>20260815
+<TRNAMT>100.00
+<FITID>E1
+<MEMO>CIA A&amp;B LTDA &lt;matriz&gt; caf&#233;
+</STMTTRN>`;
+    const parsed = parseOfx(content);
+    expect(parsed.transactions).toHaveLength(1);
+    expect(parsed.transactions[0].description).toBe("CIA A&B LTDA <matriz> café");
+  });
+
   it("avisa quando não há blocos STMTTRN", () => {
     const parsed = parseOfx("OFXHEADER:100\n<OFX></OFX>");
     expect(parsed.transactions).toEqual([]);
@@ -207,6 +219,18 @@ describe("parsers de valores monetários", () => {
     expect(parseLocalizedAmountToCents("1500")).toBe(150_000);
     expect(parseLocalizedAmountToCents("")).toBeNull();
     expect(parseLocalizedAmountToCents("x,y")).toBeNull();
+  });
+
+  it("parseLocalizedAmountToCents: sinal ao final e parênteses contábeis são negativos", () => {
+    // Débitos marcados com sinal ao final (extratos legados).
+    expect(parseLocalizedAmountToCents("150,00-")).toBe(-15_000);
+    expect(parseLocalizedAmountToCents("1.234,56-")).toBe(-123_456);
+    // Parênteses contábeis = negativo.
+    expect(parseLocalizedAmountToCents("(1.234,56)")).toBe(-123_456);
+    expect(parseLocalizedAmountToCents("(150,00)")).toBe(-15_000);
+    // Combinações inválidas continuam nulas.
+    expect(parseLocalizedAmountToCents("-150,00-")).toBeNull();
+    expect(parseLocalizedAmountToCents("(150,00")).toBeNull();
   });
 });
 

@@ -52,6 +52,12 @@ export function parseMoneyToCents(raw: string): number | null {
       intPart = body.slice(0, sepIdx);
       fracPart = after;
     } else {
+      // Separador de milhar: cada grupo após o primeiro deve ter 3 dígitos,
+      // senão a entrada é ambígua/malformada ("2.500.00" ≠ 250.000).
+      const groups = body.split(sepChar);
+      const wellFormed =
+        /^\d{1,3}$/.test(groups[0]) && groups.slice(1).every((g) => /^\d{3}$/.test(g));
+      if (!wellFormed) return null;
       intPart = body;
     }
   }

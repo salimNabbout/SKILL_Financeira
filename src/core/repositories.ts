@@ -185,6 +185,13 @@ export interface ApprovalRepo extends BaseRepo<Approval> {
     next: Approval,
     expectedStatus: ApprovalStatus
   ): Promise<boolean>;
+  /**
+   * Compare-and-set por VERSÃO: grava `next` (com version incrementada) apenas
+   * se a versão persistida for `expectedVersion`. Devolve true se gravou. Usado
+   * nas aprovações parciais (four-eyes) para não perder votos concorrentes: a
+   * decisão perdedora relê e reaplica sobre a versão nova.
+   */
+  updateIfVersion(next: Approval, expectedVersion: number): Promise<boolean>;
 }
 
 export interface ReconciliationRepo extends BaseRepo<ReconciliationMatch> {
@@ -211,6 +218,13 @@ export interface SkillExecutionRepo {
   list(companyId: ID, skill?: string): Promise<SkillExecution[]>;
 }
 
+/** Âncora do último registro da cadeia de auditoria de uma empresa. */
+export interface AuditHead {
+  companyId: ID;
+  seq: number;
+  hash: string;
+}
+
 /** Trilha de auditoria: append-only. Não há update nem delete. */
 export interface AuditRepo {
   append(record: AuditRecord): Promise<void>;
@@ -221,6 +235,13 @@ export interface AuditRepo {
     companyId: ID,
     query: PageQuery & { entityType?: string; entityId?: ID }
   ): Promise<Page<AuditRecord>>;
+  /**
+   * Âncora do head (seq/hash do último registro) guardada à parte da lista de
+   * registros — permite detectar truncamento do FIM da trilha (registros
+   * apagados no fim mantêm um prefixo válido, mas divergem do head ancorado).
+   */
+  getHead(companyId: ID): Promise<AuditHead | null>;
+  setHead(head: AuditHead): Promise<void>;
 }
 
 // --- Faturamento, cobrança, contabilidade -----------------------------------
@@ -287,4 +308,11 @@ export interface Repositories {
   accountingEntries: AccountingEntryRepo;
   flowRuns: FlowRunRepo;
   idempotency: IdempotencyRepo;
+  /**
+   * Executa `fn` numa transação: as escritas feitas pelos repositórios passados
+   * a `fn` commitam juntas, ou são revertidas por completo se `fn` lançar.
+   * Prisma: transação real do banco. Memória: snapshot/restaura em caso de erro.
+   * Usado onde negócio + auditoria + evento precisam ser atômicos.
+   */
+  withTransaction<T>(fn: (txRepos: Repositories) => Promise<T>): Promise<T>;
 }

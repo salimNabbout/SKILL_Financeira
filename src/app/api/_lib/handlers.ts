@@ -53,8 +53,9 @@ import type { Repositories } from "@/core/repositories";
 import { todayInTz } from "@/core/dates";
 import { runSkill, type SkillContext } from "@/core/skill";
 import type { SkillResult } from "@/core/types";
-import { verifyPassword } from "@/lib/password";
-import { verifyTotp } from "@/lib/totp";
+import { verifyPasswordAsync } from "@/lib/password";
+import { InMemoryRateLimiter } from "@/lib/rate-limit";
+import { verifyTotpConsume } from "@/lib/totp";
 import { EXPORT_LAYOUT_IDS } from "@/skills/contabil/layouts";
 import type { ExportBatchData } from "@/skills/contabil";
 import { maskSensitive, publicCompany, publicUser, type PublicCompany, type PublicUser } from "./respond";
@@ -133,23 +134,55 @@ export interface LoginResult {
   companyId: string;
 }
 
-export async function login(deps: ApiDeps, rawInput: unknown): Promise<LoginResult> {
+/** Contexto opcional do login: chave do cliente (IP) e limitador de tentativas. */
+export interface LoginContext {
+  clientKey?: string;
+  rateLimiter?: InMemoryRateLimiter;
+}
+
+// Limitador padrão por processo: 10 tentativas por IP+e-mail a cada 5 minutos.
+const defaultLoginRateLimiter = new InMemoryRateLimiter({ maxAttempts: 10, windowMs: 5 * 60_000 });
+
+export async function login(
+  deps: ApiDeps,
+  rawInput: unknown,
+  context: LoginContext = {}
+): Promise<LoginResult> {
   const input = parse(loginSchema, rawInput);
+
+  // Rate limit por (chave do cliente, e-mail) antes de gastar scrypt — contém
+  // brute-force e evita usar o custo do hash como amplificador de DoS.
+  const rateLimiter = context.rateLimiter ?? defaultLoginRateLimiter;
+  const rateKey = `${context.clientKey ?? "unknown"}:${input.email.toLowerCase()}`;
+  if (!rateLimiter.check(rateKey).allowed) {
+    throw new DomainError(
+      "too_many_attempts",
+      "Muitas tentativas de login. Aguarde alguns minutos e tente novamente."
+    );
+  }
+
   const user = await deps.repos.users.findByEmail(input.email);
   // Mensagem única para credencial errada — não revela se o e-mail existe.
   const invalid = new DomainError("invalid_credentials", "E-mail ou senha inválidos.");
-  if (!user || !user.active || !verifyPassword(input.password, user.passwordHash)) {
+  if (!user || !user.active || !(await verifyPasswordAsync(input.password, user.passwordHash))) {
     throw invalid;
   }
   if (user.totpEnabled && user.totpSecret) {
     const nowSeconds = Math.floor(deps.clock.now().getTime() / 1000);
-    if (!input.totpCode || !verifyTotp(user.totpSecret, input.totpCode, nowSeconds)) {
+    const matchedCounter = input.totpCode
+      ? verifyTotpConsume(user.totpSecret, input.totpCode, nowSeconds, user.totpLastCounter)
+      : null;
+    if (matchedCounter === null) {
       throw new DomainError(
         "totp_required",
-        "Conta com verificação em duas etapas: informe um código 2FA válido em totpCode."
+        "Conta com verificação em duas etapas: informe um código 2FA válido e não reutilizado em totpCode."
       );
     }
+    // Anti-replay: registra o counter consumido para bloquear o reuso do código.
+    await deps.repos.users.update({ ...user, totpLastCounter: matchedCounter });
   }
+  // Autenticação bem-sucedida: zera o contador para não punir o usuário legítimo.
+  rateLimiter.reset(rateKey);
   const memberships = await deps.repos.memberships.listByUser(user.id);
   if (memberships.length === 0) {
     throw new DomainError("invalid_credentials", "Usuário sem empresa vinculada.");
@@ -204,6 +237,7 @@ export interface CompanyUser extends PublicUser {
 }
 
 export async function listCompanyUsers(deps: ApiDeps, session: ApiSession): Promise<CompanyUser[]> {
+  requirePermission(session, "user.manage");
   const memberships = await deps.repos.memberships.listByCompany(session.company.id);
   const out: CompanyUser[] = [];
   for (const m of memberships) {
@@ -256,6 +290,7 @@ export const createSupplierSchema = z.object({
 export type CreateSupplierInput = z.infer<typeof createSupplierSchema>;
 
 export async function listSuppliers(deps: ApiDeps, session: ApiSession): Promise<Supplier[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.suppliers.listAll(session.company.id);
 }
 
@@ -313,6 +348,7 @@ export const createCustomerSchema = z.object({
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 
 export async function listCustomers(deps: ApiDeps, session: ApiSession): Promise<Customer[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.customers.listAll(session.company.id);
 }
 
@@ -368,6 +404,7 @@ export const createCategorySchema = z.object({
 export type CreateCategoryInput = z.infer<typeof createCategorySchema>;
 
 export async function listCategories(deps: ApiDeps, session: ApiSession): Promise<Category[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.categories.listAll(session.company.id);
 }
 
@@ -412,6 +449,7 @@ export const createCostCenterSchema = z.object({
 export type CreateCostCenterInput = z.infer<typeof createCostCenterSchema>;
 
 export async function listCostCenters(deps: ApiDeps, session: ApiSession): Promise<CostCenter[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.costCenters.listAll(session.company.id);
 }
 
@@ -458,6 +496,7 @@ export const createBankAccountSchema = z.object({
 export type CreateBankAccountInput = z.infer<typeof createBankAccountSchema>;
 
 export async function listBankAccounts(deps: ApiDeps, session: ApiSession): Promise<BankAccount[]> {
+  requirePermission(session, "bank_account.manage");
   return deps.repos.bankAccounts.listAll(session.company.id);
 }
 
@@ -537,6 +576,7 @@ export async function listPayables(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<Payable>> {
+  requirePermission(session, "report.view");
   const query = parse(listPayablesQuerySchema, rawQuery);
   // from/to não fazem parte do finder paginado do repositório: com eles, o
   // filtro roda em memória (total correto); sem eles, a paginação é do banco.
@@ -586,6 +626,7 @@ export async function listReceivables(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<Receivable>> {
+  requirePermission(session, "report.view");
   const query = parse(listReceivablesQuerySchema, rawQuery);
   if (query.from || query.to) {
     const all = await deps.repos.receivables.listAll(session.company.id);
@@ -671,6 +712,7 @@ export async function listBankTransactions(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<BankTransaction>> {
+  requirePermission(session, "reconciliation.manage");
   const query = parse(listBankTransactionsQuerySchema, rawQuery);
   return deps.repos.bankTransactions.listPage(session.company.id, {
     offset: query.offset,
@@ -693,6 +735,7 @@ export async function listApprovals(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Approval[]> {
+  requirePermission(session, "report.view");
   const query = parse(listApprovalsQuerySchema, rawQuery);
   const all = query.status
     ? await deps.repos.approvals.listByStatus(session.company.id, [query.status])
@@ -739,6 +782,7 @@ export async function listAlerts(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Alert[]> {
+  requirePermission(session, "report.view");
   const query = parse(listAlertsQuerySchema, rawQuery);
   const all = await deps.repos.alerts.listAll(session.company.id);
   return all
@@ -752,6 +796,10 @@ export async function acknowledgeAlert(
   session: ApiSession,
   id: string
 ): Promise<CreateOutcome<Alert>> {
+  // Reconhecer alerta é ação operacional: um viewer (só report.view) não deve
+  // silenciar alertas de risco. flow.execute cobre exatamente os papéis
+  // operacionais (analista, aprovador, contador, gestor, admin) e exclui o viewer.
+  requirePermission(session, "flow.execute");
   const alert = await deps.repos.alerts.getById(session.company.id, id);
   if (!alert) throw new NotFoundError("Alerta", id);
   if (alert.status !== "open") return { entity: alert, created: false };
@@ -925,6 +973,7 @@ export async function listEvents(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<EventRecordEntity>> {
+  requirePermission(session, "audit.view");
   const query = parse(eventsQuerySchema, rawQuery);
   return deps.repos.events.listPage(session.company.id, {
     offset: query.offset,

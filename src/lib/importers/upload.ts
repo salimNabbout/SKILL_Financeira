@@ -60,6 +60,13 @@ export async function extractStatementUpload(formData: FormData): Promise<Statem
   } else {
     const pasted = formData.get("content");
     content = typeof pasted === "string" ? pasted : "";
+    // Mesmo teto do arquivo: o texto colado não pode escapar do limite e virar
+    // um vetor de DoS de parsing (regex/char-a-char sobre entrada gigante).
+    if (Buffer.byteLength(content, "utf8") > MAX_STATEMENT_FILE_BYTES) {
+      throw new ValidationError(
+        `Conteúdo excede o limite de ${Math.floor(MAX_STATEMENT_FILE_BYTES / 1024 / 1024)} MB.`
+      );
+    }
   }
 
   if (content.trim().length === 0) {

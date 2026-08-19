@@ -481,6 +481,48 @@ describe("orquestrador — dupla aprovação (four-eyes)", () => {
     expect(finalApproval?.decidedBy).toBe("usr_manager");
   });
 
+  it("duas aprovações parciais concorrentes contam ambas (sem lost-update, four-eyes)", async () => {
+    const env = createTestEnv();
+    // Faixa exigindo TRÊS aprovações — as duas primeiras podem correr juntas.
+    await env.repos.companies.update({
+      ...env.company,
+      config: {
+        approvalTiers: [{ maxAmountCents: null, requiredRole: "approver", approvalsRequired: 3 }],
+      },
+    });
+    const { registry } = buildFakes();
+    const orch = makeOrchestrator(env, registry);
+
+    const res = await orch.execute({
+      flow: "fake_approval",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {},
+    });
+    expect(res.approval?.approvalsRequired).toBe(3);
+
+    // approver e manager decidem CONCORRENTEMENTE (ambos leem approverIds=[]).
+    await Promise.all([
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId: res.approval!.id,
+        decision: "approved",
+        actor: env.actorFor("approver"),
+      }),
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId: res.approval!.id,
+        decision: "approved",
+        actor: env.actorFor("manager"),
+      }),
+    ]);
+
+    // Os DOIS votos foram contados (sem perder um por lost-update).
+    const approval = await env.repos.approvals.getById(env.company.id, res.approval!.id);
+    expect(approval?.status).toBe("pending"); // ainda falta a 3ª
+    expect(approval?.approverIds?.sort()).toEqual(["usr_approver", "usr_manager"]);
+  });
+
   it("uma única rejeição encerra a solicitação mesmo após aprovação parcial", async () => {
     const env = createTestEnv();
     await setupDoubleApproval(env);

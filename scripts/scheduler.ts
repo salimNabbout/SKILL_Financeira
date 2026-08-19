@@ -26,6 +26,7 @@ import type { Actor } from "../src/core/entities";
 import { InMemoryEventBus } from "../src/core/events";
 import { RandomIdGenerator } from "../src/core/ids";
 import { Orchestrator } from "../src/core/orchestrator/orchestrator";
+import { reapStuckFlowRuns } from "../src/core/orchestrator/reaper";
 import { collectDueJobs } from "../src/core/scheduler";
 import { buildIntegrations } from "../src/integrations/registry";
 import { buildRegistry } from "../src/skills";
@@ -57,6 +58,21 @@ async function main(): Promise<void> {
     const nowUtc = clock.now();
     const companies = (await repos.companies.listAll()).filter((c) => c.active);
     for (const company of companies) {
+      // Recupera fluxos travados em "running" há mais de 30 min (crash no meio
+      // de um passo) marcando-os como "failed" — libera para reprocessamento.
+      try {
+        const reaped = await reapStuckFlowRuns(repos, company.id, nowUtc.getTime(), {
+          olderThanMs: 30 * 60_000,
+        });
+        if (reaped > 0) {
+          console.log(`[${nowUtc.toISOString()}] ${company.id} reaper: ${reaped} flowRun(s) presos → failed`);
+        }
+      } catch (error) {
+        console.error(
+          `[${nowUtc.toISOString()}] ${company.id} reaper FALHOU: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+
       const config = resolveCompanyConfig(company.config);
       const accounts = await repos.bankAccounts.listAll(company.id);
       const jobs = collectDueJobs({

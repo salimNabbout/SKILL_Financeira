@@ -95,6 +95,32 @@ export function verifyTotp(
   return false;
 }
 
+/**
+ * Verificação com anti-replay: devolve o COUNTER (unixSeconds/step) que casou,
+ * ou null se o código for inválido. Se `lastCounter` for informado, um counter
+ * ≤ lastCounter é rejeitado (o código já foi consumido) — o chamador deve
+ * persistir o counter retornado para bloquear reuso dentro da janela de validade.
+ */
+export function verifyTotpConsume(
+  secretBase32: string,
+  code: string,
+  unixSeconds: number,
+  lastCounter?: number,
+  window: number = 1
+): number | null {
+  const normalized = code.replace(/\s+/g, "");
+  if (!/^\d{6}$/.test(normalized)) return null;
+  const given = Buffer.from(normalized);
+  for (let w = -window; w <= window; w++) {
+    const t = unixSeconds + w * TOTP_STEP_SECONDS;
+    const counter = Math.floor(t / TOTP_STEP_SECONDS);
+    if (lastCounter !== undefined && counter <= lastCounter) continue;
+    const expected = Buffer.from(totpCode(secretBase32, t));
+    if (expected.length === given.length && timingSafeEqual(expected, given)) return counter;
+  }
+  return null;
+}
+
 /** URI otpauth:// para apps autenticadores (entrada manual ou QR gerado pelo usuário). */
 export function otpauthUrl(params: { issuer: string; account: string; secretBase32: string }): string {
   const label = encodeURIComponent(`${params.issuer}:${params.account}`);

@@ -46,6 +46,8 @@ export interface User {
   totpSecret?: string;
   /** 2FA ativo: login passa a exigir código TOTP válido. Ausente = falso. */
   totpEnabled?: boolean;
+  /** Último counter TOTP consumido — bloqueia reuso do mesmo código (anti-replay). */
+  totpLastCounter?: number;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -346,6 +348,8 @@ export interface Approval {
   decidedBy?: ID;
   decidedAt?: string;
   justification?: string;
+  /** Versão para trava otimista (four-eyes sem lost-update). Ausente = 0. */
+  version?: number;
   createdAt: string;
 }
 

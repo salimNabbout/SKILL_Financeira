@@ -209,7 +209,11 @@ async function validatePayables(
             other.amountCents === payable.amountCents &&
             other.dueDate === payable.dueDate &&
             other.originKey !== payable.originKey) ||
-            (payable.documentId !== undefined && other.documentId === payable.documentId))
+            // Mesmo documento fiscal só é duplicidade na MESMA parcela — parcelas
+            // distintas do mesmo documento são legítimas (compra parcelada).
+            (payable.documentId !== undefined &&
+              other.documentId === payable.documentId &&
+              other.installmentNumber === payable.installmentNumber))
       )
       .map((other) => other.id)
       .sort();
@@ -565,7 +569,9 @@ async function scanAnomalies(ctx: SkillContext): Promise<SkillResult<ScanAnomali
 
 async function verifyAuditChain(ctx: SkillContext): Promise<SkillResult<VerifyAuditChainData>> {
   const records = await ctx.repos.audit.list(ctx.companyId);
-  const result = verifyChain(records);
+  // Passa a âncora do head persistida para detectar truncamento do FIM da trilha.
+  const head = await ctx.repos.audit.getHead(ctx.companyId);
+  const result = verifyChain(records, head ?? undefined);
 
   const alerts: SkillAlert[] = [];
   if (!result.valid) {
@@ -664,9 +670,10 @@ async function exceptionReport(ctx: SkillContext): Promise<SkillResult<Exception
     });
   }
 
-  // 4. Integridade da trilha de auditoria.
+  // 4. Integridade da trilha de auditoria (com âncora do head para truncamento).
   const records = await ctx.repos.audit.list(ctx.companyId);
-  const chain = verifyChain(records);
+  const auditHead = await ctx.repos.audit.getHead(ctx.companyId);
+  const chain = verifyChain(records, auditHead ?? undefined);
   const chainSection: ExceptionSection = {
     id: "audit_chain",
     title: "Integridade da trilha de auditoria",

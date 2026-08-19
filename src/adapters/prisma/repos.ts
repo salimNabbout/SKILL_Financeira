@@ -85,6 +85,7 @@ import type {
   AccountingEntryRepo,
   AlertRepo,
   ApprovalRepo,
+  AuditHead,
   AuditRepo,
   BankAccountRepo,
   BankTransactionRepo,
@@ -199,6 +200,7 @@ const userToDomain = (r: DbUser): User => ({
   passwordHash: r.passwordHash,
   totpSecret: strOpt(r.totpSecret),
   totpEnabled: r.totpEnabled,
+  totpLastCounter: r.totpLastCounter ?? undefined,
   active: r.active,
   createdAt: fromInstant(r.createdAt),
   updatedAt: fromInstant(r.updatedAt),
@@ -210,6 +212,7 @@ const userToDb = (e: User): Prisma.UserCreateInput => ({
   passwordHash: e.passwordHash,
   totpSecret: strNull(e.totpSecret),
   totpEnabled: e.totpEnabled ?? false,
+  totpLastCounter: e.totpLastCounter ?? null,
   active: e.active,
   createdAt: toInstant(e.createdAt),
   updatedAt: toInstant(e.updatedAt),
@@ -630,6 +633,7 @@ const approvalToDomain = (r: DbApproval): Approval => ({
   decidedBy: strOpt(r.decidedBy),
   decidedAt: fromInstantOpt(r.decidedAt),
   justification: strOpt(r.justification),
+  version: r.version,
   createdAt: fromInstant(r.createdAt),
 });
 const approvalToDb = (e: Approval): Prisma.ApprovalUncheckedCreateInput => ({
@@ -648,6 +652,7 @@ const approvalToDb = (e: Approval): Prisma.ApprovalUncheckedCreateInput => ({
   decidedBy: strNull(e.decidedBy),
   decidedAt: toInstantOpt(e.decidedAt),
   justification: strNull(e.justification),
+  version: e.version ?? 0,
   createdAt: toInstant(e.createdAt),
 });
 
@@ -936,7 +941,10 @@ const idempotencyToDb = (e: IdempotencyRecord): Prisma.IdempotencyRecordUnchecke
 // Fábrica de repositórios
 // ---------------------------------------------------------------------------
 
-export function createPrismaRepositories(prisma: PrismaClient): Repositories {
+/** Cliente Prisma completo OU cliente de transação (subconjunto com os modelos). */
+type PrismaLike = PrismaClient | Prisma.TransactionClient;
+
+export function createPrismaRepositories(prisma: PrismaLike): Repositories {
   const companies: CompanyRepo = {
     async getById(id: ID) {
       const row = await prisma.company.findUnique({ where: { id } });
@@ -1572,6 +1580,14 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
       });
       return result.count === 1;
     },
+    async updateIfVersion(next: Approval, expectedVersion: number) {
+      const data = approvalToDb(next);
+      const result = await prisma.approval.updateMany({
+        where: { id: next.id, companyId: next.companyId, version: expectedVersion },
+        data,
+      });
+      return result.count === 1;
+    },
   };
 
   const reconciliations: ReconciliationRepo = {
@@ -1722,6 +1738,17 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
         prisma.auditRecord.count({ where }),
       ]);
       return { items: rows.map(auditToDomain), total, offset: skip, limit: take };
+    },
+    async getHead(companyId: ID) {
+      const row = await prisma.auditHead.findUnique({ where: { companyId } });
+      return row ? { companyId: row.companyId, seq: row.seq, hash: row.hash } : null;
+    },
+    async setHead(head: AuditHead) {
+      await prisma.auditHead.upsert({
+        where: { companyId: head.companyId },
+        create: { companyId: head.companyId, seq: head.seq, hash: head.hash },
+        update: { seq: head.seq, hash: head.hash },
+      });
     },
   };
 
@@ -1926,5 +1953,15 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
     accountingEntries,
     flowRuns,
     idempotency,
+    async withTransaction<T>(fn: (txRepos: Repositories) => Promise<T>): Promise<T> {
+      // Transação real do Postgres. Se já estivermos dentro de uma transação
+      // (cliente sem $transaction), reutiliza o mesmo escopo (sem aninhar).
+      if (typeof (prisma as PrismaClient).$transaction !== "function") {
+        return fn(createPrismaRepositories(prisma));
+      }
+      return (prisma as PrismaClient).$transaction((tx) =>
+        fn(createPrismaRepositories(tx))
+      );
+    },
   };
 }

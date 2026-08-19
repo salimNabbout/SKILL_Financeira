@@ -15,6 +15,7 @@ import { SkillRegistry } from "@/core/orchestrator/registry";
 import type { OrchestratorResponse } from "@/core/orchestrator/orchestrator";
 import { makeResult, SKILL_NAMES, type SkillDefinition, type SkillName } from "@/core/skill";
 import { hashPassword } from "@/lib/password";
+import { InMemoryRateLimiter } from "@/lib/rate-limit";
 import { generateTotpSecret, totpCode } from "@/lib/totp";
 import { contabilSkill } from "@/skills/contabil";
 import {
@@ -29,6 +30,7 @@ import {
   getPayable,
   importStatement,
   listAlerts,
+  listBankAccounts,
   listBankTransactions,
   listCompanies,
   listCompanyUsers,
@@ -300,6 +302,47 @@ describe("auth/login", () => {
     return user;
   }
 
+  it("bloqueia após exceder o limite de tentativas por (chave, e-mail)", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    await seedLoginUser(env);
+
+    let now = 0;
+    const rateLimiter = new InMemoryRateLimiter({ maxAttempts: 3, windowMs: 60_000, now: () => now });
+    const ctx = { clientKey: "1.2.3.4", rateLimiter };
+    const bad = { email: "maria@teste.com.br", password: "errada" };
+
+    // 3 tentativas falhas consumem a janela.
+    for (let i = 0; i < 3; i++) {
+      await expect(login(deps, bad, ctx)).rejects.toThrow(/inválidos/);
+    }
+    // A 4ª — mesmo com a senha CORRETA — é barrada pelo rate limit.
+    await expect(
+      login(deps, { email: "maria@teste.com.br", password: "Segredo#123" }, ctx)
+    ).rejects.toThrow(/muitas tentativas/i);
+  });
+
+  it("login bem-sucedido zera o contador de tentativas da chave", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    await seedLoginUser(env);
+
+    let now = 0;
+    const rateLimiter = new InMemoryRateLimiter({ maxAttempts: 3, windowMs: 60_000, now: () => now });
+    const ctx = { clientKey: "1.2.3.4", rateLimiter };
+
+    await expect(
+      login(deps, { email: "maria@teste.com.br", password: "errada" }, ctx)
+    ).rejects.toThrow(/inválidos/);
+    // Sucesso reseta: novas tentativas voltam a ser permitidas sem bloqueio.
+    await login(deps, { email: "maria@teste.com.br", password: "Segredo#123" }, ctx);
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        login(deps, { email: "maria@teste.com.br", password: "errada" }, ctx)
+      ).rejects.toThrow(/inválidos/);
+    }
+  });
+
   it("credenciais válidas devolvem usuário (sem hash) e companyId, com auditoria", async () => {
     const env = createTestEnv();
     const deps = buildDeps(env);
@@ -340,6 +383,26 @@ describe("auth/login", () => {
     expect(result.user.totpEnabled).toBe(true);
     // O segredo TOTP jamais aparece na resposta (allowlist do publicUser).
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("anti-replay: o mesmo código TOTP não pode ser reutilizado", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const seeded = await seedLoginUser(env);
+    const secret = generateTotpSecret();
+    await env.repos.users.update({ ...seeded, totpSecret: secret, totpEnabled: true });
+
+    const credentials = { email: "maria@teste.com.br", password: "Segredo#123" };
+    const nowSeconds = Math.floor(env.clock.now().getTime() / 1000);
+    const code = totpCode(secret, nowSeconds);
+
+    // 1º uso do código: aceito.
+    await login(deps, { ...credentials, totpCode: code });
+    // 2º uso do MESMO código (mesma janela): rejeitado (anti-replay).
+    await expect(login(deps, { ...credentials, totpCode: code })).rejects.toThrow(/duas etapas/);
+    // O counter consumido foi persistido no usuário.
+    const updated = await env.repos.users.getById(seeded.id);
+    expect(updated?.totpLastCounter).toBe(Math.floor(nowSeconds / 30));
   });
 
   it("senha errada e e-mail inexistente falham com a mesma mensagem (401)", async () => {
@@ -385,14 +448,37 @@ describe("me, companies e users", () => {
     });
   });
 
-  it("listCompanyUsers devolve todos os usuários da empresa sem passwordHash", async () => {
+  it("listCompanyUsers exige user.manage: admin lê (sem passwordHash), viewer é barrado", async () => {
     const env = createTestEnv();
     const deps = buildDeps(env);
-    const session = await sessionFor(env, "viewer");
-    const users = await listCompanyUsers(deps, session);
+
+    const admin = await sessionFor(env, "admin");
+    const users = await listCompanyUsers(deps, admin);
     expect(users).toHaveLength(5);
     expect(JSON.stringify(users)).not.toContain("passwordHash");
     expect(users.find((u) => u.id === "usr_approver")?.role).toBe("approver");
+
+    // RBAC: um viewer NÃO deve listar os usuários da empresa pela API.
+    const viewer = await sessionFor(env, "viewer");
+    await expect(listCompanyUsers(deps, viewer)).rejects.toThrow(PermissionError);
+  });
+
+  it("listSuppliers exige master_data.manage: analyst lê, viewer é barrado", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const analyst = await sessionFor(env, "analyst");
+    await createSupplier(deps, analyst, { name: "Fornecedor X" });
+
+    expect(await listSuppliers(deps, analyst)).toHaveLength(1);
+    const viewer = await sessionFor(env, "viewer");
+    await expect(listSuppliers(deps, viewer)).rejects.toThrow(PermissionError);
+  });
+
+  it("listBankAccounts exige bank_account.manage: viewer é barrado", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const viewer = await sessionFor(env, "viewer");
+    await expect(listBankAccounts(deps, viewer)).rejects.toThrow(PermissionError);
   });
 });
 
@@ -578,7 +664,7 @@ describe("bank-transactions", () => {
   it("filtra por conta e por conciliação", async () => {
     const env = createTestEnv();
     const deps = buildDeps(env);
-    const session = await sessionFor(env, "viewer");
+    const session = await sessionFor(env, "analyst"); // reconciliation.manage
     const now = env.clock.now().toISOString();
     const base = {
       companyId: env.company.id,

@@ -79,6 +79,8 @@ export class HashChainAuditTrail implements AuditTrail {
       const record: AuditRecord = { ...partial, hash: computeAuditHash(prevHash, partial) };
       try {
         await this.repo.append(record);
+        // Âncora o head (seq/hash) para detectar truncamento do fim depois.
+        await this.repo.setHead({ companyId, seq: record.seq, hash: record.hash });
         return record;
       } catch (error) {
         lastError = error;

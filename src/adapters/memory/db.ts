@@ -63,4 +63,6 @@ export class MemoryDb {
   accountingEntries: AccountingEntry[] = [];
   flowRuns: FlowRun[] = [];
   idempotencyRecords: IdempotencyRecord[] = [];
+  /** Âncora do head da trilha por empresa (chave: companyId). */
+  auditHeads: Array<{ companyId: string; seq: number; hash: string }> = [];
 }
