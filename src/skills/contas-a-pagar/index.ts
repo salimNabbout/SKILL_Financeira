@@ -47,7 +47,7 @@ const createPayableSchema = z.object({
   amountCents: z.number().int().positive(),
   categoryId: z.string().min(1).optional(),
   costCenterId: z.string().min(1).optional(),
-  installmentCount: z.number().int().min(1).optional(),
+  installmentCount: z.number().int().min(1).max(120).optional(),
   notes: z.string().optional(),
   document: documentSchema.optional(),
 });
@@ -302,9 +302,17 @@ async function createPayable(
 
   const installmentCount = input.installmentCount ?? 1;
   const amounts = splitInstallments(input.amountCents, installmentCount);
+  // Sem documento, a chave natural inclui emissão/vencimento para não confundir
+  // obrigações recorrentes (ex.: "Aluguel" de agosto vs. de setembro, mesmo
+  // valor). O lado de contas a receber já segue essa convenção.
   const documentRef =
     input.document?.number ??
-    hashPayload({ description: input.description, amountCents: input.amountCents }).slice(0, 12);
+    hashPayload({
+      description: input.description,
+      amountCents: input.amountCents,
+      issueDate: input.issueDate,
+      dueDate: input.dueDate,
+    }).slice(0, 12);
 
   const payables: Payable[] = [];
   for (let i = 0; i < installmentCount; i++) {
@@ -317,6 +325,18 @@ async function createPayable(
       assumptions.push(
         `Parcela ${n}/${installmentCount} já cadastrada (originKey "${originKey}"); título existente ${existing.id} reutilizado sem criar duplicata.`
       );
+      // Reuso de um título já quitado/cancelado costuma indicar uma nova
+      // obrigação com a mesma chave — sinaliza para revisão humana.
+      if (existing.status === "paid" || existing.status === "canceled") {
+        pendingItems.push({
+          code: "reuso_titulo_encerrado",
+          description: `Título existente ${existing.id} está ${existing.status}; a nova entrada foi tratada como repetição idempotente.`,
+          entityType: "payable",
+          entityId: existing.id,
+          suggestedAction:
+            "Se esta é uma nova obrigação (ex.: recorrência), altere emissão/vencimento ou informe o documento para diferenciá-la.",
+        });
+      }
       continue;
     }
     const payable: Payable = {
@@ -412,14 +432,25 @@ async function schedulePayment(
     throw new ValidationError(`Conta bancária inativa: ${account.name} (${account.id}).`);
   }
 
-  const remaining = remainingCents(payable);
-  const amount = input.amountCents ?? remaining;
-  if (remaining <= 0) {
-    throw new ValidationError(`Título ${payable.id} não possui saldo em aberto.`);
-  }
-  if (amount > remaining) {
+  // Saldo disponível = saldo em aberto (amount - paid) MENOS o que já está
+  // reservado por pagamentos ainda não executados (pending_approval/approved).
+  // Sem esse desconto, dois agendamentos simultâneos do valor integral gerariam
+  // dupla baixa ao serem ambos aprovados.
+  const existingPayments = await ctx.repos.payments.listByPayable(ctx.companyId, payable.id);
+  const reservedCents = existingPayments
+    .filter((p) => p.status === "pending_approval" || p.status === "approved")
+    .reduce((acc, p) => acc + p.amountCents, 0);
+  const available = remainingCents(payable) - reservedCents;
+  const amount = input.amountCents ?? available;
+  if (available <= 0) {
     throw new ValidationError(
-      `Valor do pagamento (${formatBRL(amount)}) excede o saldo restante do título (${formatBRL(remaining)}).`
+      `Título ${payable.id} não possui saldo disponível para agendamento (saldo já reservado por pagamento pendente).`
+    );
+  }
+  if (amount > available) {
+    throw new ValidationError(
+      `Valor do pagamento (${formatBRL(amount)}) excede o saldo disponível do título ` +
+        `(${formatBRL(available)}; parte do saldo já está reservada por pagamento pendente).`
     );
   }
 
@@ -481,6 +512,9 @@ async function schedulePayment(
     targetId: payment.id,
     summary: `Pagamento de ${supplier?.name ?? payable.supplierId} — ${formatBRL(amount)}`,
     amountCents: amount,
+    // A alçada considera o TÍTULO inteiro: fracionar o pagamento não reduz o
+    // papel/nº de aprovações exigidos.
+    tierAmountCents: payable.amountCents,
   };
 
   return makeResult(
@@ -560,6 +594,15 @@ async function resumePaymentDecision(ctx: SkillContext): Promise<SkillResult<Sch
   if (decision.status === "approved") {
     // Segregação de funções também na skill (defesa em profundidade).
     assertSegregation(payment.requestedBy, decision.decidedBy);
+
+    // Revalida o saldo no momento da execução: se outro pagamento foi executado
+    // entre o agendamento e esta aprovação, este pagamento não pode sobre-baixar.
+    if (payment.amountCents > remainingCents(payable)) {
+      throw new ValidationError(
+        `Pagamento ${payment.id} (${formatBRL(payment.amountCents)}) excede o saldo restante ` +
+          `do título ${payable.id} (${formatBRL(remainingCents(payable))}) no momento da execução.`
+      );
+    }
 
     payment.status = "executed";
     payment.executedAt = nowIso;

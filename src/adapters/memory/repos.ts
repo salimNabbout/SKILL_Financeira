@@ -362,6 +362,17 @@ class MemApprovalRepo extends MemBase<import("@/core/entities").Approval> implem
       this.items.filter((a) => a.companyId === companyId && statuses.includes(a.status))
     );
   }
+  async updateIfStatus(next: import("@/core/entities").Approval, expectedStatus: ApprovalStatus) {
+    const idx = this.items.findIndex(
+      (a) => a.companyId === next.companyId && a.id === next.id
+    );
+    if (idx < 0) return false;
+    // Compare-and-set atômico (single-thread): só grava se o status persistido
+    // ainda for o esperado — a decisão concorrente perdedora recebe false.
+    if (this.items[idx].status !== expectedStatus) return false;
+    this.items[idx] = clone(next);
+    return true;
+  }
 }
 
 class MemReconciliationRepo extends MemBase<ReconciliationMatch> implements ReconciliationRepo {
@@ -428,6 +439,13 @@ class MemSkillExecutionRepo implements SkillExecutionRepo {
 class MemAuditRepo implements AuditRepo {
   constructor(private readonly items: AuditRecord[]) {}
   async append(record: AuditRecord) {
+    // Espelha o unique (companyId, seq) do Postgres: rejeita seq duplicado por
+    // empresa (evita bifurcar a cadeia sob concorrência também no modo demo).
+    if (this.items.some((r) => r.companyId === record.companyId && r.seq === record.seq)) {
+      throw new ValidationError(
+        `Sequência de auditoria ${record.seq} já usada para a empresa ${record.companyId}.`
+      );
+    }
     this.items.push(clone(record));
   }
   async last(companyId: ID) {
@@ -507,6 +525,19 @@ class MemIdempotencyRepo implements IdempotencyRepo {
     );
     if (idx >= 0) this.items[idx] = clone(record);
     else this.items.push(clone(record));
+  }
+  /** Insert-if-absent atômico (single-thread): serializa execuções concorrentes. */
+  async reserve(record: IdempotencyRecord) {
+    const existing = this.items.find(
+      (r) => r.companyId === record.companyId && r.key === record.key
+    );
+    if (existing) return { reserved: false, existing: clone(existing) };
+    this.items.push(clone(record));
+    return { reserved: true };
+  }
+  async remove(companyId: ID, key: string) {
+    const idx = this.items.findIndex((r) => r.companyId === companyId && r.key === key);
+    if (idx >= 0) this.items.splice(idx, 1);
   }
 }
 

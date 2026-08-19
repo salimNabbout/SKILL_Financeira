@@ -100,9 +100,23 @@ export const DEFAULT_COMPANY_CONFIG: CompanyConfig = {
   },
 };
 
+/**
+ * Ordena as alçadas por teto crescente (sem teto = null vai por último), para
+ * que a busca "primeira faixa que cabe" seja correta independentemente da ordem
+ * em que os tiers foram persistidos (evita escalonamento de alçada por má
+ * configuração — o menor papel jamais cobre um valor acima de sua faixa).
+ */
+function sortedTiers(tiers: ApprovalTier[]): ApprovalTier[] {
+  return [...tiers].sort((a, b) => {
+    if (a.maxAmountCents === null) return 1;
+    if (b.maxAmountCents === null) return -1;
+    return a.maxAmountCents - b.maxAmountCents;
+  });
+}
+
 /** Resolve o papel mínimo exigido para aprovar um valor, conforme alçadas. */
 export function requiredRoleForAmount(config: CompanyConfig, amountCents: number): RoleName {
-  for (const tier of config.approvalTiers) {
+  for (const tier of sortedTiers(config.approvalTiers)) {
     if (tier.maxAmountCents === null || amountCents <= tier.maxAmountCents) {
       return tier.requiredRole;
     }
@@ -112,7 +126,7 @@ export function requiredRoleForAmount(config: CompanyConfig, amountCents: number
 
 /** Total de aprovações humanas exigidas para o valor (dupla aprovação por faixa). */
 export function requiredApprovalsForAmount(config: CompanyConfig, amountCents: number): number {
-  for (const tier of config.approvalTiers) {
+  for (const tier of sortedTiers(config.approvalTiers)) {
     if (tier.maxAmountCents === null || amountCents <= tier.maxAmountCents) {
       return Math.max(1, tier.approvalsRequired ?? 1);
     }
@@ -120,8 +134,97 @@ export function requiredApprovalsForAmount(config: CompanyConfig, amountCents: n
   return 1;
 }
 
-/** Mescla configuração persistida (JSON da empresa) com defaults. */
+const VALID_TIMEZONES: ReadonlySet<string> = (() => {
+  try {
+    return new Set(Intl.supportedValuesOf("timeZone"));
+  } catch {
+    // Ambientes sem Intl.supportedValuesOf: não valida (retorna set vazio → aceita tudo).
+    return new Set<string>();
+  }
+})();
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isValidTier(value: unknown): value is ApprovalTier {
+  if (!isPlainObject(value)) return false;
+  const max = value.maxAmountCents;
+  const maxOk = max === null || (typeof max === "number" && Number.isFinite(max) && max >= 0);
+  return maxOk && typeof value.requiredRole === "string";
+}
+
+/**
+ * Mescla configuração persistida (JSON da empresa) com defaults, com validação
+ * defensiva: objetos aninhados fazem merge por CAMPO (não substituem o objeto
+ * inteiro), valores inválidos caem no default e o timezone é validado. Assim
+ * uma config parcial nunca introduz undefined/NaN nos cálculos financeiros.
+ */
 export function resolveCompanyConfig(raw: unknown): CompanyConfig {
-  if (!raw || typeof raw !== "object") return DEFAULT_COMPANY_CONFIG;
-  return { ...DEFAULT_COMPANY_CONFIG, ...(raw as Partial<CompanyConfig>) };
+  if (!isPlainObject(raw)) return DEFAULT_COMPANY_CONFIG;
+  const d = DEFAULT_COMPANY_CONFIG;
+  const r = raw as Partial<CompanyConfig>;
+
+  const timezone =
+    typeof r.timezone === "string" &&
+    (VALID_TIMEZONES.size === 0 || VALID_TIMEZONES.has(r.timezone))
+      ? r.timezone
+      : d.timezone;
+
+  const approvalTiers =
+    Array.isArray(r.approvalTiers) && r.approvalTiers.length > 0 && r.approvalTiers.every(isValidTier)
+      ? (r.approvalTiers as ApprovalTier[])
+      : d.approvalTiers;
+
+  const lateFeeDefaults = isPlainObject(r.lateFeeDefaults)
+    ? { ...d.lateFeeDefaults, ...(r.lateFeeDefaults as Partial<LateFeePolicy>) }
+    : d.lateFeeDefaults;
+
+  const dunningSteps =
+    Array.isArray(r.dunningSteps) && r.dunningSteps.length > 0
+      ? (r.dunningSteps as DunningStep[])
+      : d.dunningSteps;
+
+  const schedules =
+    Array.isArray(r.schedules) && r.schedules.length > 0
+      ? (r.schedules as ScheduleDefinition[])
+      : d.schedules;
+
+  const passwordPolicy = isPlainObject(r.passwordPolicy)
+    ? { ...d.passwordPolicy, ...(r.passwordPolicy as Partial<PasswordPolicy>) }
+    : d.passwordPolicy;
+
+  const num = (value: unknown, fallback: number): number =>
+    typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+  return {
+    timezone,
+    currency: typeof r.currency === "string" ? r.currency : d.currency,
+    approvalTiers,
+    lateFeeDefaults: {
+      finePercent: num(lateFeeDefaults.finePercent, d.lateFeeDefaults.finePercent),
+      monthlyInterestPercent: num(
+        lateFeeDefaults.monthlyInterestPercent,
+        d.lateFeeDefaults.monthlyInterestPercent
+      ),
+    },
+    dunningSteps,
+    budgetDeviationAlertPercent: num(r.budgetDeviationAlertPercent, d.budgetDeviationAlertPercent),
+    minimumCashCents: num(r.minimumCashCents, d.minimumCashCents),
+    passwordPolicy,
+    schedules,
+    reconciliationAutoConfirmThreshold: num(
+      r.reconciliationAutoConfirmThreshold,
+      d.reconciliationAutoConfirmThreshold
+    ),
+    reconciliationAmountToleranceCents: num(
+      r.reconciliationAmountToleranceCents,
+      d.reconciliationAmountToleranceCents
+    ),
+    reconciliationDateToleranceDays: num(
+      r.reconciliationDateToleranceDays,
+      d.reconciliationDateToleranceDays
+    ),
+    taxRules: isPlainObject(r.taxRules) ? (r.taxRules as Record<string, unknown>) : d.taxRules,
+  };
 }

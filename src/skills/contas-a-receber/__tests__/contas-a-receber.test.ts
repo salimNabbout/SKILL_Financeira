@@ -334,6 +334,76 @@ describe("contas_a_receber / create_from_invoice", () => {
     expect(env.db.events.filter((e) => e.type === "receivable.created")).toHaveLength(2);
     expect(second.assumptions.some((a) => a.includes("idempotência"))).toBe(true);
   });
+
+  it("[D3] rejeita refaturar a mesma fatura com plano de parcelas DIFERENTE (evita duplicar títulos)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const invoice = seedInvoice(env, { totalCents: 90_000 });
+
+    // Primeiro faturamento: 2 parcelas.
+    const first = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "create_from_invoice",
+      invoiceId: invoice.id,
+      installments: [
+        { dueDate: "2026-09-01", amountCents: 50_000 },
+        { dueDate: "2026-10-01", amountCents: 40_000 },
+      ],
+    });
+    expect(first.status).toBe("success");
+    expect(env.db.receivables).toHaveLength(2);
+    const eventsAfterFirst = env.db.events.filter((e) => e.type === "receivable.created").length;
+
+    // Reprocessa a MESMA fatura com 3 parcelas: chaves de origem mudam por
+    // completo (inv:X:n/2 -> inv:X:n/3), então a idempotência por originKey
+    // não detecta os títulos ativos pré-existentes. Deve REJEITAR.
+    const second = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "create_from_invoice",
+      invoiceId: invoice.id,
+      installments: [
+        { dueDate: "2026-09-01", amountCents: 30_000 },
+        { dueDate: "2026-10-01", amountCents: 30_000 },
+        { dueDate: "2026-11-01", amountCents: 30_000 },
+      ],
+    });
+
+    expect(second.status).toBe("error");
+    expect(second.alerts[0].code).toBe("validation_error");
+    // Nada novo criado: seguem apenas os 2 títulos ativos originais.
+    const active = env.db.receivables.filter((r) => r.status !== "canceled");
+    expect(active).toHaveLength(2);
+    expect(env.db.receivables).toHaveLength(2);
+    expect(env.db.events.filter((e) => e.type === "receivable.created")).toHaveLength(
+      eventsAfterFirst
+    );
+  });
+
+  it("[D3] refaturar com o MESMO plano continua idempotente (reutiliza, não duplica)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const invoice = seedInvoice(env, { totalCents: 90_000 });
+    const installments = [
+      { dueDate: "2026-09-01", amountCents: 50_000 },
+      { dueDate: "2026-10-01", amountCents: 40_000 },
+    ];
+
+    const first = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "create_from_invoice",
+      invoiceId: invoice.id,
+      installments,
+    });
+    const second = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "create_from_invoice",
+      invoiceId: invoice.id,
+      installments,
+    });
+
+    expect(second.status).toBe("success");
+    expect((second.data as CreateReceivableData).receivables.map((r) => r.id)).toEqual(
+      (first.data as CreateReceivableData).receivables.map((r) => r.id)
+    );
+    expect(env.db.receivables).toHaveLength(2);
+    expect(second.assumptions.some((a) => a.includes("idempotência"))).toBe(true);
+  });
 });
 
 describe("contas_a_receber / list_overdue", () => {
@@ -496,6 +566,71 @@ describe("contas_a_receber / register_receipt", () => {
     });
     expect(onCanceled.status).toBe("error");
     expect(onCanceled.alerts[0].code).toBe("receivable_canceled");
+  });
+
+  it("[D6] aceita recebimento acima do saldo quando o excedente corresponde aos encargos (multa+juros)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    // R$ 100.000, 10 dias de atraso (venceu em 2026-08-08, recebido em 2026-08-18).
+    const r = seedReceivable(env, {
+      id: "rcv_encargos",
+      amountCents: 10_000_000,
+      dueDate: "2026-08-08",
+    });
+    // Política padrão: multa 2% = 200.000; juros 1% a.m. pró-rata: round(10.000.000×0,01×10/30) = 33.333.
+    // Total com encargos = 10.233.333; excedente sobre o saldo = 233.333.
+    const fineCents = 200_000;
+    const interestCents = 33_333;
+    const chargesCents = fineCents + interestCents; // 233.333
+    const totalWithCharges = 10_000_000 + chargesCents;
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "register_receipt",
+      receivableId: r.id,
+      amountCents: totalWithCharges,
+      receivedDate: TODAY,
+      method: "pix",
+    });
+
+    expect(res.status).toBe("success");
+    const data = res.data as RegisterReceiptData;
+    // Principal baixado integralmente: título quitado, saldo zero.
+    const updated = env.db.receivables.find((x) => x.id === r.id)!;
+    expect(updated.receivedCents).toBe(10_000_000);
+    expect(updated.status).toBe("received");
+    expect(data.remainingCents).toBe(0);
+    // Invariante: o principal aplicado ao título nunca excede o saldo.
+    expect(updated.receivedCents).toBeLessThanOrEqual(updated.amountCents);
+    // Excedente identificado como encargo (multa + juros).
+    expect(data.chargesCents).toBe(chargesCents);
+    expect(data.principalCents).toBe(10_000_000);
+    // Comunicação explícita do encargo (assumption) e no payload do evento.
+    expect(res.assumptions.join(" ").toLowerCase()).toContain("encargo");
+    const ev = env.db.events.filter((e) => e.type === "receivable.received");
+    expect(ev).toHaveLength(1);
+    expect((ev[0].payload as { chargesCents?: number }).chargesCents).toBe(chargesCents);
+  });
+
+  it("[D6] recebimento acima do saldo que NÃO corresponde aos encargos continua sendo rejeitado", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const r = seedReceivable(env, {
+      id: "rcv_excesso",
+      amountCents: 10_000_000,
+      dueDate: "2026-08-08",
+    });
+    // Excedente de 500.000 não bate com os encargos calculados (233.333).
+    const res = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "register_receipt",
+      receivableId: r.id,
+      amountCents: 10_500_000,
+      receivedDate: TODAY,
+      method: "pix",
+    });
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("receipt_exceeds_balance");
+    expect(env.db.receipts).toHaveLength(0);
+    expect(env.db.receivables.find((x) => x.id === r.id)!.receivedCents).toBe(0);
   });
 
   it("valida conta bancária quando informada", async () => {

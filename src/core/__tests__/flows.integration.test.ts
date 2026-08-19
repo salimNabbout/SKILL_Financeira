@@ -199,6 +199,82 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(actions).toContain("flow.completed");
   });
 
+  it("não permite burlar a alçada fracionando o pagamento de um título grande", async () => {
+    // Título de R$ 60.000 (acima de R$ 50.000 → exige admin).
+    const res0 = await orch.execute({
+      flow: "supplier_invoice_intake",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {
+        supplierId: "sup_1",
+        description: "NF 9002 — máquina",
+        issueDate: "2026-08-01",
+        dueDate: "2026-08-25",
+        amountCents: 6_000_000,
+        categoryId: "cat_insumos",
+      },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bigPayableId = (res0.results[0].result.data as any).payables[0].id;
+
+    // Agenda apenas R$ 4.999 (abaixo da faixa de approver) — a alçada exigida
+    // deve refletir o TAMANHO DO TÍTULO (admin), não o do pagamento fracionado.
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {
+        payableId: bigPayableId,
+        bankAccountId: "ba_1",
+        scheduledDate: "2026-08-20",
+        method: "pix",
+        amountCents: 499_900,
+      },
+    });
+
+    expect(res.status).toBe("awaiting_approval");
+    expect(res.approval?.requiredRole).toBe("admin");
+  });
+
+  it("duas decisões concorrentes na mesma aprovação executam o pagamento UMA vez (A2)", async () => {
+    const payableId = await createPayable();
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+    const approvalId = res.approval!.id;
+
+    // Dois aprovadores (manager e approver) decidem ao mesmo tempo. Sem trava,
+    // ambos leem "pending" e ambos executam o passo sensível → dupla baixa.
+    const results = await Promise.allSettled([
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId,
+        decision: "approved",
+        actor: env.actorFor("approver"),
+      }),
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId,
+        decision: "approved",
+        actor: env.actorFor("manager"),
+      }),
+    ]);
+
+    // Exatamente uma decisão vence; a outra falha (aprovação já decidida).
+    const ok = results.filter((r) => r.status === "fulfilled");
+    expect(ok).toHaveLength(1);
+
+    // O pagamento é executado uma única vez e o título não é sobre-baixado.
+    const executed = await env.repos.payments.listByStatus(env.company.id, ["executed"]);
+    expect(executed).toHaveLength(1);
+    const payable = await env.repos.payables.getById(env.company.id, payableId);
+    expect(payable?.paidCents).toBe(120_000);
+    expect(payable?.status).toBe("paid");
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

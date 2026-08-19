@@ -40,6 +40,13 @@ export interface FlowDefinition {
   steps: FlowStep[];
   /** Validação de consistência entre resultados das skills (executada ao final). */
   validate?(f: FlowStepContext): SkillAlert[];
+  /**
+   * Fluxos periódicos (resumos/relatórios/régua) cuja saída depende do DIA em
+   * que rodam: a chave de idempotência default inclui a data corrente, para que
+   * rodar de novo no dia seguinte reprocesse em vez de devolver o replay eterno
+   * do primeiro dia. Continua protegendo o duplo clique dentro do mesmo dia.
+   */
+  periodicDefault?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +301,7 @@ const dunningRun: FlowDefinition = {
   description:
     "Identifica títulos vencidos, segmenta clientes, prepara mensagens de cobrança respeitosas e solicita aprovação humana antes de qualquer envio (envio é mock).",
   requiredPermission: "collection.manage",
+  periodicDefault: true,
   steps: [
     {
       id: "overdue",
@@ -322,6 +330,7 @@ const dailySummary: FlowDefinition = {
   name: "daily_summary",
   description: "Resumo diário: posição de caixa, vencidos e visão executiva consolidada.",
   requiredPermission: "report.view",
+  periodicDefault: true,
   steps: [
     {
       id: "cash",

@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { assertPermission } from "@/core/auth";
+import { errorMessage } from "@/app/(app)/cadastros/_lib/form-utils";
 import { runSkillForSession } from "../_lib/run-skill";
 import { parseBudgetCsv } from "./csv";
 
@@ -20,6 +22,15 @@ export async function upsertBudgetAction(formData: FormData): Promise<void> {
   const session = await requireSession();
 
   const period = typeof formData.get("period") === "string" ? String(formData.get("period")) : null;
+
+  // Autorização no servidor: a UI esconde o formulário, mas a action precisa
+  // recusar papéis sem budget.manage (a skill reforça em profundidade).
+  try {
+    assertPermission(session.actor, "budget.manage");
+  } catch (error) {
+    backTo(period, `erro=${encodeURIComponent(errorMessage(error))}`);
+  }
+
   const yearRaw = String(formData.get("year") ?? "").trim();
   const year = Number.parseInt(yearRaw, 10);
   const name = String(formData.get("name") ?? "").trim() || `Orçamento ${yearRaw}`;

@@ -9,6 +9,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { Actor, Company, Membership, User } from "@/core/entities";
 import { resolveCompanyConfig, type CompanyConfig } from "@/core/config";
+import { resolveSessionSecret } from "./session-secret";
 import { getContainer } from "./container";
 
 const COOKIE_NAME = "financeira_session";
@@ -21,7 +22,7 @@ interface SessionPayload {
 }
 
 function secret(): string {
-  return process.env.SESSION_SECRET ?? "dev-secret-change-me-0123456789abcdef";
+  return resolveSessionSecret();
 }
 
 function sign(data: string): string {

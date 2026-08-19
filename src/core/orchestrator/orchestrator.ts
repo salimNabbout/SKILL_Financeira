@@ -105,20 +105,19 @@ export class Orchestrator {
     if (!company) throw new NotFoundError("Empresa", request.companyId);
     const config = resolveCompanyConfig(company.config);
 
-    // Idempotência da requisição inteira.
+    // Idempotência da requisição inteira. Para fluxos periódicos (resumos/régua),
+    // a chave default inclui a data corrente (no fuso da empresa) para não
+    // congelar o resultado do primeiro dia — o duplo clique do mesmo dia segue
+    // protegido pela mesma chave.
     const requestHash = hashPayload(request.payload ?? null);
-    const idempotencyKey =
-      request.idempotencyKey ?? hashPayload({ flow: request.flow, payload: request.payload ?? null });
-    const existing = await this.env.repos.idempotency.findByKey(request.companyId, idempotencyKey);
-    if (existing) {
-      if (existing.requestHash !== requestHash) {
-        throw new ValidationError(
-          `Chave de idempotência "${idempotencyKey}" já usada com payload diferente.`
-        );
-      }
-      const cached = existing.result as OrchestratorResponse;
-      return { ...cached, idempotent_replay: true };
+    const defaultKeyBase: Record<string, unknown> = {
+      flow: request.flow,
+      payload: request.payload ?? null,
+    };
+    if (flowDef.periodicDefault) {
+      defaultKeyBase.day = todayInTz(this.env.clock.now(), config.timezone);
     }
+    const idempotencyKey = request.idempotencyKey ?? hashPayload(defaultKeyBase);
 
     const now = this.env.clock.now().toISOString();
     const flowRun: FlowRun = {
@@ -135,6 +134,48 @@ export class Orchestrator {
       createdAt: now,
       updatedAt: now,
     };
+
+    // Reserva ATÔMICA da chave ANTES de executar. Duas requisições concorrentes
+    // com a mesma chave: só uma vence a reserva; a outra recai no ramo "existing"
+    // e nunca reexecuta o fluxo. O resultado in-progress marca o flowRun vencedor.
+    const reservation = await this.env.repos.idempotency.reserve({
+      id: this.env.ids.next("idem"),
+      companyId: request.companyId,
+      key: idempotencyKey,
+      requestHash,
+      result: { __inProgressFlowRunId: flowRun.id },
+      createdAt: now,
+    });
+
+    if (!reservation.reserved) {
+      const existing = reservation.existing;
+      if (existing && existing.requestHash !== requestHash) {
+        throw new ValidationError(
+          `Chave de idempotência "${idempotencyKey}" já usada com payload diferente.`
+        );
+      }
+      const cached = existing?.result as OrchestratorResponse | { __inProgressFlowRunId: ID } | undefined;
+      // Execução concorrente ainda em andamento: devolve uma resposta "running"
+      // sem reprocessar (o cliente pode consultar o flowRun depois).
+      if (cached && typeof cached === "object" && "__inProgressFlowRunId" in cached) {
+        return {
+          flowRunId: cached.__inProgressFlowRunId,
+          flow: request.flow,
+          status: "running",
+          results: [],
+          consolidated: {
+            summary: "Execução em andamento para esta chave de idempotência.",
+            alerts: [],
+            pending_items: [],
+            assumptions: [],
+            data_sources: [],
+          },
+          idempotent_replay: true,
+        };
+      }
+      return { ...(cached as OrchestratorResponse), idempotent_replay: true };
+    }
+
     await this.env.repos.flowRuns.create(flowRun);
 
     await this.audit.record(request.companyId, {
@@ -146,7 +187,21 @@ export class Orchestrator {
       correlationId: flowRun.correlationId,
     });
 
-    return this.runSteps(flowDef, flowRun, request.actor, config);
+    try {
+      const response = await this.runSteps(flowDef, flowRun, request.actor, config);
+      // Fluxo que terminou em falha NÃO grava idempotência de conclusão (para
+      // permitir reexecução): a reserva in-progress precisa ser liberada, senão
+      // a chave ficaria presa e toda retentativa cairia em "em andamento".
+      if (response.status === "failed") {
+        await this.env.repos.idempotency.remove(request.companyId, idempotencyKey);
+      }
+      return response;
+    } catch (error) {
+      // Erro lançado antes de concluir: libera a reserva para que uma nova
+      // tentativa possa reexecutar (a reserva não deve prender a chave para sempre).
+      await this.env.repos.idempotency.remove(request.companyId, idempotencyKey);
+      throw error;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -228,7 +283,13 @@ export class Orchestrator {
       decidedAt: this.env.clock.now().toISOString(),
       justification,
     };
-    await this.env.repos.approvals.update(decided);
+    // Trava a decisão de forma ATÔMICA: só grava se o status ainda for "pending".
+    // Duas decisões concorrentes: só uma vence; a perdedora recebe false e é
+    // rejeitada, impedindo que o passo sensível (pagamento) rode duas vezes.
+    const claimed = await this.env.repos.approvals.updateIfStatus(decided, "pending");
+    if (!claimed) {
+      throw new ValidationError(`Aprovação ${approvalId} já decidida (decisão concorrente).`);
+    }
 
     await this.audit.record(companyId, {
       actor,
@@ -246,7 +307,14 @@ export class Orchestrator {
       correlationId: approval.flowRunId ?? approval.id,
     });
 
-    const flowRun = await this.env.repos.flowRuns.findByApprovalId(companyId, approval.id);
+    // Recuperação (B1): se o vínculo flowRun.approvalId se perdeu (crash entre o
+    // create da aprovação e o update do flowRun), reencontra o fluxo pelo
+    // flowRunId que a própria aprovação carrega — evita o flowRun preso em
+    // "running" para sempre.
+    let flowRun = await this.env.repos.flowRuns.findByApprovalId(companyId, approval.id);
+    if (!flowRun && approval.flowRunId) {
+      flowRun = await this.env.repos.flowRuns.getById(companyId, approval.flowRunId);
+    }
     if (!flowRun) return { approval: decided };
 
     const flowDef = this.flows.get(flowRun.flow);
@@ -396,8 +464,10 @@ export class Orchestrator {
       summary: req.summary,
       amountCents: req.amountCents,
       requestedBy: flowRun.requestedBy,
-      requiredRole: requiredRoleForAmount(config, req.amountCents ?? 0),
-      approvalsRequired: requiredApprovalsForAmount(config, req.amountCents ?? 0),
+      // A alçada usa tierAmountCents quando informado (ex.: valor do título
+      // inteiro), evitando que um pagamento fracionado rebaixe o papel exigido.
+      requiredRole: requiredRoleForAmount(config, req.tierAmountCents ?? req.amountCents ?? 0),
+      approvalsRequired: requiredApprovalsForAmount(config, req.tierAmountCents ?? req.amountCents ?? 0),
       approverIds: [],
       status: "pending",
       createdAt: this.env.clock.now().toISOString(),

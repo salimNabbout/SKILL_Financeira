@@ -49,4 +49,10 @@ export interface ApprovalRequestData {
   targetId: string;
   summary: string;
   amountCents?: number;
+  /**
+   * Valor usado para determinar a ALÇADA de aprovação (papel e nº de aprovações).
+   * Quando ausente, cai em amountCents. Serve para que um pagamento fracionado
+   * não reduza a alçada exigida: a skill informa aqui o valor do TÍTULO inteiro.
+   */
+  tierAmountCents?: number;
 }

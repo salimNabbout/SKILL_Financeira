@@ -504,12 +504,15 @@ async function indicators(
   });
 
   // --- Ponto de equilíbrio --------------------------------------------------
+  // Custos variáveis = custos diretos + deduções (impostos sobre venda). A base
+  // da margem é a receita BRUTA — usar a líquida aqui subtrairia as deduções
+  // duas vezes (elas já saem uma vez ao entrar nos custos variáveis).
   const custosFixosCents = statement.despesasOperacionaisCents;
   const custosVariaveisCents = statement.custosCents + statement.deducoesCents;
   let pontoEquilibrioCents: number | null = null;
   if (statement.receitaBrutaCents > 0) {
     const margemContribuicao =
-      (statement.receitaLiquidaCents - custosVariaveisCents) / statement.receitaBrutaCents;
+      (statement.receitaBrutaCents - custosVariaveisCents) / statement.receitaBrutaCents;
     if (margemContribuicao > 0) {
       pontoEquilibrioCents = Math.round(custosFixosCents / margemContribuicao);
     } else {
@@ -528,7 +531,7 @@ async function indicators(
     valueCents: pontoEquilibrioCents,
     formula:
       "ponto de equilíbrio (R$) = custos fixos ÷ margem de contribuição; " +
-      "margem de contribuição = (receita líquida - custos variáveis) ÷ receita bruta; " +
+      "margem de contribuição = (receita bruta - custos variáveis) ÷ receita bruta; " +
       "fixos = despesas_operacionais; variáveis = custos + deducoes",
     period,
     sources: ["receivables", "payables", "categories"],

@@ -48,6 +48,29 @@ describe("toCsv", () => {
     expect(dataLine).toBe(";;x");
   });
 
+  it("neutraliza injeção de fórmula em células de texto (=, +, @) sem alterar números negativos", () => {
+    const csv = toCsv([
+      { nome: '=HYPERLINK("http://evil.tld")', codigo: "+1+1", user: "@cmd", valor: -0.5 },
+    ]);
+    const dataLine = csv.slice(1).split("\r\n")[1];
+    // Cada célula de texto perigosa recebe um apóstrofo-guarda; a célula fica
+    // entre aspas por conter o separador/aspas ou por segurança do prefixo.
+    expect(dataLine).toContain("'=HYPERLINK");
+    expect(dataLine).toContain("'+1+1");
+    expect(dataLine).toContain("'@cmd");
+    // O número negativo NÃO é tratado como fórmula (continua -0,5).
+    expect(dataLine.endsWith("-0,5")).toBe(true);
+  });
+
+  it("neutraliza o hífen inicial apenas em texto, preservando datas ISO e números", () => {
+    const csv = toCsv([{ texto: "-DESCONTO", numero: -42, data: "2026-01-10" }]);
+    const dataLine = csv.slice(1).split("\r\n")[1];
+    const cells = dataLine.split(";");
+    expect(cells[0]).toContain("'-DESCONTO");
+    expect(cells[1]).toBe("-42");
+    expect(cells[2]).toBe("2026-01-10");
+  });
+
   it("sem linhas e sem colunas devolve apenas o BOM", () => {
     expect(toCsv([])).toBe(BOM);
   });

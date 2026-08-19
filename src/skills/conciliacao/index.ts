@@ -812,6 +812,12 @@ async function autoMatch(
   // Fases de fallback (rodam quando o casamento 1↔1 exato não encontra alvo)
   // -------------------------------------------------------------------------
   const consumedTransfer = new Set<ID>();
+  // IDs de transações que já receberam QUALQUER match ATIVO nesta rodada
+  // (fase 1 exata, rateio, baixa parcial ou transferência). Uma transação já
+  // casada não pode ser reusada como contraparte de transferência — do
+  // contrário ficaria com dois matches ativos (ex.: payable + transfer),
+  // explicando a mesma transação duas vezes.
+  const matchedThisRound = new Set<ID>();
   const TRANSFER_KEYWORDS = /\btransf|\bted\b|\bdoc\b|entre contas/;
 
   async function createMatchRecord(
@@ -839,6 +845,8 @@ async function autoMatch(
       after: match,
       correlationId: ctx.correlationId,
     });
+    // Marca a transação como já casada nesta rodada (evita reuso p/ transferência).
+    matchedThisRound.add(match.bankTransactionId);
     matches.push(match);
     return match;
   }
@@ -890,6 +898,10 @@ async function autoMatch(
           o.id !== tx.id &&
           o.bankAccountId !== tx.bankAccountId &&
           o.amountCents === -tx.amountCents &&
+          // Já conciliada por outro caminho (rodada anterior) — não reusar.
+          !o.reconciled &&
+          // Já casada NESTA rodada (fase 1/rateio/parcial/transferência).
+          !matchedThisRound.has(o.id) &&
           !consumedTransfer.has(o.id) &&
           !pendingTxIds.has(o.id) &&
           !rejectedPairs.has(`${tx.id}|${o.id}`) &&
@@ -1231,6 +1243,8 @@ async function autoMatch(
       after: match,
       correlationId: ctx.correlationId,
     });
+    // Casada nesta rodada (fase 1 exata): não reusar como par de transferência.
+    matchedThisRound.add(tx.id);
 
     // Reserva o saldo do alvo (auto ou sugerido) para as próximas transações do lote.
     if (best.targetType === "payable") {
