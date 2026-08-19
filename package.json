@@ -4,8 +4,9 @@
   "private": true,
   "description": "Plataforma financeira multiagente para PMEs brasileiras — arquitetura de skills especializadas com orquestrador central",
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "next dev",
-    "demo": "DEMO_MODE=1 next dev",
+    "demo": "cross-env DEMO_MODE=1 next dev",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
@@ -33,6 +34,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "cross-env": "^10.1.0",
     "postcss": "^8.5.0",
     "prisma": "^6.16.0",
     "tailwindcss": "^4.1.0",
