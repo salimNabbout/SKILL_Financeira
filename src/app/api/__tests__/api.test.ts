@@ -16,12 +16,14 @@ import type { OrchestratorResponse } from "@/core/orchestrator/orchestrator";
 import { makeResult, SKILL_NAMES, type SkillDefinition, type SkillName } from "@/core/skill";
 import { hashPassword } from "@/lib/password";
 import { generateTotpSecret, totpCode } from "@/lib/totp";
+import { contabilSkill } from "@/skills/contabil";
 import {
   acknowledgeAlert,
   createBankAccount,
   createSupplier,
   decideApproval,
   executeFlow,
+  exportAccountingBatch,
   getAuditTrail,
   getMe,
   getPayable,
@@ -947,5 +949,80 @@ describe("reports", () => {
       const header = new TextDecoder().decode(out.bytes.slice(0, 4));
       expect(header).toBe("%PDF");
     }
+  });
+});
+
+describe("accounting/export (lote contábil no layout escolhido)", () => {
+  // Registro com a skill contábil REAL (o lote é dela) e fakes no restante.
+  function registryWithRealContabil(): SkillRegistry {
+    const registry = new SkillRegistry();
+    for (const name of SKILL_NAMES) {
+      if (name === "integracao_contabil_fiscal") registry.register(contabilSkill);
+      else if (name === "contas_a_pagar") registry.register(fakeContasAPagar());
+      else registry.register(fakeSkill(name));
+    }
+    return registry;
+  }
+
+  function seedEntry(env: TestEnv): void {
+    env.db.accountingEntries.push({
+      id: "ae_api_1",
+      companyId: env.company.id,
+      entryDate: "2026-08-10",
+      debitAccount: "4.2",
+      creditAccount: "1.1",
+      amountCents: 15_000,
+      memo: "Energia elétrica",
+      sourceType: "payment",
+      sourceId: "pay_api_1",
+      exported: false,
+      createdAt: env.clock.now().toISOString(),
+    });
+  }
+
+  it("gera o arquivo no layout escolhido e repetir devolve o MESMO lote", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env, registryWithRealContabil());
+    const session = await sessionFor(env, "manager");
+    seedEntry(env);
+
+    const file = await exportAccountingBatch(deps, session, { period: "2026-08", layout: "omie" });
+    expect(file).toMatchObject({
+      filename: "lancamentos-2026-08-omie.csv",
+      layoutId: "omie",
+      count: 1,
+      period: "2026-08",
+    });
+    expect(file.contentType).toContain("text/csv");
+    const lines = file.content.split("\n");
+    expect(lines[0]).toBe("Data;Conta Débito;Conta Crédito;Valor;Histórico;Origem");
+    expect(lines[1]).toBe("10/08/2026;4.2;1.1;150,00;Energia elétrica;payment:pay_api_1");
+
+    // Idempotência de requisição do orquestrador: mesmo lote, nada reprocessado.
+    const again = await exportAccountingBatch(deps, session, { period: "2026-08", layout: "omie" });
+    expect(again.content).toBe(file.content);
+    expect(again.batchId).toBe(file.batchId);
+  });
+
+  it("layout TXT (dominio) devolve text/plain; permissão e entrada são validadas", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env, registryWithRealContabil());
+    const session = await sessionFor(env, "manager");
+    seedEntry(env);
+
+    const file = await exportAccountingBatch(deps, session, {
+      period: "2026-08",
+      layout: "dominio",
+    });
+    expect(file.filename).toBe("lancamentos-2026-08-dominio.txt");
+    expect(file.contentType).toContain("text/plain");
+
+    const viewer = await sessionFor(env, "viewer");
+    await expect(
+      exportAccountingBatch(deps, viewer, { period: "2026-08" })
+    ).rejects.toThrow(/permissão/);
+    await expect(
+      exportAccountingBatch(deps, session, { period: "08/2026" })
+    ).rejects.toThrow(ValidationError);
   });
 });

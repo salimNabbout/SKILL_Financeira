@@ -414,6 +414,37 @@ describe("integracao_contabil_fiscal — export_batch", () => {
     expect(env.db.events.filter((e) => e.type === "accounting.batch_exported")).toHaveLength(1);
   });
 
+  it("layout 'dominio' (referência): sem cabeçalho, data BR, TXT e aviso de validação", async () => {
+    const env = createTestEnv();
+    const { payment } = seedExecutedPaymentScenario(env);
+    await runSkill(contabilSkill, env.ctx(), {
+      action: "prepare_entries",
+      sourceType: "payment",
+      sourceId: payment.id,
+    });
+
+    const res = await runSkill(contabilSkill, env.ctx(), {
+      action: "export_batch",
+      period: "2026-08",
+      layout: "dominio",
+    });
+
+    expect(res.status).toBe("success");
+    const data = res.data as ExportBatchData;
+    expect(data.layout).toMatchObject({ id: "dominio", fileExtension: "txt" });
+    expect(data.filename).toBe("lancamentos-2026-08-dominio.txt");
+    const lines = data.csv.split("\n");
+    expect(lines).toHaveLength(1); // sem cabeçalho
+    expect(lines[0].startsWith("15/08/2026;4.2;1.1;1234,56;")).toBe(true);
+    expect(lines[0]).not.toContain("payment:"); // layout sem coluna de origem
+    // Aviso de layout de referência chega nas assumptions e o layout na auditoria.
+    expect(res.assumptions.some((a) => a.includes("REFERÊNCIA"))).toBe(true);
+    const batchAudit = (await env.repos.audit.list(env.company.id)).find(
+      (a) => a.action === "accounting.batch_exported"
+    );
+    expect(batchAudit?.after).toMatchObject({ layout: "dominio", filename: data.filename });
+  });
+
   it("sem lançamentos pendentes retorna warning com assumption e não gera lote", async () => {
     const env = createTestEnv();
     const { payment } = seedExecutedPaymentScenario(env);

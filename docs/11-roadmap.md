@@ -48,7 +48,11 @@ Escopo priorizado e implementado:
 - NFS-e/NF-e via provedor (ex.: Focus NFe) substituindo o mock por adaptador real.
 - Envio real da régua de cobrança (e-mail transacional + WhatsApp Business API) mantendo a
   aprovação humana obrigatória.
-- Exportação contábil em layouts específicos (Domínio, Omie, Contmatic).
+- ✅ Exportação contábil em layouts específicos — entregue como layouts DECLARATIVOS de
+  referência (Domínio TXT, Omie CSV, Contmatic CSV) selecionáveis na tela Relatórios e em
+  `POST /accounting/export`; códigos de conta/histórico variam por instalação e exigem
+  validação do contador com um lote de teste. Ajustes por instalação entram como novos
+  layouts declarativos.
 
 ## v1.3 — Inteligência e escala
 

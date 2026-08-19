@@ -1002,6 +1002,36 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /accounting/export:
+    post:
+      tags: [importação]
+      summary: Gera e baixa o lote de exportação contábil no layout escolhido
+      description: >
+        Executa o fluxo accounting_export (classifica liquidações do período em
+        partidas dobradas e gera o lote) e devolve o ARQUIVO do lote. Layouts
+        "dominio", "omie" e "contmatic" são LAYOUTS DE REFERÊNCIA — valide um
+        lote de teste com o contador antes do primeiro uso real. Aceita JSON ou
+        formulário. Repetir a mesma requisição devolve o MESMO lote
+        (idempotência de requisição do orquestrador). Requer accounting.export.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period]
+              properties:
+                period: { type: string, example: "2026-08" }
+                layout: { type: string, enum: [padrao, dominio, omie, contmatic], default: padrao }
+      responses:
+        "200":
+          description: >
+            Arquivo do lote (text/csv ou text/plain, Content-Disposition attachment).
+            Sem lançamentos pendentes: JSON com data.count = 0.
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /import/statement:
     post:
       tags: [importação]

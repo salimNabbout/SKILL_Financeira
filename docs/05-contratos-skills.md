@@ -115,7 +115,7 @@ Notação: campos `?` são opcionais; valores monetários em **centavos**; datas
 | Ação | Entrada | Saída |
 |---|---|---|
 | `prepare_entries` | `period?` ou `sourceType + sourceId` | `{ entries: AccountingEntry[], skipped }` |
-| `export_batch` | `period, format: csv` | `{ batchId, csv, count }` |
+| `export_batch` | `period, layout?: padrao\|dominio\|omie\|contmatic (default padrao), format?: csv (compat)` | `{ batchId, csv (conteúdo no layout), count, layout: {id, name, fileExtension}, filename }` — layouts declarativos; "dominio"/"omie"/"contmatic" são de REFERÊNCIA (validação do contador obrigatória) |
 | `check_master_data` | — | `{ issues: [...], count }` |
 | `tax_summary` | `period` | `{ regime, taxableRevenueCents, notes }` (informativo; sem cálculo de imposto) |
 

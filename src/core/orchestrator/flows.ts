@@ -388,11 +388,11 @@ const monthlyClose: FlowDefinition = {
   ],
 };
 
-/** Exportação contábil. payload: { period: "YYYY-MM", format?: "csv" } */
+/** Exportação contábil. payload: { period: "YYYY-MM", format?: "csv", layout?: "padrao"|"dominio"|"omie"|"contmatic" } */
 const accountingExport: FlowDefinition = {
   name: "accounting_export",
   description:
-    "Classifica lançamentos do período e prepara lote de exportação para a contabilidade (validação final é do contador).",
+    "Classifica lançamentos do período e prepara lote de exportação para a contabilidade no layout escolhido (padrão ou layouts de referência Domínio/Omie/Contmatic — validação final é do contador).",
   requiredPermission: "accounting.export",
   steps: [
     {
@@ -404,11 +404,12 @@ const accountingExport: FlowDefinition = {
     {
       id: "export",
       skill: "integracao_contabil_fiscal",
-      description: "Gerar lote de exportação",
+      description: "Gerar lote de exportação no layout escolhido",
       buildInput: (f) => ({
         action: "export_batch",
         period: f.payload.period,
         format: f.payload.format ?? "csv",
+        layout: f.payload.layout,
       }),
     },
   ],

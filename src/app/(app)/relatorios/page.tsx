@@ -1,8 +1,11 @@
-import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, PageHeader, inputClass } from "@/components/ui";
+import { hasPermission } from "@/core/auth";
 import { formatBR, todayInTz, type ISODate, type ISOMonth } from "@/core/dates";
 import { getContainer } from "@/lib/container";
 import { formatBRL } from "@/lib/format";
 import { requireSession } from "@/lib/session";
+import { EXPORT_LAYOUTS, EXPORT_LAYOUT_IDS } from "@/skills/contabil/layouts";
+import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { formatMonthBR, isISOMonth, MonthNav } from "../_lib/month-nav";
 import { runSkillForSession } from "../_lib/run-skill";
 import {
@@ -152,13 +155,14 @@ const TREND_LABEL: Record<string, string> = {
 export default async function RelatoriosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; ok?: string; erro?: string }>;
 }) {
   const session = await requireSession();
   const { clock } = await getContainer();
   const sp = await searchParams;
   const currentMonth = todayInTz(clock.now(), session.config.timezone).slice(0, 7);
   const period: ISOMonth = isISOMonth(sp.period) ? sp.period : currentMonth;
+  const canExportAccounting = hasPermission(session.membership.role, "accounting.export");
 
   const dailyRes = await runSkillForSession<DailySummaryView>(session, "relatorios_gerenciais", {
     action: "daily_summary",
@@ -182,6 +186,7 @@ export default async function RelatoriosPage({
         title="Relatórios gerenciais"
         subtitle="Resumo diário, fechamento mensal e visão executiva — com download em CSV, Excel e PDF"
       />
+      <Flash ok={sp.ok} erro={sp.erro} />
 
       <div className="grid gap-4 xl:grid-cols-3">
         {/* Resumo diário */}
@@ -329,6 +334,45 @@ export default async function RelatoriosPage({
           </Card>
         )}
       </div>
+
+      {canExportAccounting ? (
+        <Card className="mt-4" title="Exportação contábil (lote de lançamentos)">
+          <form
+            method="POST"
+            action="/api/v1/accounting/export"
+            className="grid gap-4 md:grid-cols-3"
+          >
+            <Field label="Período (mês)">
+              <input
+                type="month"
+                name="period"
+                required
+                defaultValue={period}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Layout de exportação">
+              <select name="layout" className={inputClass} defaultValue="padrao">
+                {EXPORT_LAYOUT_IDS.map((id) => (
+                  <option key={id} value={id}>
+                    {EXPORT_LAYOUTS[id].name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="flex items-end">
+              <Button>Gerar e baixar lote</Button>
+            </div>
+          </form>
+          <p className="mt-3 text-xs text-[var(--ink-muted)]">
+            Classifica as liquidações do período em partidas dobradas e baixa o arquivo no layout
+            escolhido. Os layouts Domínio/Omie/Contmatic são <strong>layouts de referência</strong>{" "}
+            — códigos de conta e histórico variam por instalação: valide um lote de teste com o
+            contador antes do primeiro uso real. Lançamentos exportados não entram em lotes
+            futuros; repetir a mesma requisição devolve o MESMO lote (idempotente).
+          </p>
+        </Card>
+      ) : null}
     </div>
   );
 }
