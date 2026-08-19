@@ -68,6 +68,16 @@ npm run db:seed                 # mesma carga de demonstração, agora persistid
 npm run dev
 ```
 
+Processos opcionais (em terminais separados):
+
+```bash
+npx tsx scripts/scheduler.ts     # rotinas agendadas: bank_sync 6h, resumo 7h, régua 8h (horas
+                                 # locais da empresa; agendas em CompanyConfig.schedules).
+                                 # Disparos usam chave de idempotência por dia/hora — reiniciar
+                                 # não duplica. Ações sensíveis seguem parando em aprovação.
+REDIS_URL=redis://localhost:6379 npx tsx scripts/event-worker.ts   # fila real (EVENT_BUS=bullmq)
+```
+
 ### Testes e verificação
 
 ```bash

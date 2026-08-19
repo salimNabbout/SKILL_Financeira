@@ -60,7 +60,9 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
 
 **Técnica**
 - Barramento de eventos é in-process com outbox persistido (BullMQ/Redis na v1.1); os fluxos do
-  orquestrador materializam as reações — não há workers assíncronos.
+  orquestrador materializam as reações. Workers opcionais: `scripts/event-worker.ts` (fila real)
+  e `scripts/scheduler.ts` (rotinas agendadas por empresa com idempotência por balde de tempo —
+  ações sensíveis seguem parando em aprovação humana).
 - Listagens filtram em memória em vários pontos — adequado a ~10⁴ registros por empresa;
   paginação/índices adicionais na v1.1.
 - Autenticação própria (scrypt + cookie HMAC, sessão 8h) com 2FA TOTP opcional por usuário e

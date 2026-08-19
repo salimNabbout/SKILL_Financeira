@@ -31,6 +31,16 @@ export function todayInTz(now: Date, timeZone: string): ISODate {
   return fmt.format(now); // en-CA => YYYY-MM-DD
 }
 
+/** Hora local (0–23) do instante no fuso informado. */
+export function hourInTz(now: Date, timeZone: string): number {
+  const fmt = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+  return Number(fmt.format(now));
+}
+
 /** Converte ISODate para Date UTC ao meio-dia (evita bugs de DST/fuso). */
 export function toUtcNoon(date: ISODate): Date {
   return new Date(`${date}T12:00:00Z`);
