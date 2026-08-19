@@ -175,6 +175,16 @@ export interface BudgetLineRepo {
 
 export interface ApprovalRepo extends BaseRepo<Approval> {
   listByStatus(companyId: ID, statuses: ApprovalStatus[]): Promise<Approval[]>;
+  /**
+   * Atualização condicional (compare-and-set) por status atual: grava `next`
+   * apenas se o status persistido ainda for `expectedStatus`. Devolve true se
+   * gravou, false se outra decisão concorrente já mudou o status. É a trava que
+   * impede duas decisões simultâneas de executarem o passo sensível duas vezes.
+   */
+  updateIfStatus(
+    next: Approval,
+    expectedStatus: ApprovalStatus
+  ): Promise<boolean>;
 }
 
 export interface ReconciliationRepo extends BaseRepo<ReconciliationMatch> {
@@ -235,6 +245,15 @@ export interface FlowRunRepo extends BaseRepo<FlowRun> {
 export interface IdempotencyRepo {
   findByKey(companyId: ID, key: string): Promise<IdempotencyRecord | null>;
   save(record: IdempotencyRecord): Promise<void>;
+  /**
+   * Reserva ATÔMICA da chave (INSERT que respeita o unique (companyId, key)):
+   * cria o registro se ausente e devolve { reserved: true }; se já existir,
+   * devolve { reserved: false, existing }. É o ponto de serialização que impede
+   * duas execuções concorrentes da mesma chave de rodarem ambas.
+   */
+  reserve(record: IdempotencyRecord): Promise<{ reserved: boolean; existing?: IdempotencyRecord }>;
+  /** Remove a reserva (usado para liberar a chave quando a execução falha antes de concluir). */
+  remove(companyId: ID, key: string): Promise<void>;
 }
 
 // --- Bundle -----------------------------------------------------------------

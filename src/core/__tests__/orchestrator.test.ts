@@ -109,6 +109,16 @@ const approvalFlow: FlowDefinition = {
   ],
 };
 
+const periodicFlow: FlowDefinition = {
+  name: "fake_periodic",
+  description: "fluxo periódico (resumo diário)",
+  requiredPermission: "flow.execute",
+  periodicDefault: true,
+  steps: [
+    { id: "s1", skill: "relatorios_gerenciais", description: "resumo", buildInput: () => ({ action: "daily_summary" }) },
+  ],
+};
+
 function makeOrchestrator(env: ReturnType<typeof createTestEnv>, registry: SkillRegistry) {
   return new Orchestrator({
     repos: env.repos,
@@ -121,6 +131,7 @@ function makeOrchestrator(env: ReturnType<typeof createTestEnv>, registry: Skill
     flows: new Map([
       [simpleFlow.name, simpleFlow],
       [approvalFlow.name, approvalFlow],
+      [periodicFlow.name, periodicFlow],
     ]),
   });
 }
@@ -170,6 +181,55 @@ describe("orquestrador", () => {
     expect(second.idempotent_replay).toBe(true);
     expect(second.flowRunId).toBe(first.flowRunId);
     expect(executions.filter((e) => e === "hello")).toHaveLength(1);
+  });
+
+  it("fluxo periódico sem chave explícita não vira replay eterno entre dias (A3)", async () => {
+    const env = createTestEnv();
+    const { registry, executions } = buildFakes();
+    const orch = makeOrchestrator(env, registry);
+    const req = {
+      flow: "fake_periodic",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {},
+    };
+
+    const dia1 = await orch.execute(req);
+    // Mesmo dia, mesma requisição: continua idempotente (protege duplo clique).
+    const dia1Again = await orch.execute(req);
+    expect(dia1Again.idempotent_replay).toBe(true);
+    expect(dia1Again.flowRunId).toBe(dia1.flowRunId);
+
+    // Avança um dia: a MESMA requisição deve reprocessar (não replay do dia anterior).
+    env.clock.advanceDays(1);
+    const dia2 = await orch.execute(req);
+    expect(dia2.idempotent_replay).toBeFalsy();
+    expect(dia2.flowRunId).not.toBe(dia1.flowRunId);
+    expect(executions.filter((e) => e === "daily_summary")).toHaveLength(2);
+  });
+
+  it("duas requisições concorrentes com a mesma chave executam o fluxo UMA vez (A1)", async () => {
+    const env = createTestEnv();
+    const { registry, executions } = buildFakes();
+    const orch = makeOrchestrator(env, registry);
+    const req = {
+      flow: "fake_simple",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: { action: "hello" },
+      idempotencyKey: "concorrente-001",
+    };
+
+    // Dispara as duas SEM aguardar a primeira — simula concorrência: ambas
+    // passam pelo findByKey antes de qualquer save no modelo antigo.
+    const [a, b] = await Promise.all([orch.execute(req), orch.execute(req)]);
+
+    // O passo "hello" roda uma única vez; ambas devolvem o mesmo flowRun.
+    expect(executions.filter((e) => e === "hello")).toHaveLength(1);
+    const flowRuns = await env.repos.flowRuns.listAll(env.company.id);
+    expect(flowRuns).toHaveLength(1);
+    const ids = new Set([a.flowRunId, b.flowRunId]);
+    expect(ids.size).toBe(1);
   });
 
   it("rejeita reutilização de chave de idempotência com payload diferente", async () => {

@@ -236,6 +236,45 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(res.approval?.requiredRole).toBe("admin");
   });
 
+  it("duas decisões concorrentes na mesma aprovação executam o pagamento UMA vez (A2)", async () => {
+    const payableId = await createPayable();
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+    const approvalId = res.approval!.id;
+
+    // Dois aprovadores (manager e approver) decidem ao mesmo tempo. Sem trava,
+    // ambos leem "pending" e ambos executam o passo sensível → dupla baixa.
+    const results = await Promise.allSettled([
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId,
+        decision: "approved",
+        actor: env.actorFor("approver"),
+      }),
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId,
+        decision: "approved",
+        actor: env.actorFor("manager"),
+      }),
+    ]);
+
+    // Exatamente uma decisão vence; a outra falha (aprovação já decidida).
+    const ok = results.filter((r) => r.status === "fulfilled");
+    expect(ok).toHaveLength(1);
+
+    // O pagamento é executado uma única vez e o título não é sobre-baixado.
+    const executed = await env.repos.payments.listByStatus(env.company.id, ["executed"]);
+    expect(executed).toHaveLength(1);
+    const payable = await env.repos.payables.getById(env.company.id, payableId);
+    expect(payable?.paidCents).toBe(120_000);
+    expect(payable?.status).toBe("paid");
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

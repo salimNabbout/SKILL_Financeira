@@ -1562,6 +1562,16 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
       });
       return rows.map(approvalToDomain);
     },
+    // Compare-and-set atômico no banco: o updateMany só afeta a linha se o
+    // status ainda for o esperado. count===1 ⇒ esta decisão venceu a corrida.
+    async updateIfStatus(next: Approval, expectedStatus: ApprovalStatus) {
+      const data = approvalToDb(next);
+      const result = await prisma.approval.updateMany({
+        where: { id: next.id, companyId: next.companyId, status: expectedStatus },
+        data,
+      });
+      return result.count === 1;
+    },
   };
 
   const reconciliations: ReconciliationRepo = {
@@ -1859,6 +1869,31 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
           createdAt: toInstant(record.createdAt),
         },
       });
+    },
+    // Reserva atômica: INSERT que, em corrida, viola o unique (companyId, key).
+    // O perdedor recebe P2002 e lê o registro vencedor.
+    async reserve(record: IdempotencyRecord) {
+      try {
+        await prisma.idempotencyRecord.create({ data: idempotencyToDb(record) });
+        return { reserved: true };
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          const row = await prisma.idempotencyRecord.findUnique({
+            where: { companyId_key: { companyId: record.companyId, key: record.key } },
+          });
+          return { reserved: false, existing: row ? idempotencyToDomain(row) : undefined };
+        }
+        throw error;
+      }
+    },
+    async remove(companyId: ID, key: string) {
+      await prisma.idempotencyRecord
+        .delete({ where: { companyId_key: { companyId, key } } })
+        .catch((error) => {
+          // Registro já ausente (P2025): nada a fazer.
+          if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") return;
+          throw error;
+        });
     },
   };
 
