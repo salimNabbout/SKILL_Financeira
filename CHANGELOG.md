@@ -4,6 +4,17 @@ Registro das mudanças relevantes. Datas em ISO (AAAA-MM-DD).
 
 ---
 
+## 2026-08-19 — QR Code no cadastro do 2FA
+
+A tela **Segurança** passa a exibir um **QR Code** da URI otpauth, em vez de apenas a chave base32
+e a URI em texto. O código é gerado **no servidor** e desenhado como SVG em JSX — sem
+`dangerouslySetInnerHTML`, sem script no cliente e sem nenhuma API externa de QR: o segredo TOTP é
+o segundo fator e não pode sair para terceiros. A chave base32 continua visível para digitação
+manual (com o rótulo "Não consegue ler o QR Code?"), e a URI completa fica atrás de um
+`<details>`. Dependência nova: `qrcode`.
+
+---
+
 ## 2026-08-19 — Revisão, correções e publicação em produção
 
 Sessão de revisão de código (multi-agente), correção dos achados, endurecimento
