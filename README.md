@@ -31,9 +31,23 @@ Pré-requisito: Node.js 22+.
 ### Modo demonstração (sem banco — recomendado para conhecer o produto)
 
 ```bash
-npm install
+npm install           # também gera o Prisma Client (postinstall)
 npm run demo          # Next.js em http://localhost:3000 com dados fictícios em memória
 ```
+
+Funciona igual em Linux, macOS e **Windows** (o script usa cross-env). Aguarde a linha
+`✓ Ready` no terminal e mantenha a janela aberta enquanto usa o app.
+
+**Não abriu?** Confira no terminal:
+
+- `'DEMO_MODE' não é reconhecido...` → versão antiga do repositório no Windows; atualize
+  (`git pull`) ou rode no PowerShell: `$env:DEMO_MODE="1"; npm run dev`.
+- `@prisma/client did not initialize` → rode `npm run db:generate` uma vez (ou atualize:
+  o `postinstall` passou a fazer isso).
+- `Port 3000 is in use` → o Next escolhe outra porta e a mostra no terminal (ex.: 3001);
+  abra a porta indicada.
+- `ERR_CONNECTION_REFUSED` no navegador → o servidor não está rodando: veja qual erro
+  apareceu no terminal (acima) e confirme Node.js 22+ (`node --version`).
 
 Login (empresa fictícia **Café Aurora Ltda**, senha `demo1234` para todos):
 
@@ -77,8 +91,11 @@ npx tsx scripts/scheduler.ts     # rotinas agendadas: bank_sync 6h, resumo 7h, r
                                  # locais da empresa; agendas em CompanyConfig.schedules).
                                  # Disparos usam chave de idempotência por dia/hora — reiniciar
                                  # não duplica. Ações sensíveis seguem parando em aprovação.
-REDIS_URL=redis://localhost:6379 npx tsx scripts/event-worker.ts   # fila real (EVENT_BUS=bullmq)
+npx cross-env REDIS_URL=redis://localhost:6379 tsx scripts/event-worker.ts   # fila real (EVENT_BUS=bullmq)
 ```
+
+(As variáveis também podem ir no `.env`; `npx cross-env VAR=... comando` funciona em
+qualquer sistema, inclusive Windows.)
 
 ### Testes e verificação
 

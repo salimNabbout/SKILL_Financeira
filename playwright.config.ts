@@ -10,7 +10,7 @@ export default defineConfig({
       : {}),
   },
   webServer: {
-    command: "DEMO_MODE=1 PORT=3100 npm run dev",
+    command: "cross-env DEMO_MODE=1 PORT=3100 npm run dev",
     url: "http://localhost:3100/login",
     reuseExistingServer: true,
     timeout: 120_000,
