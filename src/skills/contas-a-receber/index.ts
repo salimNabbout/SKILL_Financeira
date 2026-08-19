@@ -286,6 +286,15 @@ async function createReceivable(
   if (!customer.active) {
     return errorResult(SKILL_NAME, ctx, "customer_inactive", `Cliente inativo: ${customer.name}. Reative o cadastro antes de criar títulos.`);
   }
+  // Vencimento não pode anteceder a emissão (paridade com contas a pagar).
+  if (input.dueDate < input.issueDate) {
+    return errorResult(
+      SKILL_NAME,
+      ctx,
+      "invalid_dates",
+      `Vencimento (${input.dueDate}) não pode ser anterior à emissão (${input.issueDate}).`
+    );
+  }
 
   const assumptions: string[] = [];
   const pendingItems: PendingItem[] = [];

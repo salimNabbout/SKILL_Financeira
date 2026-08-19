@@ -22,11 +22,23 @@ function extractTransactionBlocks(content: string): string[] {
     .map((chunk) => chunk.split(/<\/STMTTRN>/i)[0]);
 }
 
+/** Decodifica entidades SGML/XML comuns (nomeadas e numéricas) num valor de tag. */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&amp;/gi, "&"); // por último, para não redecodificar
+}
+
 /** Valor de tag SGML sem fechamento: tudo até o próximo "<" ou fim de linha. */
 function tagValue(block: string, tag: string): string | undefined {
   const m = new RegExp(`<${tag}>([^<\\r\\n]*)`, "i").exec(block);
   const value = m?.[1].trim();
-  return value ? value : undefined;
+  return value ? decodeEntities(value) : undefined;
 }
 
 /** DTPOSTED "YYYYMMDD[hhmmss[fuso]]" → ISODate; pega os 8 primeiros dígitos. */
