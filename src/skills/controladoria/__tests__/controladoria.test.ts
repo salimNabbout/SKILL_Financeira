@@ -354,8 +354,9 @@ describe("controladoria_indicadores — indicators", () => {
     expect(indicator(data, "ebitda_gerencial").valueCents).toBe(4_000_000);
 
     // Ponto de equilíbrio: fixos = 2.000.000; variáveis = 3.000.000 + 1.000.000;
-    // MC = (9.000.000 − 4.000.000) / 10.000.000 = 0,5 → PE = 2.000.000 / 0,5 = 4.000.000.
-    expect(indicator(data, "ponto_equilibrio").valueCents).toBe(4_000_000);
+    // MC = (receita bruta 10.000.000 − variáveis 4.000.000) / 10.000.000 = 0,6
+    // → PE = 2.000.000 / 0,6 = 3.333.333 (deduções contam uma única vez).
+    expect(indicator(data, "ponto_equilibrio").valueCents).toBe(3_333_333);
 
     // Capital de giro: AR aberto (10.000.000 + 100.000) − AP aberto
     // (1.000.000 + 3.000.000 + 2.000.000 + 200.000 + 50.000) = 3.850.000.
@@ -383,6 +384,34 @@ describe("controladoria_indicadores — indicators", () => {
     expect(indicator(data, "pmr").period).toBe("2026-05-21 a 2026-08-18");
     expect(res.assumptions.some((a) => a.includes("FIXOS"))).toBe(true);
     expect(res.assumptions.some((a) => a.includes("sem estoque"))).toBe(true);
+  });
+
+  it("ponto de equilíbrio não desconta deduções duas vezes", async () => {
+    const env = createTestEnv();
+    // Cenário isolado (mesmo do relatório): bruta 100k, deduções 10k, custos 40k,
+    // fixos (despesas operacionais) 30k, sem receitas/despesas financeiras.
+    const catVendas = seedCategory(env, {
+      id: "cat_v",
+      name: "Vendas",
+      kind: "income",
+      dreGroup: "receita_bruta",
+    });
+    const catImp = seedCategory(env, { id: "cat_i", name: "Impostos", dreGroup: "deducoes" });
+    const catCmv = seedCategory(env, { id: "cat_c", name: "CMV", dreGroup: "custos" });
+    const catAdm = seedCategory(env, { id: "cat_a", name: "Adm", dreGroup: "despesas_operacionais" });
+
+    seedReceivable(env, { id: "r_v", categoryId: catVendas.id, amountCents: 100_000 });
+    seedPayable(env, { id: "p_i", categoryId: catImp.id, amountCents: 10_000 });
+    seedPayable(env, { id: "p_c", categoryId: catCmv.id, amountCents: 40_000 });
+    seedPayable(env, { id: "p_a", categoryId: catAdm.id, amountCents: 30_000 });
+
+    const res = await run(env, { action: "indicators", period: PERIOD });
+    const data = res.data as IndicatorsData;
+
+    // Margem de contribuição = (bruta 100k − variáveis (custos 40k + deduções 10k)) / bruta 100k
+    //                        = 50k / 100k = 0,50 (deduções contam UMA vez).
+    // Ponto de equilíbrio = fixos 30k / 0,50 = 60.000. (O bug dava 75.000.)
+    expect(indicator(data, "ponto_equilibrio").valueCents).toBe(60_000);
   });
 
   it("período sem receita: margens e ponto de equilíbrio nulos, com suposições", async () => {
