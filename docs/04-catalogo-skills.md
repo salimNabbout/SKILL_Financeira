@@ -74,6 +74,7 @@ insuficiência. **Recomenda ações; nunca movimenta dinheiro.**
 | `refresh_projection` | Série diária de entradas/saídas/saldo no horizonte; menor saldo e data; alertas `cash_shortfall_projected` (crítico) / `cash_below_minimum`; recomendações textuais |
 | `cashflow_statement` | Realizado (extrato) + projetado por dia/semana/mês |
 | `scenarios` | Otimista/base/pessimista com parâmetros explícitos (% realização e atraso das entradas) |
+| `forecast_cash` | Previsão estatística semanal (mediana + tendência Theil–Sen + sazonalidade com ≥ 52 semanas) com banda de incerteza; comprometido é piso — estimativa, não fato |
 
 **Publica:** `cashflow.updated`, `cashflow.shortfall_detected`.
 

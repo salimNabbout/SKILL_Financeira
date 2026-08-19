@@ -76,6 +76,7 @@ Notação: campos `?` são opcionais; valores monetários em **centavos**; datas
 | `refresh_projection` | `horizonDays?=90` | `{ summary: {horizonStart, horizonEnd, openingBalanceCents, totalInCents, totalOutCents, endingBalanceCents, minBalanceCents, minBalanceDate}, daily: [{date, inCents, outCents, balanceCents}], recommendations }` |
 | `cashflow_statement` | `granularity: daily\|weekly\|monthly, periods?` | `{ granularity, buckets: [{label, start, end, realizedInCents, realizedOutCents, projectedInCents, projectedOutCents, netCents, cumulativeBalanceCents}], formula }` |
 | `scenarios` | `horizonDays?=90` | `{ scenarios: [{name, endingBalanceCents, minBalanceCents, minBalanceDate, params}], horizonDays }` |
+| `forecast_cash` | `horizonWeeks?=12, historyWeeks?=26` | `{ horizonWeeks, historyWeeksUsed, seasonalityApplied, baseline: {weeklyMedianInCents, weeklyMedianOutCents, trendInCentsPerWeek, trendOutCentsPerWeek, sigmaNetCents}, weeks: [{start, end, committedIn/OutCents, statisticalIn/OutCents, expectedIn/OutCents, expectedNetCents, balanceCents, balanceLower/UpperCents}], formula }` — estatística robusta (mediana/MAD/Theil–Sen); < 8 semanas de histórico → status warning com parte estatística zerada |
 
 ### conciliacao_bancaria
 | Ação | Entrada | Saída |

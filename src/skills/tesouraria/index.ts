@@ -31,6 +31,7 @@ import type {
 import {
   addDays,
   addMonths,
+  diffDays,
   endOfMonth,
   formatBR,
   monthOf,
@@ -39,6 +40,7 @@ import {
   type ISODate,
 } from "@/core/dates";
 import { formatBRL, percentOf } from "@/core/money";
+import { median, robustStdDev, theilSenTrend, trendAt } from "@/core/stats";
 import type { SkillAlert } from "@/core/types";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 
@@ -76,17 +78,25 @@ const scenariosSchema = z.object({
   horizonDays: z.number().int().min(1).max(730).optional(),
 });
 
+const forecastCashSchema = z.object({
+  action: z.literal("forecast_cash"),
+  horizonWeeks: z.number().int().min(1).max(26).optional(),
+  historyWeeks: z.number().int().min(8).max(104).optional(),
+});
+
 export const tesourariaInputSchema = z.discriminatedUnion("action", [
   cashPositionSchema,
   refreshProjectionSchema,
   cashflowStatementSchema,
   scenariosSchema,
+  forecastCashSchema,
 ]);
 
 export type CashPositionInput = z.infer<typeof cashPositionSchema>;
 export type RefreshProjectionInput = z.infer<typeof refreshProjectionSchema>;
 export type CashflowStatementInput = z.infer<typeof cashflowStatementSchema>;
 export type ScenariosInput = z.infer<typeof scenariosSchema>;
+export type ForecastCashInput = z.infer<typeof forecastCashSchema>;
 export type TesourariaInput = z.infer<typeof tesourariaInputSchema>;
 
 // ---------------------------------------------------------------------------
@@ -183,11 +193,48 @@ export interface ScenariosData {
   formula: string;
 }
 
+export interface ForecastWeek {
+  start: ISODate;
+  end: ISODate;
+  /** Entradas/saídas já tituladas (recebíveis/títulos abertos) na semana. */
+  committedInCents: number;
+  committedOutCents: number;
+  /** Estimativa estatística de fluxo recorrente (mediana + tendência ± sazonalidade). */
+  statisticalInCents: number;
+  statisticalOutCents: number;
+  /** Previsto = max(comprometido, estatístico) — o comprometido é piso. */
+  expectedInCents: number;
+  expectedOutCents: number;
+  expectedNetCents: number;
+  balanceCents: number;
+  balanceLowerCents: number;
+  balanceUpperCents: number;
+}
+
+export interface ForecastCashData {
+  horizonWeeks: number;
+  /** Semanas completas de histórico efetivamente usadas na estimativa. */
+  historyWeeksUsed: number;
+  seasonalityApplied: boolean;
+  baseline: {
+    weeklyMedianInCents: number;
+    weeklyMedianOutCents: number;
+    trendInCentsPerWeek: number;
+    trendOutCentsPerWeek: number;
+    /** Desvio robusto (MAD×1.4826) do fluxo líquido semanal — base da banda. */
+    sigmaNetCents: number;
+  };
+  weeks: ForecastWeek[];
+  period: { start: ISODate; end: ISODate };
+  formula: string;
+}
+
 export type TesourariaData =
   | CashPositionData
   | RefreshProjectionData
   | CashflowStatementData
-  | ScenariosData;
+  | ScenariosData
+  | ForecastCashData;
 
 // ---------------------------------------------------------------------------
 // Constantes de cálculo
@@ -800,6 +847,205 @@ async function executeScenarios(ctx: SkillContext, input: ScenariosInput) {
 }
 
 // ---------------------------------------------------------------------------
+// forecast_cash — previsão estatística (estimativa, nunca fato)
+// ---------------------------------------------------------------------------
+
+/** Mínimo de semanas completas de histórico para estimar; abaixo disso, só o comprometido. */
+const MIN_FORECAST_HISTORY_WEEKS = 8;
+/** Sazonalidade mensal só é estimável com pelo menos um ano de semanas. */
+const SEASONALITY_MIN_WEEKS = 52;
+
+const FORMULA_FORECAST =
+  "histórico: totais semanais (semanas completas, segunda a domingo) de entradas e saídas das transações bancárias importadas; " +
+  "estimativa da semana futura k = max(0, tendência Theil–Sen avaliada no índice da semana) × fator sazonal do mês (mediana das semanas do mês ÷ mediana geral; fator 1 com menos de 52 semanas de histórico); " +
+  "semana corrente proporcional aos dias restantes (dias/7); " +
+  "previsto = max(comprometido da semana, estimativa estatística) — títulos em aberto são piso; " +
+  "banda do saldo acumulado na semana k = ± MAD(fluxo líquido semanal) × 1.4826 × √(k+1); " +
+  "saldo(k) = disponível + Σ previsto líquido até k";
+
+interface WeeklyHistoryPoint {
+  start: ISODate;
+  inCents: number;
+  outCents: number;
+}
+
+/**
+ * Série semanal do realizado (apenas semanas COMPLETAS, anteriores à corrente),
+ * limitada a `historyWeeks` e iniciando na semana da primeira transação —
+ * semanas sem movimento dentro do intervalo contam como zero (são informação).
+ */
+function buildWeeklyHistory(
+  transactions: BankTransaction[],
+  today: ISODate,
+  historyWeeks: number
+): WeeklyHistoryPoint[] {
+  if (transactions.length === 0) return [];
+  const currentWeekStart = weekStart(today);
+  const earliestAllowed = addDays(currentWeekStart, -7 * historyWeeks);
+  const firstTxWeek = weekStart(
+    transactions.reduce((min, t) => (t.date < min ? t.date : min), transactions[0].date)
+  );
+  const seriesStart = firstTxWeek > earliestAllowed ? firstTxWeek : earliestAllowed;
+  if (seriesStart >= currentWeekStart) return [];
+
+  const byWeek = new Map<ISODate, { inCents: number; outCents: number }>();
+  for (const tx of transactions) {
+    if (tx.date >= currentWeekStart) continue;
+    const ws = weekStart(tx.date);
+    if (ws < seriesStart) continue;
+    const bucket = byWeek.get(ws) ?? { inCents: 0, outCents: 0 };
+    if (tx.amountCents >= 0) bucket.inCents += tx.amountCents;
+    else bucket.outCents += -tx.amountCents;
+    byWeek.set(ws, bucket);
+  }
+
+  const points: WeeklyHistoryPoint[] = [];
+  for (let ws = seriesStart; ws < currentWeekStart; ws = addDays(ws, 7)) {
+    const bucket = byWeek.get(ws) ?? { inCents: 0, outCents: 0 };
+    points.push({ start: ws, inCents: bucket.inCents, outCents: bucket.outCents });
+  }
+  return points;
+}
+
+/** Fator sazonal por mês-do-ano ("01".."12"): mediana das semanas do mês ÷ mediana geral. */
+function monthlySeasonalFactors(
+  history: WeeklyHistoryPoint[],
+  pick: (p: WeeklyHistoryPoint) => number
+): Map<string, number> {
+  const overall = median(history.map(pick));
+  const factors = new Map<string, number>();
+  if (overall <= 0) return factors; // sem base — fatores ficam em 1
+  const byMonth = new Map<string, number[]>();
+  for (const p of history) {
+    const month = p.start.slice(5, 7);
+    const list = byMonth.get(month) ?? [];
+    list.push(pick(p));
+    byMonth.set(month, list);
+  }
+  for (const [month, values] of byMonth) {
+    factors.set(month, median(values) / overall);
+  }
+  return factors;
+}
+
+async function executeForecastCash(ctx: SkillContext, input: ForecastCashInput) {
+  const base = await loadCashBase(ctx);
+  const today = ctx.today();
+  const horizonWeeks = input.horizonWeeks ?? 12;
+  const historyWeeks = input.historyWeeks ?? 26;
+
+  const history = buildWeeklyHistory(base.transactions, today, historyWeeks);
+  const enoughHistory = history.length >= MIN_FORECAST_HISTORY_WEEKS;
+
+  const inSeries = history.map((p) => p.inCents);
+  const outSeries = history.map((p) => p.outCents);
+  const netSeries = history.map((p) => p.inCents - p.outCents);
+  const trendIn = theilSenTrend(inSeries);
+  const trendOut = theilSenTrend(outSeries);
+  const sigmaNet = enoughHistory ? robustStdDev(netSeries) : 0;
+
+  const seasonalityApplied = enoughHistory && history.length >= SEASONALITY_MIN_WEEKS;
+  const factorsIn = seasonalityApplied
+    ? monthlySeasonalFactors(history, (p) => p.inCents)
+    : new Map<string, number>();
+  const factorsOut = seasonalityApplied
+    ? monthlySeasonalFactors(history, (p) => p.outCents)
+    : new Map<string, number>();
+
+  // Comprometido: mesmos itens da projeção determinística (datas nunca < hoje).
+  const committedItems = [
+    ...buildInflows(base, today, DETERMINISTIC_PARAMS),
+    ...buildOutflows(base, today),
+  ];
+
+  const currentWeekStart = weekStart(today);
+  const historyLen = history.length; // índice da semana corrente na série contínua
+  const weeks: ForecastWeek[] = [];
+  let balance = base.availableCents;
+  for (let k = 0; k < horizonWeeks; k++) {
+    const start = addDays(currentWeekStart, k * 7);
+    const end = addDays(start, 6);
+    const month = start.slice(5, 7);
+
+    let committedIn = 0;
+    let committedOut = 0;
+    for (const item of committedItems) {
+      if (item.date < start || item.date > end) continue;
+      if (item.kind === "in") committedIn += item.amountCents;
+      else committedOut += item.amountCents;
+    }
+
+    // Semana corrente entra proporcional aos dias restantes (o realizado dela
+    // já está dentro do saldo disponível de abertura).
+    const proration = k === 0 ? (diffDays(today, end) + 1) / 7 : 1;
+    const seasonalIn = factorsIn.get(month) ?? 1;
+    const seasonalOut = factorsOut.get(month) ?? 1;
+    const statIn = enoughHistory
+      ? Math.max(0, Math.round(trendAt(trendIn, historyLen + k) * seasonalIn * proration))
+      : 0;
+    const statOut = enoughHistory
+      ? Math.max(0, Math.round(trendAt(trendOut, historyLen + k) * seasonalOut * proration))
+      : 0;
+
+    const expectedIn = Math.max(committedIn, statIn);
+    const expectedOut = Math.max(committedOut, statOut);
+    const expectedNet = expectedIn - expectedOut;
+    balance += expectedNet;
+    const band = Math.round(sigmaNet * Math.sqrt(k + 1));
+    weeks.push({
+      start,
+      end,
+      committedInCents: committedIn,
+      committedOutCents: committedOut,
+      statisticalInCents: statIn,
+      statisticalOutCents: statOut,
+      expectedInCents: expectedIn,
+      expectedOutCents: expectedOut,
+      expectedNetCents: expectedNet,
+      balanceCents: balance,
+      balanceLowerCents: balance - band,
+      balanceUpperCents: balance + band,
+    });
+  }
+
+  const data: ForecastCashData = {
+    horizonWeeks,
+    historyWeeksUsed: history.length,
+    seasonalityApplied,
+    baseline: {
+      weeklyMedianInCents: Math.round(median(inSeries)),
+      weeklyMedianOutCents: Math.round(median(outSeries)),
+      trendInCentsPerWeek: Math.round(trendIn.slope),
+      trendOutCentsPerWeek: Math.round(trendOut.slope),
+      sigmaNetCents: Math.round(sigmaNet),
+    },
+    weeks,
+    period: { start: currentWeekStart, end: addDays(currentWeekStart, horizonWeeks * 7 - 1) },
+    formula: FORMULA_FORECAST,
+  };
+
+  const assumptions = [
+    "PREVISÃO ESTATÍSTICA — estimativa, não fato realizado: números derivados do histórico de transações bancárias importadas; a projeção determinística por títulos (refresh_projection) segue sendo a referência de compromissos.",
+    "O comprometido (títulos em aberto) é PISO do previsto em cada semana: a estimativa estatística nunca reduz o que já está titulado.",
+    seasonalityApplied
+      ? "Sazonalidade mensal aplicada (histórico ≥ 52 semanas): fator = mediana das semanas do mês ÷ mediana geral."
+      : `Sem ajuste sazonal: histórico de ${history.length} semana(s) completa(s) é inferior a ${SEASONALITY_MIN_WEEKS}; fator sazonal fixado em 1.`,
+    ...(enoughHistory
+      ? []
+      : [
+          `Histórico insuficiente para estimar (${history.length} semana(s) completa(s) < ${MIN_FORECAST_HISTORY_WEEKS}): parte estatística zerada — o previsto reflete apenas os títulos em aberto.`,
+        ]),
+  ];
+
+  return makeResult<TesourariaData>(SKILL_NAME, ctx, data, {
+    status: enoughHistory ? "success" : "warning",
+    confidence: enoughHistory ? 0.7 : 0.5,
+    assumptions,
+    dataSources: [...DATA_SOURCES],
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Definição da skill
 // ---------------------------------------------------------------------------
 
@@ -829,6 +1075,8 @@ export const tesourariaSkill: SkillDefinition<TesourariaInput, TesourariaData> =
         return executeCashflowStatement(ctx, input);
       case "scenarios":
         return executeScenarios(ctx, input);
+      case "forecast_cash":
+        return executeForecastCash(ctx, input);
     }
   },
 };

@@ -55,8 +55,12 @@ Escopo priorizado e implementado:
 - IA com LLM real atrás da interface `AiClassifier` (classificação de lançamentos, explicações,
   resumo narrativo dos relatórios) com validação determinística, redação de dados sensíveis e
   política de privacidade LGPD para envio a terceiros.
-- Previsão de fluxo de caixa com modelos estatísticos (sazonalidade) e detecção de anomalias
-  aprendida (mantendo regras determinísticas como piso).
+- ◐ Previsão de fluxo de caixa estatística entregue de forma determinística (antecipada da
+  v1.3): ação `forecast_cash` da tesouraria com mediana/MAD, tendência robusta Theil–Sen,
+  sazonalidade mensal (ativada com ≥ 52 semanas de histórico) e banda de incerteza ± MAD×1.4826×√k;
+  o comprometido por títulos é piso do previsto. Detecção de valor atípico da conta passou a usar
+  escore robusto de Iglewicz–Hoaglin com ≥ 12 transações (regra de 3× média como piso em amostras
+  pequenas). Pendente: modelos aprendidos/algoritmos adaptativos.
 - SSO (Google/Microsoft), 2FA, políticas de senha; dupla aprovação configurável por faixa.
 - Multi-moeda operacional (cotações, contas em moeda estrangeira).
 - App mobile de aprovações (a API de aprovações já é o contrato).

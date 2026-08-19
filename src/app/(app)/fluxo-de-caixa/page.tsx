@@ -65,6 +65,29 @@ interface ScenariosView {
   formula?: string;
 }
 
+interface ForecastWeekView {
+  start?: ISODate;
+  end?: ISODate;
+  committedInCents?: number;
+  committedOutCents?: number;
+  statisticalInCents?: number;
+  statisticalOutCents?: number;
+  expectedInCents?: number;
+  expectedOutCents?: number;
+  expectedNetCents?: number;
+  balanceCents?: number;
+  balanceLowerCents?: number;
+  balanceUpperCents?: number;
+}
+
+interface ForecastView {
+  horizonWeeks?: number;
+  historyWeeksUsed?: number;
+  seasonalityApplied?: boolean;
+  weeks?: ForecastWeekView[];
+  formula?: string;
+}
+
 const SCENARIO_LABEL: Record<string, string> = {
   otimista: "Otimista",
   base: "Base",
@@ -110,6 +133,9 @@ export default async function FluxoDeCaixaPage({
   );
   const scenariosRes = await runSkillForSession<ScenariosView>(session, "tesouraria_fluxo_caixa", {
     action: "scenarios",
+  });
+  const forecastRes = await runSkillForSession<ForecastView>(session, "tesouraria_fluxo_caixa", {
+    action: "forecast_cash",
   });
 
   const buckets = statementRes.data?.buckets ?? [];
@@ -293,6 +319,85 @@ export default async function FluxoDeCaixaPage({
               </p>
             ) : null}
             <SkillResultMeta result={scenariosRes} />
+          </Card>
+        )}
+      </div>
+
+      <div className="mt-4">
+        {isSkillError(forecastRes) ? (
+          <SkillUnavailableCard title="Previsão estatística" result={forecastRes} />
+        ) : (
+          <Card
+            title={`Previsão estatística — ${forecastRes.data?.horizonWeeks ?? 12} semanas (estimativa)`}
+          >
+            <p className="mb-3 text-xs text-[var(--ink-muted)]">
+              Estimativa derivada do histórico semanal do extrato (mediana + tendência robusta
+              Theil–Sen{forecastRes.data?.seasonalityApplied ? " + sazonalidade mensal" : ""};{" "}
+              {forecastRes.data?.historyWeeksUsed ?? 0} semana(s) completa(s) de histórico). Os
+              títulos em aberto são piso do previsto. <strong>Não é fato realizado</strong> — a
+              projeção determinística acima segue sendo a referência de compromissos.
+            </p>
+            {(forecastRes.data?.weeks ?? []).length === 0 ? (
+              <EmptyState message="Sem dados suficientes para prever." />
+            ) : (
+              <Table
+                headers={[
+                  "Semana",
+                  "Comprometido (entra/sai)",
+                  "Estatístico (entra/sai)",
+                  "Previsto líquido",
+                  "Saldo previsto",
+                  "Banda (± incerteza)",
+                ]}
+                align={["l", "r", "r", "r", "r", "r"]}
+              >
+                {(forecastRes.data?.weeks ?? []).map((w, i) => {
+                  const net = w.expectedNetCents ?? 0;
+                  const balance = w.balanceCents ?? 0;
+                  return (
+                    <tr key={`${w.start}-${i}`}>
+                      <Td>
+                        {w.start ? formatBR(w.start) : "—"}
+                        {w.end ? (
+                          <span className="block text-xs text-[var(--ink-muted)]">
+                            a {formatBR(w.end)}
+                          </span>
+                        ) : null}
+                      </Td>
+                      <Td right>
+                        <span className="tabular text-xs">
+                          {formatBRL(w.committedInCents ?? 0)} /{" "}
+                          {formatBRL(w.committedOutCents ?? 0)}
+                        </span>
+                      </Td>
+                      <Td right>
+                        <span className="tabular text-xs">
+                          {formatBRL(w.statisticalInCents ?? 0)} /{" "}
+                          {formatBRL(w.statisticalOutCents ?? 0)}
+                        </span>
+                      </Td>
+                      <Td right className={net < 0 ? "text-[var(--crit)]" : "text-[var(--ok)]"}>
+                        {formatBRL(net)}
+                      </Td>
+                      <Td right className={`font-semibold ${balance < 0 ? "text-[var(--crit)]" : ""}`}>
+                        {formatBRL(balance)}
+                      </Td>
+                      <Td right>
+                        <span className="tabular text-xs text-[var(--ink-muted)]">
+                          {formatBRL(w.balanceLowerCents ?? 0)} a {formatBRL(w.balanceUpperCents ?? 0)}
+                        </span>
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </Table>
+            )}
+            {forecastRes.data?.formula ? (
+              <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                Fórmula: <code>{forecastRes.data.formula}</code>
+              </p>
+            ) : null}
+            <SkillResultMeta result={forecastRes} />
           </Card>
         )}
       </div>
