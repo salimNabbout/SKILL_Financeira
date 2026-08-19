@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTestEnv, type TestEnv } from "@/adapters/memory/test-env";
 import { verifyPassword } from "@/lib/password";
+import { DEFAULT_PASSWORD_POLICY, validatePassword } from "@/core/password-policy";
 import { inviteUser, setUserActive, updateMembership, type UserAdminDeps } from "../user-admin";
 
 let env: TestEnv;
@@ -26,6 +27,8 @@ describe("inviteUser", () => {
     expect(result.user.email).toBe("fernanda@teste.com.br"); // normalizado
     expect(result.temporaryPassword).toBeTruthy();
     expect(verifyPassword(result.temporaryPassword!, result.user.passwordHash)).toBe(true);
+    // A senha temporária gerada sempre atende à política padrão.
+    expect(validatePassword(DEFAULT_PASSWORD_POLICY, result.temporaryPassword!)).toEqual([]);
     expect(result.membership.role).toBe("finance_analyst");
 
     const audit = await env.repos.audit.list(env.company.id);

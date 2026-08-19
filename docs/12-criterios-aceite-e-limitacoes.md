@@ -59,7 +59,8 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
   orquestrador materializam as reações — não há workers assíncronos.
 - Listagens filtram em memória em vários pontos — adequado a ~10⁴ registros por empresa;
   paginação/índices adicionais na v1.1.
-- Autenticação própria (scrypt + cookie HMAC, sessão 8h) — recomenda-se IdP/SSO em produção.
+- Autenticação própria (scrypt + cookie HMAC, sessão 8h) com 2FA TOTP opcional por usuário e
+  política de senha configurável por empresa — recomenda-se IdP/SSO em produção.
 - Modo demo mantém dados em memória (reinicia com o servidor); o modo PostgreSQL é a fonte
   oficial. Testes de repositório Prisma são de tipo/contrato (sem banco no ambiente de CI desta
   entrega); recomenda-se um smoke com banco real antes do primeiro deploy.
@@ -68,5 +69,6 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
 
 **Segurança/LGPD**
 - Criptografia em repouso delegada ao PostgreSQL/infra (colunas não são cifradas
-  individualmente); dados bancários entram apenas mascarados. Sem 2FA no MVP. Política de
+  individualmente); dados bancários entram apenas mascarados. 2FA TOTP disponível por usuário
+  (tela Segurança); dupla aprovação por faixa de alçada configurável por empresa. Política de
   retenção/eliminação LGPD definida como pergunta em aberto (doc 02).

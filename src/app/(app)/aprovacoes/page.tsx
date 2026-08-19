@@ -65,6 +65,18 @@ export default async function AprovacoesPage({
                       {ROLE_LABELS[a.requiredRole] ?? a.requiredRole} · Criada em{" "}
                       {formatDateTime(a.createdAt)}
                     </p>
+                    {(a.approvalsRequired ?? 1) > 1 ? (
+                      <p className="mt-1 text-xs font-medium text-amber-700">
+                        Dupla aprovação: {(a.approverIds ?? []).length}/{a.approvalsRequired}{" "}
+                        aprovação(ões) registrada(s)
+                        {(a.approverIds ?? []).length > 0
+                          ? ` — já aprovou: ${(a.approverIds ?? [])
+                              .map((id) => userName.get(id) ?? id)
+                              .join(", ")}`
+                          : ""}
+                        . Cada aprovação deve vir de uma pessoa diferente.
+                      </p>
+                    ) : null}
                   </div>
                   <form action={decideApprovalAction} className="flex flex-wrap items-center gap-2">
                     <input type="hidden" name="approvalId" value={a.id} />

@@ -20,6 +20,7 @@ const NAV: Array<{ href: string; label: string }> = [
   { href: "/alertas", label: "Alertas e pendências" },
   { href: "/relatorios", label: "Relatórios" },
   { href: "/cadastros", label: "Cadastros" },
+  { href: "/seguranca", label: "Segurança" },
   { href: "/auditoria", label: "Auditoria" },
 ];
 

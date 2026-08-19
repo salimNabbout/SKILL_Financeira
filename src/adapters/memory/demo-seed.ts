@@ -44,7 +44,16 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
     cnpj: "11.222.333/0001-44",
     timezone: "America/Sao_Paulo",
     defaultCurrency: "BRL",
-    config: DEFAULT_COMPANY_CONFIG,
+    // Demonstra a dupla aprovação (four-eyes): pagamentos acima de R$ 50.000
+    // exigem DUAS aprovações de pessoas diferentes.
+    config: {
+      ...DEFAULT_COMPANY_CONFIG,
+      approvalTiers: [
+        { maxAmountCents: 500_000, requiredRole: "approver" },
+        { maxAmountCents: 5_000_000, requiredRole: "finance_manager" },
+        { maxAmountCents: null, requiredRole: "admin", approvalsRequired: 2 },
+      ],
+    },
     active: true,
     createdAt: now,
     updatedAt: now,

@@ -61,7 +61,11 @@ Escopo priorizado e implementado:
   o comprometido por títulos é piso do previsto. Detecção de valor atípico da conta passou a usar
   escore robusto de Iglewicz–Hoaglin com ≥ 12 transações (regra de 3× média como piso em amostras
   pequenas). Pendente: modelos aprendidos/algoritmos adaptativos.
-- SSO (Google/Microsoft), 2FA, políticas de senha; dupla aprovação configurável por faixa.
+- ◐ Endurecimento de acesso entregue (antecipado da v1.3): 2FA TOTP (RFC 6238, sem dependências,
+  compatível com apps autenticadores; ativação/desativação auditada e exigida no login),
+  política de senha configurável por empresa (aplicada na troca de senha e no convite) e dupla
+  aprovação (four-eyes) configurável por faixa de alçada (aprovações parciais de pessoas
+  distintas; uma rejeição encerra). Pendente: SSO (Google/Microsoft).
 - Multi-moeda operacional (cotações, contas em moeda estrangeira).
 - App mobile de aprovações (a API de aprovações já é o contrato).
 

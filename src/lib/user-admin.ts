@@ -111,7 +111,10 @@ export async function inviteUser(
     }
   } else {
     if (!input.name.trim()) throw new ValidationError("Informe o nome do usuário.");
-    temporaryPassword = randomBytes(6).toString("base64url"); // exibida uma única vez
+    // Exibida uma única vez; o sufixo fixo garante as classes exigidas pela
+    // política de senha padrão (maiúscula/minúscula/dígito) — a entropia vem
+    // dos 9 bytes aleatórios (12 chars base64url).
+    temporaryPassword = `${randomBytes(9).toString("base64url")}Aa1`;
     user = await repos.users.create({
       id: ids.next("usr"),
       name: input.name.trim(),

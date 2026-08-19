@@ -41,6 +41,22 @@ export default async function LoginPage({
             <span className="mb-1 block font-medium">Senha</span>
             <input name="password" type="password" required className={inputClass} />
           </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">
+              Código 2FA{" "}
+              <span className="font-normal text-[var(--ink-muted)]">
+                (apenas se ativado na sua conta)
+              </span>
+            </span>
+            <input
+              name="totp"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="000000"
+              className={inputClass}
+            />
+          </label>
           <button
             type="submit"
             className="w-full rounded-lg bg-[var(--brand)] px-3 py-2 text-sm font-medium text-white hover:opacity-90"

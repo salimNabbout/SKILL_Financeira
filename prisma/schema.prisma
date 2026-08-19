@@ -62,6 +62,8 @@ model User {
   name         String
   email        String   @unique
   passwordHash String
+  totpSecret   String? // segredo TOTP base32 — nunca exposto em respostas
+  totpEnabled  Boolean  @default(false)
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -412,6 +414,8 @@ model Approval {
   amountCents        BigInt?
   requestedBy        String
   requiredRole       String // papel mínimo para decidir
+  approvalsRequired  Int       @default(1) // dupla aprovação (four-eyes) por faixa
+  approverIds        String[]  @default([]) // quem já aprovou (aprovações parciais)
   status             String // pending | approved | rejected | expired
   decidedBy          String?
   decidedAt          DateTime?

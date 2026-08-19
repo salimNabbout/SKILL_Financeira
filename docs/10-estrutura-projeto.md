@@ -25,6 +25,7 @@ SKILL_Financeira/
     │   ├── money.ts / dates.ts / ids.ts / clock.ts / errors.ts / ai.ts
     │   ├── integrations.ts     # portas: banco, cobrança, fiscal, mensageria
     │   ├── stats.ts            # estatística robusta (mediana/MAD/Theil–Sen)
+    │   ├── password-policy.ts  # política de senha configurável (validador)
     │   ├── orchestrator/
     │   │   ├── orchestrator.ts # motor: idempotência, aprovações, consolidação
     │   │   ├── flows.ts        # fluxos integrados declarativos
@@ -43,7 +44,7 @@ SKILL_Financeira/
     │   └── registry.ts         # seleção por env INTEGRATION_* (falha alto)
     ├── lib/
     │   ├── container.ts        # composição (demo × prisma) — singleton
-    │   ├── session.ts / password.ts   # autenticação
+    │   ├── session.ts / password.ts / totp.ts   # autenticação + 2FA (RFC 6238)
     │   ├── format.ts           # formatação pt-BR
     │   ├── importers/          # OFX, CSV (reais) e CNAB (stub declarado)
     │   └── exporters/          # CSV (BOM/; BR) e PDF (pdf-lib)

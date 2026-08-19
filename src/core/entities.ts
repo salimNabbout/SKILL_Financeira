@@ -42,6 +42,10 @@ export interface User {
   name: string;
   email: string;
   passwordHash: string;
+  /** Segredo TOTP (base32) — NUNCA expor em respostas/auditoria. */
+  totpSecret?: string;
+  /** 2FA ativo: login passa a exigir código TOTP válido. Ausente = falso. */
+  totpEnabled?: boolean;
   active: boolean;
   createdAt: string;
   updatedAt: string;
@@ -334,6 +338,10 @@ export interface Approval {
   amountCents?: number;
   requestedBy: ID;
   requiredRole: RoleName;
+  /** Dupla aprovação (four-eyes): total de aprovações exigidas. Ausente = 1. */
+  approvalsRequired?: number;
+  /** Usuários que JÁ aprovaram (aprovação parcial); decisão final ao atingir o total. */
+  approverIds?: ID[];
   status: ApprovalStatus;
   decidedBy?: ID;
   decidedAt?: string;

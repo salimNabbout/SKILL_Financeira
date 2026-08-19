@@ -84,6 +84,15 @@ função decidir_aprovação(companyId, approvalId, decisão, actor, justificati
     exigir papel(actor) ≥ approval.requiredRole
     exigir valor ≤ limite_de_alçada(actor)         # null = ilimitado
     exigir actor.id ≠ approval.requestedBy         # segregação de funções
+    exigir actor.id ∉ approval.approverIds         # dupla aprovação: pessoas distintas
+
+    # Dupla aprovação (four-eyes) por faixa: aprovar antes de atingir o total
+    # exigido é PARCIAL — registra o aprovador, audita e mantém pending.
+    se decisão == approved e |approverIds|+1 < approvalsRequired:
+        registrar aprovador; auditar; publicar approval.partially_approved
+        retornar {approval}                        # fluxo segue suspenso
+    # Uma única rejeição encerra a solicitação, mesmo com aprovações parciais.
+
     atualizar approval; auditar; publicar approval.decided
 
     run = fluxo_pendente_por(approvalId)
