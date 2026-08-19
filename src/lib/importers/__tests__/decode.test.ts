@@ -135,4 +135,12 @@ describe("extractStatementUpload", () => {
       extractStatementUpload(formWith({ format: "auto", arquivo: big }))
     ).rejects.toThrow(/limite de 2 MB/);
   });
+
+  it("aplica o mesmo limite de tamanho ao texto colado (content)", async () => {
+    // Conteúdo colado maior que o limite deve ser recusado (DoS de parsing).
+    const huge = "a".repeat(MAX_STATEMENT_FILE_BYTES + 1);
+    await expect(
+      extractStatementUpload(formWith({ format: "csv", content: huge }))
+    ).rejects.toThrow(/limite de 2 MB/);
+  });
 });

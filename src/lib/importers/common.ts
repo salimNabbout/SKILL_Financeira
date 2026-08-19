@@ -70,7 +70,21 @@ export function parseLocalizedAmountToCents(raw: string): number | null {
   let t = raw.replace(/R\$/gi, "").replace(/[\s ]/g, "");
   if (!t) return null;
   let negative = false;
+  // Parênteses contábeis: "(1.234,56)" = negativo.
+  if (t.startsWith("(") && t.endsWith(")")) {
+    negative = true;
+    t = t.slice(1, -1);
+  }
+  // Sinal ao final (extratos legados): "150,00-" / "150,00+".
+  if (t.endsWith("-")) {
+    if (negative) return null; // sinal duplicado
+    negative = true;
+    t = t.slice(0, -1);
+  } else if (t.endsWith("+")) {
+    t = t.slice(0, -1);
+  }
   if (t.startsWith("-")) {
+    if (negative) return null; // sinal duplicado ("-150,00-")
     negative = true;
     t = t.slice(1);
   } else if (t.startsWith("+")) {

@@ -208,6 +208,18 @@ describe("parsers de valores monetários", () => {
     expect(parseLocalizedAmountToCents("")).toBeNull();
     expect(parseLocalizedAmountToCents("x,y")).toBeNull();
   });
+
+  it("parseLocalizedAmountToCents: sinal ao final e parênteses contábeis são negativos", () => {
+    // Débitos marcados com sinal ao final (extratos legados).
+    expect(parseLocalizedAmountToCents("150,00-")).toBe(-15_000);
+    expect(parseLocalizedAmountToCents("1.234,56-")).toBe(-123_456);
+    // Parênteses contábeis = negativo.
+    expect(parseLocalizedAmountToCents("(1.234,56)")).toBe(-123_456);
+    expect(parseLocalizedAmountToCents("(150,00)")).toBe(-15_000);
+    // Combinações inválidas continuam nulas.
+    expect(parseLocalizedAmountToCents("-150,00-")).toBeNull();
+    expect(parseLocalizedAmountToCents("(150,00")).toBeNull();
+  });
 });
 
 describe("parseCnab (agora implementado — alias de parseCnab240)", () => {
