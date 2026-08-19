@@ -30,8 +30,8 @@ Internet ──▶ nginx (VPS, :443 HTTPS) ──▶ 127.0.0.1:3000 (container a
 
 ## 1. DNS
 
-Aponte `financeira.cetemrj.com.br` (registro **A**) para o IP da VPS
-(`2.25.132.128`). Espere propagar (`dig financeira.cetemrj.com.br` devolve o IP).
+Aponte `financeira.cetemrj.com.br` (registro **A**) para o IP público da sua VPS.
+Espere propagar (`dig +short financeira.cetemrj.com.br` deve devolver esse IP).
 
 ## 2. Enviar o código para a VPS
 
@@ -149,3 +149,26 @@ O scheduler (rotinas + reaper) e o worker BullMQ rodam como processos separados.
 Para incluí-los, adicione serviços ao compose reusando a mesma imagem com
 `command: npx tsx scripts/scheduler.ts` (e, para o worker, `EVENT_BUS=bullmq` +
 um serviço Redis). Não são necessários para o app funcionar.
+
+---
+
+## Problemas resolvidos no primeiro deploy (referência)
+
+Registro do que apareceu ao publicar de verdade, e como foi resolvido — caso
+ressurja num ambiente novo:
+
+- **Migração falhava com `ENOENT ...prisma_schema_build_bg.wasm` / `Cannot find
+  module 'effect'`.** A CLI do Prisma tem uma árvore de deps que não cabe na
+  imagem enxuta do app. Solução: rodar as migrações num serviço `migrate`
+  separado, com `node_modules` completo (é o que este compose já faz).
+- **App acessível, mas o login dava `Invalid Server Actions request`.** O Next 15
+  compara `Host`×`Origin`; atrás do nginx o `Host` chegava como FQDN com ponto
+  final (`dominio.com.`). Solução: o vhost envia `Host`/`X-Forwarded-Host` do
+  domínio limpo (fixo, sem `$host`) — já aplicado em `nginx-financeira.conf`.
+- **Domínio em HTTPS mostrava OUTRO site da VPS.** Antes de rodar o `certbot`,
+  não existia vhost 443 para este domínio, e o nginx caía no vhost 443 default
+  (de outro site). Rodar o `certbot` cria o vhost HTTPS correto e resolve o
+  roteamento. Por HTTP (porta 80) o roteamento já estava certo.
+- **Colar comandos longos no terminal SSH corrompia** (caracteres `^M` /
+  `^[[200~`). Digitar comandos curtos, um por vez, contorna. Alternativa: rodar
+  via `ssh host "comando"` do PowerShell para comandos simples (sem `$`/aspas).
