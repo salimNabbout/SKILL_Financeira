@@ -196,6 +196,22 @@ describe("contas_a_pagar — create_payable", () => {
     expect(env.db.auditRecords.filter((a) => a.action === "payable.created")).toHaveLength(3);
   });
 
+  it("rejeita número de parcelas acima de 120 (simetria com contas a receber)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedCategory(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({ installmentCount: 121, categoryId: "cat_alu" })
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts?.[0]?.code).toBe("invalid_input");
+    expect(env.db.payables).toHaveLength(0);
+  });
+
   it("é idempotente: mesma entrada 2x não duplica títulos nem eventos", async () => {
     const env = createTestEnv();
     seedSupplier(env);

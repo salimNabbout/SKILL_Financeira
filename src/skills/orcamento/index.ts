@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { assertPermission } from "@/core/auth";
 import { addMonths, monthOf, startOfMonth, type ISOMonth } from "@/core/dates";
 import type { Budget, BudgetLine, ID } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
@@ -255,6 +256,7 @@ async function upsertBudget(
   ctx: SkillContext,
   input: UpsertBudgetInput
 ): Promise<SkillResult<UpsertBudgetData>> {
+  assertPermission(ctx.actor, "budget.manage");
   const assumptions: string[] = [];
 
   // Chaves duplicadas na entrada quebrariam o casamento por (period, categoria, centro).

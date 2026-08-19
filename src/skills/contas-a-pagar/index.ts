@@ -47,7 +47,7 @@ const createPayableSchema = z.object({
   amountCents: z.number().int().positive(),
   categoryId: z.string().min(1).optional(),
   costCenterId: z.string().min(1).optional(),
-  installmentCount: z.number().int().min(1).optional(),
+  installmentCount: z.number().int().min(1).max(120).optional(),
   notes: z.string().optional(),
   document: documentSchema.optional(),
 });

@@ -194,6 +194,24 @@ describe("orcamento_planejamento — upsert_budget", () => {
     expect(second.assumptions.join(" ")).toMatch(/já existia/);
   });
 
+  it("rejeita upsert_budget de papel sem permissão budget.manage (viewer)", async () => {
+    const env = createTestEnv();
+    const catMkt = seedCategory(env, { id: "cat_mkt", name: "Marketing" });
+
+    const res = await runSkill(orcamentoSkill, env.ctx(env.actorFor("viewer")), {
+      action: "upsert_budget",
+      name: "Orçamento 2026",
+      year: 2026,
+      lines: [{ period: "2026-07", categoryId: catMkt.id, amountCents: 50_000 }],
+    });
+
+    expect(res.status).toBe("error");
+    expect(res.alerts?.[0]?.code).toBe("permission_denied");
+    // Nada foi persistido.
+    expect(env.db.budgets).toHaveLength(0);
+    expect(env.db.budgetLines).toHaveLength(0);
+  });
+
   it("substitui linhas: atualiza valor por chave e zera linhas órfãs", async () => {
     const env = createTestEnv();
     const catMkt = seedCategory(env, { id: "cat_mkt", name: "Marketing" });

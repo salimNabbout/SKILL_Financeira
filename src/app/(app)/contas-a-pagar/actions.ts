@@ -47,8 +47,8 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     fail(errorMessage(error));
   }
   if (amountCents <= 0) fail("O valor do título deve ser positivo.");
-  if (!Number.isInteger(installmentCount) || installmentCount < 1) {
-    fail("Número de parcelas inválido.");
+  if (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 120) {
+    fail("Número de parcelas inválido (1 a 120).");
   }
 
   let response: OrchestratorResponse;
