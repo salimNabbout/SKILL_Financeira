@@ -2,15 +2,19 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: financeira
-      POSTGRES_PASSWORD: financeira
-      POSTGRES_DB: financeira
+      POSTGRES_USER: ${POSTGRES_USER:-financeira}
+      # Senha via env; o default só serve para dev local. Em produção, defina
+      # POSTGRES_PASSWORD com um valor forte (e o mesmo em DATABASE_URL).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-financeira}
+      POSTGRES_DB: ${POSTGRES_DB:-financeira}
+    # Bind só em localhost por padrão: o banco não fica exposto na rede.
+    # Sobrescreva DB_BIND=0.0.0.0 apenas se souber o que está fazendo.
     ports:
-      - "5432:5432"
+      - "${DB_BIND:-127.0.0.1}:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U financeira"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-financeira}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -19,8 +23,9 @@ services:
   # No MVP o barramento é in-process com outbox persistido no banco.
   redis:
     image: redis:7-alpine
+    # Também só em localhost por padrão.
     ports:
-      - "6379:6379"
+      - "${REDIS_BIND:-127.0.0.1}:6379:6379"
 
 volumes:
   pgdata:
