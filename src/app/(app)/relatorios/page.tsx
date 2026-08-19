@@ -16,12 +16,18 @@ import {
 } from "../_lib/result-meta";
 
 // Formas defensivas do contrato de relatorios_gerenciais (escrita em paralelo).
+interface NarrativeView {
+  text?: string;
+  provider?: string;
+}
+
 interface DailySummaryView {
   date?: ISODate;
   facts?: Record<string, unknown>;
   calculations?: Record<string, unknown>;
   risks?: unknown;
   recommendations?: unknown;
+  narrative?: NarrativeView;
 }
 
 interface MonthlyCloseView {
@@ -39,6 +45,7 @@ interface MonthlyCloseView {
   highlights?: unknown;
   risks?: unknown;
   recommendations?: unknown;
+  narrative?: NarrativeView;
 }
 
 interface ExecutiveOverviewView {
@@ -53,6 +60,7 @@ interface ExecutiveOverviewView {
   risks?: unknown;
   opportunities?: unknown;
   recommendations?: unknown;
+  narrative?: NarrativeView;
 }
 
 const FACT_LABELS: Record<string, string> = {
@@ -109,6 +117,25 @@ function FactsList({ facts }: { facts: Record<string, unknown> | undefined }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+/** Parágrafo narrativo com o provedor declarado — números oficiais são os do relatório. */
+function Narrative({ narrative }: { narrative: NarrativeView | undefined }) {
+  if (!narrative?.text) return null;
+  return (
+    <div className="mt-3 rounded-lg border border-[var(--line)] bg-slate-50 p-3 text-sm">
+      <p className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
+        Resumo narrativo
+        <Badge tone={narrative.provider === "mock" ? "neutral" : "brand"}>
+          {narrative.provider === "mock" ? "heurística local" : `IA: ${narrative.provider}`}
+        </Badge>
+      </p>
+      <p>{narrative.text}</p>
+      <p className="mt-1 text-xs text-[var(--ink-muted)]">
+        Texto gerado a partir dos fatos determinísticos — os números oficiais são os do relatório.
+      </p>
+    </div>
   );
 }
 
@@ -200,6 +227,7 @@ export default async function RelatoriosPage({
               </p>
             ) : null}
             <FactsList facts={dailyRes.data?.facts} />
+            <Narrative narrative={dailyRes.data?.narrative} />
             <BulletList title="Riscos" items={asStringList(dailyRes.data?.risks)} />
             <BulletList
               title="Recomendações"
@@ -255,6 +283,7 @@ export default async function RelatoriosPage({
                   ) : null}
                 </div>
               ) : null}
+              <Narrative narrative={monthlyRes.data?.narrative} />
               <BulletList title="Destaques" items={asStringList(monthlyRes.data?.highlights)} />
               <BulletList title="Riscos" items={asStringList(monthlyRes.data?.risks)} />
               <BulletList
@@ -320,6 +349,7 @@ export default async function RelatoriosPage({
                 ) : null}
               </p>
             ) : null}
+            <Narrative narrative={overviewRes.data?.narrative} />
             <BulletList title="Riscos" items={asStringList(overviewRes.data?.risks)} />
             <BulletList
               title="Oportunidades"

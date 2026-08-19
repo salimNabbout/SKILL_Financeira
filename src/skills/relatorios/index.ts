@@ -28,6 +28,7 @@ import {
   type ISOMonth,
 } from "@/core/dates";
 import { formatBRL } from "@/core/money";
+import type { ReportNarrative } from "@/core/ai";
 import { ValidationError } from "@/core/errors";
 import type { AlertSeverity, PendingItem, SkillAlert } from "@/core/types";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
@@ -114,6 +115,8 @@ export interface DailySummaryData {
   risks: string[];
   recommendations: string[];
   sources: string[];
+  /** Resumo narrativo (IA ou heurística — provider declarado); números oficiais são os do relatório. */
+  narrative?: ReportNarrative;
 }
 
 export interface MonthlyCloseFacts {
@@ -143,6 +146,8 @@ export interface MonthlyCloseData {
   risks: string[];
   recommendations: string[];
   sources: string[];
+  /** Resumo narrativo (IA ou heurística — provider declarado); números oficiais são os do relatório. */
+  narrative?: ReportNarrative;
 }
 
 export interface ExecutiveKpi {
@@ -183,6 +188,8 @@ export interface ExecutiveOverviewData {
   opportunities: string[];
   recommendations: string[];
   sources: string[];
+  /** Resumo narrativo (IA ou heurística — provider declarado); números oficiais são os do relatório. */
+  narrative?: ReportNarrative;
 }
 
 /** Linha achatada para o exportador CSV: uma linha por métrica. */
@@ -930,6 +937,10 @@ async function registerReportGeneration(
 // Ações
 // ---------------------------------------------------------------------------
 
+/** Transparência do resumo narrativo em toda resposta que o inclui. */
+const NARRATIVE_ASSUMPTION = (provider: string): string =>
+  `Resumo narrativo gerado por "${provider}" APENAS a partir dos fatos determinísticos do relatório — os números oficiais são os calculados pela skill, nunca os do texto.`;
+
 async function executeDailySummary(ctx: SkillContext) {
   const computation = await computeDailySummary(ctx);
   const { data } = computation;
@@ -977,6 +988,31 @@ async function executeDailySummary(ctx: SkillContext) {
 
   await registerReportGeneration(ctx, "daily_summary", { date: data.date });
 
+  data.narrative = await ctx.ai.narrateReport({
+    reportType: "daily_summary",
+    periodLabel: formatBR(data.date),
+    facts: [
+      { label: "saldo disponível", value: formatBRL(data.facts.availableCents) },
+      {
+        label: "a pagar hoje",
+        value: `${formatBRL(data.facts.payablesDueTodayCents)} (${data.facts.payablesDueTodayCount} título(s))`,
+      },
+      {
+        label: "a receber hoje",
+        value: `${formatBRL(data.facts.receivablesDueTodayCents)} (${data.facts.receivablesDueTodayCount} título(s))`,
+      },
+      { label: "vencidos a pagar", value: formatBRL(data.facts.overduePayablesCents) },
+      { label: "vencidos a receber", value: formatBRL(data.facts.overdueReceivablesCents) },
+      {
+        label: "saldo projetado em 7 dias",
+        value: formatBRL(data.calculations.projected7dEndingBalanceCents),
+      },
+    ],
+    risks: data.risks,
+    recommendations: data.recommendations,
+  });
+  assumptions.push(NARRATIVE_ASSUMPTION(data.narrative.provider));
+
   return makeResult<RelatoriosData>(SKILL_NAME, ctx, data, {
     confidence: 1.0,
     alerts: envelopeAlerts,
@@ -1008,10 +1044,31 @@ async function executeMonthlyClose(ctx: SkillContext, input: MonthlyCloseInput) 
 
   await registerReportGeneration(ctx, "monthly_close", { period: data.period });
 
+  data.narrative = await ctx.ai.narrateReport({
+    reportType: "monthly_close",
+    periodLabel: data.period,
+    facts: [
+      { label: "recebimentos", value: formatBRL(data.facts.receiptsCents) },
+      { label: "pagamentos", value: formatBRL(data.facts.paymentsCents) },
+      { label: "fluxo de caixa líquido", value: formatBRL(data.calculations.netCashFlowCents) },
+      {
+        label: "resultado (DRE de caixa)",
+        value: formatBRL(data.calculations.dreSimplificada.resultadoCents),
+      },
+      { label: "saldo ao fim do mês", value: formatBRL(data.facts.endOfMonthAvailableCents) },
+    ],
+    risks: data.risks,
+    recommendations: data.recommendations,
+  });
+  const monthlyAssumptions = [
+    ...computation.assumptions,
+    NARRATIVE_ASSUMPTION(data.narrative.provider),
+  ];
+
   return makeResult<RelatoriosData>(SKILL_NAME, ctx, data, {
     confidence: 1.0,
     alerts: envelopeAlerts,
-    assumptions: computation.assumptions,
+    assumptions: monthlyAssumptions,
     dataSources: [...MONTHLY_SOURCES],
   });
 }
@@ -1034,6 +1091,24 @@ async function executeExecutiveOverview(ctx: SkillContext) {
   }
 
   await registerReportGeneration(ctx, "executive_overview", { asOf: data.asOf });
+
+  data.narrative = await ctx.ai.narrateReport({
+    reportType: "executive_overview",
+    periodLabel: formatBR(data.asOf),
+    facts: [
+      ...data.kpis.slice(0, 5).map((k) => ({
+        label: k.label.toLowerCase(),
+        value: k.unit === "centavos_brl" ? formatBRL(k.value) : String(k.value),
+      })),
+      {
+        label: "tendência de entradas",
+        value: `${data.trend.direction}${data.trend.variationPercent !== null ? ` (${data.trend.variationPercent}% vs. média dos 2 meses anteriores)` : ""}`,
+      },
+    ],
+    risks: data.risks,
+    recommendations: data.recommendations,
+  });
+  assumptions.push(NARRATIVE_ASSUMPTION(data.narrative.provider));
 
   // Tendência é leitura heurística sobre dados possivelmente parciais.
   return makeResult<RelatoriosData>(SKILL_NAME, ctx, data, {
