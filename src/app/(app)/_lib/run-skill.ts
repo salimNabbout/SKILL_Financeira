@@ -7,6 +7,7 @@
  */
 
 import type { AiClassifier } from "@/core/ai";
+import type { Integrations } from "@/core/integrations";
 import type { AuditTrail } from "@/core/audit";
 import type { Clock } from "@/core/clock";
 import type { CompanyConfig } from "@/core/config";
@@ -32,6 +33,7 @@ export interface UiSkillDeps {
   clock: Clock;
   ids: IdGenerator;
   ai: AiClassifier;
+  integrations: Integrations;
   registry: SkillRegistry;
 }
 
@@ -92,6 +94,7 @@ export async function runSkillWithDeps<T = unknown>(
     ids: deps.ids,
     config: scope.config,
     ai: deps.ai,
+    integrations: deps.integrations,
     correlationId: deps.ids.next("ui"),
     today: buildContextToday(deps.clock, scope.config),
   };

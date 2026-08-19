@@ -27,6 +27,7 @@ export async function callSkill<T = unknown>(
     ids: container.ids,
     config: session.config,
     ai: container.ai,
+    integrations: container.integrations,
     correlationId: container.ids.next("corr"),
     today: () => todayInTz(container.clock.now(), session.config.timezone),
   };

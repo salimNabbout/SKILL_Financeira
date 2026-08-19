@@ -25,6 +25,7 @@ import {
   Orchestrator,
   type OrchestratorResponse,
 } from "../src/core/orchestrator/orchestrator";
+import { buildIntegrations } from "../src/integrations/registry";
 import { buildRegistry } from "../src/skills";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -47,6 +48,7 @@ async function main(): Promise<void> {
     clock,
     ids,
     ai: new HeuristicClassifier(),
+    integrations: buildIntegrations({}),
     registry: buildRegistry(),
   });
 

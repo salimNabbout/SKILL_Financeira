@@ -17,6 +17,7 @@ import {
   type ImportStatementData,
   type ReconciliationStatusData,
   type RejectMatchData,
+  type SyncBankData,
 } from "..";
 
 // Relógio fixo do createTestEnv: 2026-08-18T15:00:00Z → "hoje" = 2026-08-18 (São Paulo).
@@ -601,5 +602,62 @@ describe("conciliacao_bancaria — reconciliation_status", () => {
     expect(data.period).toEqual({ start: "2026-08-01", end: "2026-08-31" });
     expect(res.pending_items).toHaveLength(1);
     expect(res.confidence).toBe(1.0);
+  });
+});
+
+describe("conciliacao_bancaria — sync_bank", () => {
+  it("sincroniza via provedor mock (extrato sintético determinístico), audita e publica evento", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    const res = await run(env, { action: "sync_bank", bankAccountId: "ba_1", sinceDays: 30 });
+
+    expect(res.status).toBe("success");
+    const data = res.data as SyncBankData;
+    expect(data.provider).toBe("mock");
+    expect(data.period).toEqual({ since: "2026-07-19", until: "2026-08-18" });
+    expect(data.imported).toBeGreaterThan(0);
+    expect(data.duplicates).toBe(0);
+    expect(data.transactions).toHaveLength(data.imported);
+    for (const t of data.transactions) {
+      expect(t.source).toBe("api_mock");
+      expect(t.externalId).toMatch(/^sync:mock:mock-/);
+      expect(t.reconciled).toBe(false);
+    }
+    // Mock claramente identificado na resposta.
+    expect(res.assumptions.join(" ").toLowerCase()).toContain("mock");
+
+    expect(env.db.auditRecords.some((a) => a.action === "statement.synced")).toBe(true);
+    const events = env.db.events.filter((e) => e.type === "statement.imported");
+    expect(events).toHaveLength(1);
+    expect(events[0].payload).toMatchObject({ format: "sync", provider: "mock" });
+  });
+
+  it("ressincronizar o mesmo período é idempotente: tudo vira duplicata, nada é criado", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    const first = await run(env, { action: "sync_bank", bankAccountId: "ba_1" });
+    const imported = (first.data as SyncBankData).imported;
+    expect(imported).toBeGreaterThan(0);
+
+    const second = await run(env, { action: "sync_bank", bankAccountId: "ba_1" });
+    const data = second.data as SyncBankData;
+    expect(data.imported).toBe(0);
+    expect(data.duplicates).toBe(imported);
+    expect(env.db.bankTransactions).toHaveLength(imported);
+  });
+
+  it("rejeita conta inexistente ou inativa", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env, { active: false });
+
+    const missing = await run(env, { action: "sync_bank", bankAccountId: "ba_404" });
+    expect(missing.status).toBe("error");
+    expect(missing.alerts[0].code).toBe("not_found");
+
+    const inactive = await run(env, { action: "sync_bank", bankAccountId: "ba_1" });
+    expect(inactive.status).toBe("error");
+    expect(inactive.alerts[0].code).toBe("validation_error");
   });
 });

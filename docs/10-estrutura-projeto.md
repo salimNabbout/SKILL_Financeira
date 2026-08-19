@@ -23,6 +23,7 @@ SKILL_Financeira/
     │   ├── auth.ts             # RBAC, alçadas, segregação de funções
     │   ├── config.ts           # CompanyConfig (políticas como dados)
     │   ├── money.ts / dates.ts / ids.ts / clock.ts / errors.ts / ai.ts
+    │   ├── integrations.ts     # portas: banco, cobrança, fiscal, mensageria
     │   ├── orchestrator/
     │   │   ├── orchestrator.ts # motor: idempotência, aprovações, consolidação
     │   │   ├── flows.ts        # fluxos integrados declarativos
@@ -36,6 +37,9 @@ SKILL_Financeira/
     ├── adapters/
     │   ├── memory/             # repositórios em memória + test-env + demo-seed
     │   └── prisma/             # repositórios PostgreSQL (produção)
+    ├── integrations/           # adaptadores das portas de integração
+    │   ├── mock.ts             # mocks determinísticos (identificados)
+    │   └── registry.ts         # seleção por env INTEGRATION_* (falha alto)
     ├── lib/
     │   ├── container.ts        # composição (demo × prisma) — singleton
     │   ├── session.ts / password.ts   # autenticação

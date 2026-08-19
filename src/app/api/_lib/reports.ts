@@ -92,7 +92,7 @@ async function loadExporters(): Promise<ExportersModule> {
 // ---------------------------------------------------------------------------
 
 function buildReportContext(deps: ApiDeps, session: ApiSession): SkillContext {
-  const { repos, events, audit, clock, ids, ai } = deps;
+  const { repos, events, audit, clock, ids, ai, integrations } = deps;
   const config = session.config;
   return {
     companyId: session.company.id,
@@ -104,6 +104,7 @@ function buildReportContext(deps: ApiDeps, session: ApiSession): SkillContext {
     ids,
     config,
     ai,
+    integrations,
     correlationId: ids.next("corr"),
     today: () => todayInTz(clock.now(), config.timezone),
   };

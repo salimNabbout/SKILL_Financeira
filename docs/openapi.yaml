@@ -557,6 +557,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /receivables/{id}/charge:
+    post:
+      tags: [títulos]
+      summary: Gerar código de cobrança (Pix/boleto) para o saldo em aberto
+      description: >
+        Gera o código via a porta ChargeProvider configurada. No MVP o provedor é
+        MOCK, claramente identificado: o código é fake e NADA é registrado em
+        PSP/banco. Idempotente: o mesmo título+tipo gera sempre o mesmo chargeId
+        e reemitir não duplica a anotação no título. Requer receivable.create.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [pix, boleto] }
+      responses:
+        "200":
+          description: "Envelope de skill: data = { charge { provider, chargeId, kind, code, expiresAt }, receivable, remainingCents }"
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /bank-transactions:
     get:
       tags: [títulos]
@@ -766,7 +793,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [supplier_invoice_intake, schedule_payment, bank_statement_import, customer_invoice_intake, dunning_run, daily_summary, monthly_close, accounting_export]
+            enum: [supplier_invoice_intake, schedule_payment, bank_statement_import, bank_sync, customer_invoice_intake, dunning_run, daily_summary, monthly_close, accounting_export]
       requestBody:
         required: true
         content:

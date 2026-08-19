@@ -16,7 +16,7 @@
 
 import { z } from "zod";
 import { assertPermission } from "@/core/auth";
-import { diffDays, endOfMonth, monthOf, startOfMonth, type ISODate } from "@/core/dates";
+import { addDays, diffDays, endOfMonth, monthOf, startOfMonth, type ISODate } from "@/core/dates";
 import type {
   BankTransaction,
   ID,
@@ -47,6 +47,12 @@ const importStatementSchema = z.object({
   content: z.string().min(1),
 });
 
+const syncBankSchema = z.object({
+  action: z.literal("sync_bank"),
+  bankAccountId: z.string().min(1),
+  sinceDays: z.number().int().min(1).max(90).optional(),
+});
+
 const autoMatchSchema = z.object({
   action: z.literal("auto_match"),
   bankAccountId: z.string().min(1).optional(),
@@ -69,6 +75,7 @@ const reconciliationStatusSchema = z.object({
 
 export const conciliacaoInputSchema = z.discriminatedUnion("action", [
   importStatementSchema,
+  syncBankSchema,
   autoMatchSchema,
   confirmMatchSchema,
   rejectMatchSchema,
@@ -76,6 +83,7 @@ export const conciliacaoInputSchema = z.discriminatedUnion("action", [
 ]);
 
 export type ImportStatementInput = z.infer<typeof importStatementSchema>;
+export type SyncBankInput = z.infer<typeof syncBankSchema>;
 export type AutoMatchInput = z.infer<typeof autoMatchSchema>;
 export type ConfirmMatchInput = z.infer<typeof confirmMatchSchema>;
 export type RejectMatchInput = z.infer<typeof rejectMatchSchema>;
@@ -141,8 +149,19 @@ export interface ReconciliationStatusData {
   formula: string;
 }
 
+export interface SyncBankData {
+  bankAccountId: ID;
+  provider: string;
+  importBatchId: string;
+  period: { since: ISODate; until: ISODate };
+  imported: number;
+  duplicates: number;
+  transactions: BankTransaction[];
+}
+
 export type ConciliacaoData =
   | ImportStatementData
+  | SyncBankData
   | AutoMatchData
   | ConfirmMatchData
   | RejectMatchData
@@ -564,6 +583,118 @@ async function importStatement(
       transactions: created,
     },
     { alerts, assumptions, confidence: 1.0, dataSources: DATA_SOURCES }
+  );
+}
+
+/**
+ * Sincronização via porta BankDataProvider (Open Finance/agregador — MOCK no
+ * MVP). Idempotente: externalId "sync:<provider>:<idNoProvedor>" deduplica;
+ * sincronizar duas vezes o mesmo período não cria nada novo.
+ */
+async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillResult<SyncBankData>> {
+  assertPermission(ctx.actor, "reconciliation.manage");
+
+  const account = await ctx.repos.bankAccounts.getById(ctx.companyId, input.bankAccountId);
+  if (!account) throw new NotFoundError("Conta bancária", input.bankAccountId);
+  if (!account.active) {
+    throw new ValidationError(`Conta bancária inativa: ${account.name} (${account.id}).`);
+  }
+
+  const sinceDays = input.sinceDays ?? 30;
+  const until = ctx.today();
+  const since = addDays(until, -sinceDays);
+  const provider = ctx.integrations.bankData;
+  const external = await provider.listTransactions({
+    bankAccountId: account.id,
+    bankCode: account.bankCode,
+    accountNumberMasked: account.accountNumberMasked,
+    since,
+    until,
+  });
+
+  const importBatchId = ctx.ids.next("imp");
+  const nowIso = ctx.clock.now().toISOString();
+  let duplicates = 0;
+  const created: BankTransaction[] = [];
+  for (const t of external) {
+    const externalId = `sync:${provider.provider}:${t.providerTxId}`;
+    const existing = await ctx.repos.bankTransactions.findByExternalId(
+      ctx.companyId,
+      account.id,
+      externalId
+    );
+    if (existing) {
+      duplicates++;
+      continue;
+    }
+    const tx: BankTransaction = {
+      id: ctx.ids.next("btx"),
+      companyId: ctx.companyId,
+      bankAccountId: account.id,
+      date: t.date,
+      amountCents: t.amountCents,
+      currency: account.currency,
+      description: t.description,
+      externalId,
+      importBatchId,
+      source: "api_mock", // fonte de sincronização; provedores reais ganham source próprio na v1.2
+      reconciled: false,
+      createdAt: nowIso,
+    };
+    await ctx.repos.bankTransactions.create(tx);
+    created.push(tx);
+  }
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "statement.synced",
+    entityType: "import_batch",
+    entityId: importBatchId,
+    after: {
+      bankAccountId: account.id,
+      provider: provider.provider,
+      since,
+      until,
+      imported: created.length,
+      duplicates,
+      transactionIds: created.map((t) => t.id),
+    },
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "statement.imported",
+    payload: {
+      bankAccountId: account.id,
+      importBatchId,
+      format: "sync",
+      provider: provider.provider,
+      imported: created.length,
+      duplicates,
+    },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL,
+    ctx,
+    {
+      bankAccountId: account.id,
+      provider: provider.provider,
+      importBatchId,
+      period: { since, until },
+      imported: created.length,
+      duplicates,
+      transactions: created,
+    },
+    {
+      assumptions: [
+        `Transações obtidas pela porta de dados bancários "${provider.provider}" — no provedor mock o extrato é sintético e determinístico; Open Finance/agregador real entra na v1.2 com credenciais.`,
+      ],
+      confidence: 1.0,
+      dataSources: [...DATA_SOURCES, "integration:bank_data"],
+    }
   );
 }
 
@@ -1504,6 +1635,8 @@ export const conciliacaoSkill: SkillDefinition<ConciliacaoInput, ConciliacaoData
     switch (input.action) {
       case "import_statement":
         return importStatement(ctx, input);
+      case "sync_bank":
+        return syncBank(ctx, input);
       case "auto_match":
         return autoMatch(ctx, input);
       case "confirm_match":

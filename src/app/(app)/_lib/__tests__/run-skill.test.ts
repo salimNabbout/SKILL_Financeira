@@ -22,6 +22,7 @@ function makeDeps(env: TestEnv, registry: SkillRegistry): { deps: UiSkillDeps; p
       clock: env.clock,
       ids,
       ai: env.ai,
+      integrations: env.integrations,
       registry,
     },
     prefixes,

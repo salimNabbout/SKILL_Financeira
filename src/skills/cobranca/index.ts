@@ -493,10 +493,21 @@ async function resumeDunningDecision(ctx: SkillContext): Promise<SkillResult<Run
 
   if (decision.status === "approved") {
     const sent: CollectionMessage[] = [];
+    const customersById = new Map(
+      (await ctx.repos.customers.listAll(ctx.companyId)).map((c) => [c.id, c])
+    );
     for (const message of awaiting) {
       const before = { ...message };
+      // Envio via porta MessagingProvider ("mock" no MVP: nenhum disparo real).
+      const customer = customersById.get(message.customerId);
+      const delivery = await ctx.integrations.messaging.send({
+        channel: message.channel,
+        to: customer?.email ?? `cliente:${message.customerId}`,
+        subject: message.subject,
+        body: message.body,
+      });
       message.status = "sent";
-      message.sentAt = nowIso; // envio MOCK: apenas o carimbo é registrado
+      message.sentAt = nowIso;
       message.approvalId = decision.id;
       message.updatedAt = nowIso;
       await ctx.repos.collectionMessages.update(message);
@@ -506,7 +517,7 @@ async function resumeDunningDecision(ctx: SkillContext): Promise<SkillResult<Run
         entityType: "collection_message",
         entityId: message.id,
         before,
-        after: message,
+        after: { ...message, deliveryProvider: delivery.provider, deliveryId: delivery.messageId },
         correlationId: ctx.correlationId,
       });
       await ctx.events.publish({
@@ -519,6 +530,8 @@ async function resumeDunningDecision(ctx: SkillContext): Promise<SkillResult<Run
           step: message.step,
           channel: message.channel,
           approvalId: decision.id,
+          deliveryProvider: delivery.provider,
+          deliveryId: delivery.messageId,
         },
         source: SKILL,
         correlationId: ctx.correlationId,
@@ -531,7 +544,7 @@ async function resumeDunningDecision(ctx: SkillContext): Promise<SkillResult<Run
       { messages: sent, sent: sent.length },
       {
         assumptions: [
-          `Envio aprovado por ${decision.decidedBy} e executado em modo MOCK: nenhum e-mail/WhatsApp real foi disparado; apenas o registro foi marcado como enviado.`,
+          `Envio aprovado por ${decision.decidedBy} via porta de mensageria "${ctx.integrations.messaging.provider}" — no provedor mock nenhum e-mail/WhatsApp real é disparado.`,
         ],
         confidence: 1.0,
         dataSources: DATA_SOURCES,

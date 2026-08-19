@@ -24,12 +24,18 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
 ## Limitações conhecidas (MVP)
 
 **Integrações são mocks/stubs identificados**
-- Execução bancária de pagamento, NF-e/NFS-e, envio de e-mail/WhatsApp da cobrança: mocks
-  declarados (nenhum efeito externo). API bancária/Open Finance: não implementadas. Importação
-  real por upload de arquivo OFX, CSV ou CNAB240 (até 2 MB, detecção automática de formato e
-  codificação UTF-8/ISO-8859-1) ou texto colado. O CNAB240 implementa o segmento E (extrato)
-  no layout FEBRABAN de referência — bancos publicam variantes; ajustes por banco entram como
-  configuração futura (as posições estão em constantes documentadas).
+- Execução bancária de pagamento, NF-e/NFS-e, envio de e-mail/WhatsApp da cobrança e sincronização
+  de extrato: mocks declarados (nenhum efeito externo). Desde a v1.2 essas fronteiras são portas
+  formais (`BankDataProvider`, `ChargeProvider`, `FiscalProvider`, `MessagingProvider` em
+  `src/core/integrations.ts`) com adaptadores mock determinísticos selecionados por env
+  (`INTEGRATION_*="mock"`, o padrão); declarar um provedor real não implementado falha alto na
+  inicialização — o mock nunca é fallback silencioso. A emissão de cobrança Pix/boleto por título
+  (UI e `POST /receivables/{id}/charge`) e o fluxo `bank_sync` geram códigos/extratos FAKE: nada
+  é registrado em PSP ou banco; a liquidação real continua entrando pela conciliação do extrato.
+  Importação real por upload de arquivo OFX, CSV ou CNAB240 (até 2 MB, detecção automática de
+  formato e codificação UTF-8/ISO-8859-1) ou texto colado. O CNAB240 implementa o segmento E
+  (extrato) no layout FEBRABAN de referência — bancos publicam variantes; ajustes por banco
+  entram como configuração futura (as posições estão em constantes documentadas).
 
 **Escopo funcional**
 - Multiempresa operacional: troca de empresa na sessão pela barra lateral e gestão de usuários

@@ -7,7 +7,7 @@ import { todayInTz } from "@/core/dates";
 import type { ReceivableStatus } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
-import { createReceivableAction, registerReceiptAction } from "./actions";
+import { createReceivableAction, issueChargeAction, registerReceiptAction } from "./actions";
 
 const STATUS_FILTERS: Array<{ value: ReceivableStatus | "todos"; label: string }> = [
   { value: "todos", label: "Todos" },
@@ -76,8 +76,8 @@ export default async function ContasAReceberPage({
           <EmptyState message="Nenhum título encontrado para o filtro selecionado." />
         ) : (
           <Table
-            headers={["Cliente", "Descrição", "Parcela", "Vencimento", "Valor", "Recebido", "Status", "Registrar recebimento"]}
-            align={["l", "l", "l", "l", "r", "r", "l", "l"]}
+            headers={["Cliente", "Descrição", "Parcela", "Vencimento", "Valor", "Recebido", "Status", "Registrar recebimento", "Cobrança (mock)"]}
+            align={["l", "l", "l", "l", "r", "r", "l", "l", "l"]}
           >
             {rows.map((r) => {
               const overdue = r.dueDate < today && RECEIVABLE_OPEN.includes(r.status);
@@ -133,6 +133,20 @@ export default async function ContasAReceberPage({
                           ))}
                         </select>
                         <Button variant="secondary">Registrar</Button>
+                      </form>
+                    ) : (
+                      <span className="text-xs text-[var(--ink-muted)]">—</span>
+                    )}
+                  </Td>
+                  <Td>
+                    {RECEIVABLE_OPEN.includes(r.status) ? (
+                      <form action={issueChargeAction} className="flex flex-wrap items-center gap-1.5">
+                        <input type="hidden" name="receivableId" value={r.id} />
+                        <select name="kind" required className={`${inputClass} w-24`} title="Tipo de cobrança">
+                          <option value="pix">Pix</option>
+                          <option value="boleto">Boleto</option>
+                        </select>
+                        <Button variant="secondary">Gerar</Button>
                       </form>
                     ) : (
                       <span className="text-xs text-[var(--ink-muted)]">—</span>

@@ -7,11 +7,11 @@
  * real é emitido; número e chave de acesso são fictícios e determinísticos.
  */
 
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ISODate } from "@/core/dates";
 import { formatBRL } from "@/core/money";
 import type { Invoice, Receivable } from "@/core/entities";
+import { NotFoundError } from "@/core/errors";
 import { errorResult, makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -125,34 +125,47 @@ export type FaturamentoData = InvoiceData | CancelInvoiceData | BillingStatusDat
 // Helpers do mock de NF-e
 // ---------------------------------------------------------------------------
 
-/** Próximo número sequencial "NFE-<n>" por empresa (baseado nos mocks já emitidos). */
-async function nextNfeNumber(ctx: SkillContext): Promise<string> {
+/** Próximo sequencial de NF-e por empresa (baseado nos números já emitidos). */
+async function nextNfeSequential(ctx: SkillContext): Promise<number> {
   const invoices = await ctx.repos.invoices.listAll(ctx.companyId);
   let max = 0;
   for (const inv of invoices) {
     const match = inv.nfeMock?.number.match(/^NFE-(\d+)$/);
     if (match) max = Math.max(max, Number(match[1]));
   }
-  return `NFE-${max + 1}`;
+  return max + 1;
 }
 
-/** Chave de acesso fake de 44 dígitos, determinística por empresa+fatura (hash). */
-function mockAccessKey(companyId: string, invoiceId: string): string {
-  const hex = createHash("sha256").update(`${companyId}:${invoiceId}`).digest("hex");
-  return BigInt(`0x${hex}`).toString(10).padStart(44, "0").slice(0, 44);
-}
-
-/** Emite (mock) uma fatura draft: muda status, gera NF-e fake, audita e publica. */
+/**
+ * Emite uma fatura draft via porta FiscalProvider (mock no MVP — nenhuma
+ * comunicação com SEFAZ/prefeitura): muda status, grava os dados fiscais
+ * devolvidos pela porta, audita e publica.
+ */
 async function performIssue(ctx: SkillContext, invoice: Invoice): Promise<Invoice> {
   const now = ctx.clock.now().toISOString();
   const before = { ...invoice };
+  const company = await ctx.repos.companies.getById(ctx.companyId);
+  if (!company) throw new NotFoundError("Empresa", ctx.companyId);
+
+  const fiscal = await ctx.integrations.fiscal.issueInvoice({
+    invoice: {
+      id: invoice.id,
+      description: invoice.description,
+      totalCents: invoice.totalCents,
+      saleRef: invoice.saleRef,
+    },
+    company: { id: company.id, cnpj: company.cnpj, name: company.name },
+    sequential: await nextNfeSequential(ctx),
+    issuedAtIso: now,
+  });
+
   invoice.status = "issued";
   invoice.issueDate = ctx.today();
   invoice.nfeMock = {
-    number: await nextNfeNumber(ctx),
-    accessKey: mockAccessKey(ctx.companyId, invoice.id),
-    issuedAt: now,
-    provider: "mock",
+    number: fiscal.number,
+    accessKey: fiscal.accessKey,
+    issuedAt: fiscal.issuedAt,
+    provider: fiscal.provider,
   };
   invoice.updatedAt = now;
   await ctx.repos.invoices.update(invoice);
@@ -176,7 +189,7 @@ async function performIssue(ctx: SkillContext, invoice: Invoice): Promise<Invoic
       issueDate: invoice.issueDate,
       nfeNumber: invoice.nfeMock.number,
       nfeAccessKey: invoice.nfeMock.accessKey,
-      provider: "mock",
+      provider: invoice.nfeMock.provider,
     },
     source: SKILL_NAME,
     correlationId: ctx.correlationId,

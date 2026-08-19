@@ -116,6 +116,7 @@ function makeOrchestrator(env: ReturnType<typeof createTestEnv>, registry: Skill
     clock: env.clock,
     ids: env.ids,
     ai: env.ai,
+    integrations: env.integrations,
     registry,
     flows: new Map([
       [simpleFlow.name, simpleFlow],

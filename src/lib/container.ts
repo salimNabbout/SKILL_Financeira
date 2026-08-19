@@ -13,6 +13,8 @@ import { RandomIdGenerator } from "@/core/ids";
 import { Orchestrator } from "@/core/orchestrator/orchestrator";
 import type { SkillRegistry } from "@/core/orchestrator/registry";
 import type { Repositories } from "@/core/repositories";
+import type { Integrations } from "@/core/integrations";
+import { buildIntegrations } from "@/integrations/registry";
 import { buildRegistry } from "@/skills";
 import { MemoryDb } from "@/adapters/memory/db";
 import { createMemoryRepositories } from "@/adapters/memory/repos";
@@ -27,6 +29,7 @@ export interface AppContainer {
   clock: SystemClock;
   ids: RandomIdGenerator;
   ai: HeuristicClassifier;
+  integrations: Integrations;
   registry: SkillRegistry;
   orchestrator: Orchestrator;
 }
@@ -43,6 +46,7 @@ async function build(): Promise<AppContainer> {
   const clock = new SystemClock();
   const ids = new RandomIdGenerator();
   const ai = new HeuristicClassifier();
+  const integrations = buildIntegrations(); // mocks por padrão; reais na v1.2
   const registry = buildRegistry();
 
   let repos: Repositories;
@@ -72,9 +76,9 @@ async function build(): Promise<AppContainer> {
     events = new InMemoryEventBus(repos.events, clock, ids);
   }
   const audit = new HashChainAuditTrail(repos.audit, clock, ids);
-  const orchestrator = new Orchestrator({ repos, events, clock, ids, ai, registry });
+  const orchestrator = new Orchestrator({ repos, events, clock, ids, ai, integrations, registry });
 
-  return { mode, repos, events, audit, clock, ids, ai, registry, orchestrator };
+  return { mode, repos, events, audit, clock, ids, ai, integrations, registry, orchestrator };
 }
 
 export function getContainer(): Promise<AppContainer> {
