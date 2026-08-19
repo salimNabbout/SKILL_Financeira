@@ -8,6 +8,7 @@ import type { LateFeePolicy } from "./money";
 import type { RoleName } from "./entities";
 import type { CollectionChannel } from "./entities";
 import { DEFAULT_PASSWORD_POLICY, type PasswordPolicy } from "./password-policy";
+import { DEFAULT_SCHEDULES, type ScheduleDefinition } from "./scheduler";
 
 export interface ApprovalTier {
   /** Até este valor (centavos), o papel indicado pode aprovar. null = sem teto. */
@@ -39,6 +40,8 @@ export interface CompanyConfig {
   minimumCashCents: number;
   /** Política de senha aplicada ao definir/trocar senhas (nunca no login). */
   passwordPolicy: PasswordPolicy;
+  /** Rotinas agendadas (executadas pelo scripts/scheduler.ts, quando ativo). */
+  schedules: ScheduleDefinition[];
   /** Conciliação automática exige confiança >= este valor; abaixo vira sugestão. */
   reconciliationAutoConfirmThreshold: number;
   /** Tolerância de valor (centavos) e de dias na conciliação. */
@@ -86,6 +89,7 @@ export const DEFAULT_COMPANY_CONFIG: CompanyConfig = {
   budgetDeviationAlertPercent: 10,
   minimumCashCents: 1_000_000, // R$ 10.000
   passwordPolicy: DEFAULT_PASSWORD_POLICY,
+  schedules: DEFAULT_SCHEDULES,
   reconciliationAutoConfirmThreshold: 0.9,
   reconciliationAmountToleranceCents: 100, // R$ 1,00
   reconciliationDateToleranceDays: 3,

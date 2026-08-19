@@ -26,6 +26,7 @@ SKILL_Financeira/
     │   ├── integrations.ts     # portas: banco, cobrança, fiscal, mensageria
     │   ├── stats.ts            # estatística robusta (mediana/MAD/Theil–Sen)
     │   ├── password-policy.ts  # política de senha configurável (validador)
+    │   ├── scheduler.ts        # rotinas agendadas (elegibilidade + idempotência)
     │   ├── orchestrator/
     │   │   ├── orchestrator.ts # motor: idempotência, aprovações, consolidação
     │   │   ├── flows.ts        # fluxos integrados declarativos

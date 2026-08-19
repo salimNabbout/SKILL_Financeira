@@ -19,7 +19,9 @@ Escopo priorizado e implementado:
 
 - ✅ Upload de arquivo real OFX/CSV/CNAB240 na conciliação (UI e API multipart, detecção de
   formato e codificação; CNAB240 segmento E com layout FEBRABAN em constantes) — entregue.
-  Pendente: agendamento de importação.
+  ✅ Agendamento: `scripts/scheduler.ts` roda rotinas por empresa (agendas como dados em
+  `CompanyConfig.schedules`; default bank_sync 6h, resumo diário 7h, régua 8h, horas locais)
+  com chave de idempotência por balde de tempo — reiniciar o processo não duplica execuções.
 - ✅ Paginação/índices para volumetria — entregue: listagens (API e UI) paginadas no repositório
   com ordem determinística e índices dedicados; skills que agregam continuam com leitura
   completa (cálculo, não listagem).
