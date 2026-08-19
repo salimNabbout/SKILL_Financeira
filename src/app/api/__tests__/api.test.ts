@@ -15,6 +15,7 @@ import { SkillRegistry } from "@/core/orchestrator/registry";
 import type { OrchestratorResponse } from "@/core/orchestrator/orchestrator";
 import { makeResult, SKILL_NAMES, type SkillDefinition, type SkillName } from "@/core/skill";
 import { hashPassword } from "@/lib/password";
+import { generateTotpSecret, totpCode } from "@/lib/totp";
 import {
   acknowledgeAlert,
   createBankAccount,
@@ -247,18 +248,27 @@ describe("respond: envelopes padronizados", () => {
     expect(maskSensitive("ab")).toBe("****");
   });
 
-  it("publicUser remove o passwordHash", () => {
+  it("publicUser remove passwordHash e totpSecret (allowlist)", () => {
     const sanitized = publicUser({
       id: "u1",
       name: "Ana",
       email: "ana@x.com",
       passwordHash: "scrypt$...",
+      totpSecret: "GEZDGNBVGY3TQOJQ",
+      totpEnabled: true,
       active: true,
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
     });
-    expect(sanitized).toEqual({ id: "u1", name: "Ana", email: "ana@x.com", active: true });
+    expect(sanitized).toEqual({
+      id: "u1",
+      name: "Ana",
+      email: "ana@x.com",
+      active: true,
+      totpEnabled: true,
+    });
     expect(JSON.stringify(sanitized)).not.toContain("scrypt");
+    expect(JSON.stringify(sanitized)).not.toContain("GEZDGNBV");
   });
 });
 
@@ -300,11 +310,34 @@ describe("auth/login", () => {
       name: "Maria Login",
       email: "maria@teste.com.br",
       active: true,
+      totpEnabled: false,
     });
     expect(JSON.stringify(result)).not.toContain("scrypt");
 
     const audit = await env.repos.audit.list(env.company.id);
     expect(audit.map((a) => a.action)).toContain("auth.login");
+  });
+
+  it("conta com 2FA ativo exige código TOTP válido (e nunca vaza o segredo)", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const seeded = await seedLoginUser(env);
+    const secret = generateTotpSecret();
+    await env.repos.users.update({ ...seeded, totpSecret: secret, totpEnabled: true });
+
+    const credentials = { email: "maria@teste.com.br", password: "Segredo#123" };
+    // Sem código e com código errado → bloqueado com erro dedicado.
+    await expect(login(deps, credentials)).rejects.toThrow(/duas etapas/);
+    await expect(login(deps, { ...credentials, totpCode: "000000" })).rejects.toThrow(
+      /duas etapas/
+    );
+
+    // Código do relógio fixo do ambiente de teste → aceito.
+    const nowSeconds = Math.floor(env.clock.now().getTime() / 1000);
+    const result = await login(deps, { ...credentials, totpCode: totpCode(secret, nowSeconds) });
+    expect(result.user.totpEnabled).toBe(true);
+    // O segredo TOTP jamais aparece na resposta (allowlist do publicUser).
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 
   it("senha errada e e-mail inexistente falham com a mesma mensagem (401)", async () => {

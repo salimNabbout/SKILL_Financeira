@@ -7,11 +7,14 @@
 import type { LateFeePolicy } from "./money";
 import type { RoleName } from "./entities";
 import type { CollectionChannel } from "./entities";
+import { DEFAULT_PASSWORD_POLICY, type PasswordPolicy } from "./password-policy";
 
 export interface ApprovalTier {
   /** Até este valor (centavos), o papel indicado pode aprovar. null = sem teto. */
   maxAmountCents: number | null;
   requiredRole: RoleName;
+  /** Dupla aprovação (four-eyes): aprovações exigidas nesta faixa. Ausente = 1. */
+  approvalsRequired?: number;
 }
 
 export interface DunningStep {
@@ -34,6 +37,8 @@ export interface CompanyConfig {
   budgetDeviationAlertPercent: number;
   /** Caixa mínimo de segurança (centavos) para alertas de insuficiência. */
   minimumCashCents: number;
+  /** Política de senha aplicada ao definir/trocar senhas (nunca no login). */
+  passwordPolicy: PasswordPolicy;
   /** Conciliação automática exige confiança >= este valor; abaixo vira sugestão. */
   reconciliationAutoConfirmThreshold: number;
   /** Tolerância de valor (centavos) e de dias na conciliação. */
@@ -80,6 +85,7 @@ export const DEFAULT_COMPANY_CONFIG: CompanyConfig = {
   ],
   budgetDeviationAlertPercent: 10,
   minimumCashCents: 1_000_000, // R$ 10.000
+  passwordPolicy: DEFAULT_PASSWORD_POLICY,
   reconciliationAutoConfirmThreshold: 0.9,
   reconciliationAmountToleranceCents: 100, // R$ 1,00
   reconciliationDateToleranceDays: 3,
@@ -98,6 +104,16 @@ export function requiredRoleForAmount(config: CompanyConfig, amountCents: number
     }
   }
   return "admin";
+}
+
+/** Total de aprovações humanas exigidas para o valor (dupla aprovação por faixa). */
+export function requiredApprovalsForAmount(config: CompanyConfig, amountCents: number): number {
+  for (const tier of config.approvalTiers) {
+    if (tier.maxAmountCents === null || amountCents <= tier.maxAmountCents) {
+      return Math.max(1, tier.approvalsRequired ?? 1);
+    }
+  }
+  return 1;
 }
 
 /** Mescla configuração persistida (JSON da empresa) com defaults. */

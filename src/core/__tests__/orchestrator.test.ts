@@ -318,3 +318,129 @@ describe("orquestrador", () => {
     expect(retry.status).toBe("completed");
   });
 });
+
+describe("orquestrador — dupla aprovação (four-eyes)", () => {
+  async function setupDoubleApproval(env: ReturnType<typeof createTestEnv>) {
+    // Faixa única exigindo DUAS aprovações (papel mínimo: approver).
+    await env.repos.companies.update({
+      ...env.company,
+      config: {
+        approvalTiers: [{ maxAmountCents: null, requiredRole: "approver", approvalsRequired: 2 }],
+      },
+    });
+  }
+
+  it("primeira aprovação é parcial: fluxo segue suspenso até a segunda pessoa aprovar", async () => {
+    const env = createTestEnv();
+    await setupDoubleApproval(env);
+    const { registry, executions } = buildFakes();
+    const orch = makeOrchestrator(env, registry);
+
+    const res = await orch.execute({
+      flow: "fake_approval",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {},
+    });
+    expect(res.approval?.approvalsRequired).toBe(2);
+
+    // 1ª aprovação (approver): parcial — nada é retomado.
+    const first = await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: res.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    expect("flowRunId" in first).toBe(false);
+    const partial = (first as { approval: (typeof res)["approval"] }).approval!;
+    expect(partial.status).toBe("pending");
+    expect(partial.approverIds).toEqual(["usr_approver"]);
+    expect(executions).not.toContain("after");
+    expect(env.db.events.some((e) => e.type === "approval.partially_approved")).toBe(true);
+    expect(
+      (await env.repos.audit.list(env.company.id)).some(
+        (a) => a.action === "approval.partially_approved"
+      )
+    ).toBe(true);
+
+    // Mesmo aprovador de novo → bloqueado.
+    await expect(
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId: res.approval!.id,
+        decision: "approved",
+        actor: env.actorFor("approver"),
+      })
+    ).rejects.toThrow(/já registrou aprovação/);
+
+    // 2ª aprovação por OUTRA pessoa → decisão final e fluxo retomado.
+    const resumed = (await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: res.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("manager"),
+    })) as Awaited<ReturnType<typeof orch.execute>>;
+
+    expect(resumed.status).toBe("completed");
+    expect(executions).toContain("after");
+    const finalApproval = await env.repos.approvals.getById(env.company.id, res.approval!.id);
+    expect(finalApproval?.status).toBe("approved");
+    expect(finalApproval?.approverIds).toEqual(["usr_approver", "usr_manager"]);
+    expect(finalApproval?.decidedBy).toBe("usr_manager");
+  });
+
+  it("uma única rejeição encerra a solicitação mesmo após aprovação parcial", async () => {
+    const env = createTestEnv();
+    await setupDoubleApproval(env);
+    const { registry, executions } = buildFakes();
+    const orch = makeOrchestrator(env, registry);
+
+    const res = await orch.execute({
+      flow: "fake_approval",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {},
+    });
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: res.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+
+    const resumed = (await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: res.approval!.id,
+      decision: "rejected",
+      actor: env.actorFor("manager"),
+      justification: "valor não autorizado",
+    })) as Awaited<ReturnType<typeof orch.execute>>;
+
+    expect(resumed.status).toBe("rejected");
+    expect(executions).not.toContain("after");
+    const finalApproval = await env.repos.approvals.getById(env.company.id, res.approval!.id);
+    expect(finalApproval?.status).toBe("rejected");
+  });
+
+  it("sem configuração de dupla aprovação, uma única aprovação decide (retrocompatível)", async () => {
+    const env = createTestEnv();
+    const { registry } = buildFakes();
+    const orch = makeOrchestrator(env, registry);
+
+    const res = await orch.execute({
+      flow: "fake_approval",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {},
+    });
+    expect(res.approval?.approvalsRequired).toBe(1);
+
+    const resumed = (await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: res.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    })) as Awaited<ReturnType<typeof orch.execute>>;
+    expect(resumed.status).toBe("completed");
+  });
+});

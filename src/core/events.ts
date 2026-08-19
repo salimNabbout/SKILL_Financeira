@@ -40,6 +40,7 @@ export type EventType =
   | "accounting.batch_exported"
   | "alert.raised"
   | "approval.requested"
+  | "approval.partially_approved"
   | "approval.decided"
   | "flow.completed"
   | "report.generated";

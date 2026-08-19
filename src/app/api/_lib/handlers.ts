@@ -54,6 +54,7 @@ import { todayInTz } from "@/core/dates";
 import { runSkill, type SkillContext } from "@/core/skill";
 import type { SkillResult } from "@/core/types";
 import { verifyPassword } from "@/lib/password";
+import { verifyTotp } from "@/lib/totp";
 import { maskSensitive, publicCompany, publicUser, type PublicCompany, type PublicUser } from "./respond";
 
 // ---------------------------------------------------------------------------
@@ -120,6 +121,8 @@ function normKey(value: string): string {
 export const loginSchema = z.object({
   email: z.string().trim().min(1, "informe o e-mail"),
   password: z.string().min(1, "informe a senha"),
+  /** Obrigatório apenas para contas com 2FA ativo. */
+  totpCode: z.string().trim().optional(),
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
@@ -135,6 +138,15 @@ export async function login(deps: ApiDeps, rawInput: unknown): Promise<LoginResu
   const invalid = new DomainError("invalid_credentials", "E-mail ou senha inválidos.");
   if (!user || !user.active || !verifyPassword(input.password, user.passwordHash)) {
     throw invalid;
+  }
+  if (user.totpEnabled && user.totpSecret) {
+    const nowSeconds = Math.floor(deps.clock.now().getTime() / 1000);
+    if (!input.totpCode || !verifyTotp(user.totpSecret, input.totpCode, nowSeconds)) {
+      throw new DomainError(
+        "totp_required",
+        "Conta com verificação em duas etapas: informe um código 2FA válido em totpCode."
+      );
+    }
   }
   const memberships = await deps.repos.memberships.listByUser(user.id);
   if (memberships.length === 0) {

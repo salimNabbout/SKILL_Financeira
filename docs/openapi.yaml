@@ -50,6 +50,12 @@ paths:
               properties:
                 email: { type: string, example: ana@cafeaurora.com.br }
                 password: { type: string, format: password }
+                totpCode:
+                  type: string
+                  description: >
+                    Código TOTP de 6 dígitos — obrigatório apenas para contas com
+                    verificação em duas etapas ativa (erro `totp_required` sem ele).
+                  example: "287082"
       responses:
         "200":
           description: Sessão criada (cookie `financeira_session` via Set-Cookie)
@@ -640,9 +646,13 @@ paths:
       description: >
         Regras determinísticas aplicadas pelo orquestrador: papel mínimo por
         alçada, limite do aprovador e segregação de funções (quem solicitou não
-        decide). Se a aprovação pertence a um fluxo suspenso, o passo sensível é
-        reexecutado com a decisão e a resposta consolidada do fluxo é devolvida;
-        caso contrário, devolve `{ approval }`.
+        decide). Faixas com dupla aprovação (approvalsRequired > 1) exigem
+        aprovações de pessoas DIFERENTES: aprovações antes de atingir o total
+        são parciais (status continua pending, resposta `{ approval }` com
+        approverIds) e uma única rejeição encerra a solicitação. Se a aprovação
+        pertence a um fluxo suspenso, o passo sensível é reexecutado com a
+        decisão FINAL e a resposta consolidada do fluxo é devolvida; caso
+        contrário, devolve `{ approval }`.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -1117,12 +1127,13 @@ components:
 
     PublicUser:
       type: object
-      description: Usuário sem passwordHash (LGPD)
+      description: Usuário por allowlist — sem passwordHash nem totpSecret (LGPD)
       properties:
         id: { type: string }
         name: { type: string }
         email: { type: string }
         active: { type: boolean }
+        totpEnabled: { type: boolean, description: Verificação em duas etapas ativa }
 
     PublicCompany:
       type: object
@@ -1311,6 +1322,11 @@ components:
         amountCents: { type: integer }
         requestedBy: { type: string }
         requiredRole: { $ref: "#/components/schemas/RoleName" }
+        approvalsRequired: { type: integer, minimum: 1, description: Dupla aprovação por faixa (default 1) }
+        approverIds:
+          type: array
+          items: { type: string }
+          description: Quem já aprovou (aprovações parciais até atingir o total)
         status: { type: string, enum: [pending, approved, rejected, expired] }
         decidedBy: { type: string }
         decidedAt: { type: string, format: date-time }

@@ -15,7 +15,12 @@
 import { assertPermission, assertSegregation, canApproveAmount } from "../auth";
 import { HashChainAuditTrail, type AuditTrail } from "../audit";
 import type { Clock } from "../clock";
-import { requiredRoleForAmount, resolveCompanyConfig, type CompanyConfig } from "../config";
+import {
+  requiredApprovalsForAmount,
+  requiredRoleForAmount,
+  resolveCompanyConfig,
+  type CompanyConfig,
+} from "../config";
 import { todayInTz } from "../dates";
 import type { Actor, Approval, FlowRun, FlowRunStatus, ID } from "../entities";
 import { DomainError, NotFoundError, PermissionError, ValidationError } from "../errors";
@@ -172,8 +177,52 @@ export class Orchestrator {
     const check = canApproveAmount(membership, approval.requiredRole, approval.amountCents);
     if (!check.allowed) throw new PermissionError(check.reason ?? "Sem alçada para aprovar.");
 
+    // Dupla aprovação (four-eyes): cada aprovador conta uma vez; a decisão só
+    // é final quando o total exigido pela faixa de alçada for atingido. Uma
+    // única rejeição encerra a solicitação (não há "voto vencido" em rejeição).
+    const approvalsRequired = Math.max(1, approval.approvalsRequired ?? 1);
+    const priorApprovers = approval.approverIds ?? [];
+    if (priorApprovers.includes(actor.id)) {
+      throw new ValidationError(
+        "Você já registrou aprovação nesta solicitação — as demais aprovações devem vir de OUTRAS pessoas (dupla aprovação)."
+      );
+    }
+    const approverIds = decision === "approved" ? [...priorApprovers, actor.id] : priorApprovers;
+
+    if (decision === "approved" && approverIds.length < approvalsRequired) {
+      const partial: Approval = {
+        ...approval,
+        approverIds,
+        justification: justification ?? approval.justification,
+      };
+      await this.env.repos.approvals.update(partial);
+      await this.audit.record(companyId, {
+        actor,
+        action: "approval.partially_approved",
+        entityType: "Approval",
+        entityId: approval.id,
+        before: { approvals: priorApprovers.length, required: approvalsRequired },
+        after: { approvals: approverIds.length, required: approvalsRequired, justification },
+      });
+      await this.env.events.publish({
+        companyId,
+        type: "approval.partially_approved",
+        payload: {
+          approvalId: approval.id,
+          approvedBy: actor.id,
+          approvals: approverIds.length,
+          approvalsRequired,
+        },
+        source: "orchestrator",
+        correlationId: approval.flowRunId ?? approval.id,
+      });
+      // Fluxo continua suspenso aguardando a(s) próxima(s) aprovação(ões).
+      return { approval: partial };
+    }
+
     const decided: Approval = {
       ...approval,
+      approverIds,
       status: decision,
       decidedBy: actor.id,
       decidedAt: this.env.clock.now().toISOString(),
@@ -348,6 +397,8 @@ export class Orchestrator {
       amountCents: req.amountCents,
       requestedBy: flowRun.requestedBy,
       requiredRole: requiredRoleForAmount(config, req.amountCents ?? 0),
+      approvalsRequired: requiredApprovalsForAmount(config, req.amountCents ?? 0),
+      approverIds: [],
       status: "pending",
       createdAt: this.env.clock.now().toISOString(),
     };

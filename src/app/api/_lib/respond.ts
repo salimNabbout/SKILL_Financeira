@@ -68,11 +68,19 @@ export interface PublicUser {
   name: string;
   email: string;
   active: boolean;
+  /** 2FA ativo (o SEGREDO TOTP nunca sai daqui — allowlist). */
+  totpEnabled: boolean;
 }
 
-/** Remove o passwordHash (e qualquer campo não listado) antes de responder. */
+/** Allowlist: remove passwordHash, totpSecret e qualquer campo não listado. */
 export function publicUser(user: User): PublicUser {
-  return { id: user.id, name: user.name, email: user.email, active: user.active };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    active: user.active,
+    totpEnabled: user.totpEnabled === true,
+  };
 }
 
 export interface PublicCompany {
