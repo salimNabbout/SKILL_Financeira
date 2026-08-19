@@ -421,6 +421,7 @@ model Approval {
   decidedBy         String?
   decidedAt         DateTime?
   justification     String?
+  version           Int       @default(0) // trava otimista (four-eyes sem lost-update)
   createdAt         DateTime  @default(now())
 
   company Company @relation(fields: [companyId], references: [id])
@@ -523,6 +524,15 @@ model AuditRecord {
 
   @@unique([companyId, seq])
   @@index([companyId, entityType, entityId])
+}
+
+// Âncora do último registro da trilha por empresa: guarda seq/hash à parte para
+// detectar truncamento do FIM da cadeia (registros apagados no fim mantêm um
+// prefixo válido, mas divergem desta âncora).
+model AuditHead {
+  companyId String @id
+  seq       Int
+  hash      String
 }
 
 // ---------------------------------------------------------------------------

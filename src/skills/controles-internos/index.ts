@@ -565,7 +565,9 @@ async function scanAnomalies(ctx: SkillContext): Promise<SkillResult<ScanAnomali
 
 async function verifyAuditChain(ctx: SkillContext): Promise<SkillResult<VerifyAuditChainData>> {
   const records = await ctx.repos.audit.list(ctx.companyId);
-  const result = verifyChain(records);
+  // Passa a âncora do head persistida para detectar truncamento do FIM da trilha.
+  const head = await ctx.repos.audit.getHead(ctx.companyId);
+  const result = verifyChain(records, head ?? undefined);
 
   const alerts: SkillAlert[] = [];
   if (!result.valid) {
@@ -664,9 +666,10 @@ async function exceptionReport(ctx: SkillContext): Promise<SkillResult<Exception
     });
   }
 
-  // 4. Integridade da trilha de auditoria.
+  // 4. Integridade da trilha de auditoria (com âncora do head para truncamento).
   const records = await ctx.repos.audit.list(ctx.companyId);
-  const chain = verifyChain(records);
+  const auditHead = await ctx.repos.audit.getHead(ctx.companyId);
+  const chain = verifyChain(records, auditHead ?? undefined);
   const chainSection: ExceptionSection = {
     id: "audit_chain",
     title: "Integridade da trilha de auditoria",

@@ -34,6 +34,29 @@ describe("trilha de auditoria", () => {
     expect(check.brokenAtSeq).toBe(1);
   });
 
+  it("record() persiste a âncora do head e detecta truncamento do fim de ponta a ponta", async () => {
+    const env = createTestEnv();
+    for (let i = 1; i <= 3; i++) {
+      await env.audit.record(env.company.id, {
+        actor: { type: "user", id: "usr_admin" },
+        action: `teste.acao${i}`,
+        entityType: "X",
+        entityId: String(i),
+      });
+    }
+    const records = await env.repos.audit.list(env.company.id);
+    const head = await env.repos.audit.getHead(env.company.id);
+    expect(head).not.toBeNull();
+    expect(head!.seq).toBe(records[2].seq);
+    expect(head!.hash).toBe(records[2].hash);
+
+    // Truncando o último registro, a verificação com o head persistido acusa.
+    const truncated = records.slice(0, 2);
+    expect(verifyChain(truncated, head ?? undefined).valid).toBe(false);
+    // A trilha íntegra continua válida contra o head.
+    expect(verifyChain(records, head ?? undefined).valid).toBe(true);
+  });
+
   it("detecta remoção do último registro via âncora do head esperado (C2)", async () => {
     const env = createTestEnv();
     for (let i = 1; i <= 3; i++) {
@@ -105,6 +128,12 @@ describe("trilha de auditoria", () => {
       },
       async listPage() {
         return { items: [...items], total: items.length, offset: 0, limit: items.length };
+      },
+      async getHead() {
+        return null;
+      },
+      async setHead() {
+        /* no-op no fixture */
       },
     };
     // Pré-existe um registro seq=1 gravado por "outro processo".

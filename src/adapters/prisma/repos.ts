@@ -85,6 +85,7 @@ import type {
   AccountingEntryRepo,
   AlertRepo,
   ApprovalRepo,
+  AuditHead,
   AuditRepo,
   BankAccountRepo,
   BankTransactionRepo,
@@ -1724,6 +1725,17 @@ export function createPrismaRepositories(prisma: PrismaClient): Repositories {
         prisma.auditRecord.count({ where }),
       ]);
       return { items: rows.map(auditToDomain), total, offset: skip, limit: take };
+    },
+    async getHead(companyId: ID) {
+      const row = await prisma.auditHead.findUnique({ where: { companyId } });
+      return row ? { companyId: row.companyId, seq: row.seq, hash: row.hash } : null;
+    },
+    async setHead(head: AuditHead) {
+      await prisma.auditHead.upsert({
+        where: { companyId: head.companyId },
+        create: { companyId: head.companyId, seq: head.seq, hash: head.hash },
+        update: { seq: head.seq, hash: head.hash },
+      });
     },
   };
 

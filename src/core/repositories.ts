@@ -211,6 +211,13 @@ export interface SkillExecutionRepo {
   list(companyId: ID, skill?: string): Promise<SkillExecution[]>;
 }
 
+/** Âncora do último registro da cadeia de auditoria de uma empresa. */
+export interface AuditHead {
+  companyId: ID;
+  seq: number;
+  hash: string;
+}
+
 /** Trilha de auditoria: append-only. Não há update nem delete. */
 export interface AuditRepo {
   append(record: AuditRecord): Promise<void>;
@@ -221,6 +228,13 @@ export interface AuditRepo {
     companyId: ID,
     query: PageQuery & { entityType?: string; entityId?: ID }
   ): Promise<Page<AuditRecord>>;
+  /**
+   * Âncora do head (seq/hash do último registro) guardada à parte da lista de
+   * registros — permite detectar truncamento do FIM da trilha (registros
+   * apagados no fim mantêm um prefixo válido, mas divergem do head ancorado).
+   */
+  getHead(companyId: ID): Promise<AuditHead | null>;
+  setHead(head: AuditHead): Promise<void>;
 }
 
 // --- Faturamento, cobrança, contabilidade -----------------------------------

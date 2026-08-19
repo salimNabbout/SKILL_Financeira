@@ -34,6 +34,7 @@ import type {
   AccountingEntryRepo,
   AlertRepo,
   ApprovalRepo,
+  AuditHead,
   AuditRepo,
   BankTransactionRepo,
   BaseRepo,
@@ -437,7 +438,15 @@ class MemSkillExecutionRepo implements SkillExecutionRepo {
 
 /** Append-only: não há update nem delete — imutabilidade da trilha. */
 class MemAuditRepo implements AuditRepo {
+  private readonly heads = new Map<ID, AuditHead>();
   constructor(private readonly items: AuditRecord[]) {}
+  async getHead(companyId: ID) {
+    const head = this.heads.get(companyId);
+    return head ? { ...head } : null;
+  }
+  async setHead(head: AuditHead) {
+    this.heads.set(head.companyId, { ...head });
+  }
   async append(record: AuditRecord) {
     // Espelha o unique (companyId, seq) do Postgres: rejeita seq duplicado por
     // empresa (evita bifurcar a cadeia sob concorrência também no modo demo).
