@@ -16,6 +16,7 @@ import type { Payable, RoleName } from "@/core/entities";
 import { NotFoundError } from "@/core/errors";
 import { requiredRoleForAmount } from "@/core/config";
 import { formatBRL } from "@/core/money";
+import { median, robustZScore, ROBUST_OUTLIER_THRESHOLD } from "@/core/stats";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { AlertSeverity, PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -433,7 +434,11 @@ async function scanAnomalies(ctx: SkillContext): Promise<SkillResult<ScanAnomali
     }
   }
 
-  // (b) Valor atípico: |valor| > 3× média de |valores| da conta (mínimo 5 transações).
+  // (b) Valor atípico por conta. Amostra pequena (5–11): piso determinístico
+  // |valor| > 3× média de |valores|. Amostra maior (≥ 12): escore robusto de
+  // Iglewicz–Hoaglin (mediana/MAD), que resiste a outliers legítimos na base —
+  // marca |z| > 3.5, com guarda de 2× mediana para séries quase constantes.
+  const STATISTICAL_MIN_SAMPLE = 12;
   const byAccount = new Map<string, typeof transactions>();
   for (const tx of transactions) {
     const list = byAccount.get(tx.bankAccountId) ?? [];
@@ -447,15 +452,33 @@ async function scanAnomalies(ctx: SkillContext): Promise<SkillResult<ScanAnomali
       );
       continue;
     }
-    const mean = txs.reduce((acc, t) => acc + Math.abs(t.amountCents), 0) / txs.length;
+    const absolutes = txs.map((t) => Math.abs(t.amountCents));
+    if (txs.length < STATISTICAL_MIN_SAMPLE) {
+      const mean = absolutes.reduce((acc, v) => acc + v, 0) / txs.length;
+      for (const tx of txs) {
+        if (Math.abs(tx.amountCents) > 3 * mean) {
+          anomalies.push({
+            type: "unusual_transaction_amount",
+            severity: "warning",
+            entityType: "bank_transaction",
+            entityId: tx.id,
+            detail: `Transação ${tx.id} de ${formatBRL(tx.amountCents)} excede 3× a média de valores absolutos da conta ${accountId} (média ${formatBRL(Math.round(mean))}).`,
+          });
+        }
+      }
+      continue;
+    }
+    const med = median(absolutes);
     for (const tx of txs) {
-      if (Math.abs(tx.amountCents) > 3 * mean) {
+      const abs = Math.abs(tx.amountCents);
+      const z = robustZScore(abs, absolutes);
+      if (z > ROBUST_OUTLIER_THRESHOLD && abs > 2 * med) {
         anomalies.push({
           type: "unusual_transaction_amount",
           severity: "warning",
           entityType: "bank_transaction",
           entityId: tx.id,
-          detail: `Transação ${tx.id} de ${formatBRL(tx.amountCents)} excede 3× a média de valores absolutos da conta ${accountId} (média ${formatBRL(Math.round(mean))}).`,
+          detail: `Transação ${tx.id} de ${formatBRL(tx.amountCents)} com escore robusto ${Number.isFinite(z) ? z.toFixed(1) : ">3.5"} acima do limiar ${ROBUST_OUTLIER_THRESHOLD} na conta ${accountId} (mediana de |valores| ${formatBRL(Math.round(med))}, método Iglewicz–Hoaglin sobre mediana/MAD).`,
         });
       }
     }
@@ -523,12 +546,12 @@ async function scanAnomalies(ctx: SkillContext): Promise<SkillResult<ScanAnomali
     { anomalies },
     {
       alerts,
-      // Regras (a), (c) e (d) são determinísticas; (b) é heurística de limiar
-      // (3× média) — o conjunto é tratado como triagem, não confirmação.
+      // Regras (a), (c) e (d) são determinísticas; (b) é limiar estatístico
+      // (3× média ou escore robusto) — o conjunto é triagem, não confirmação.
       confidence: 0.9,
       assumptions: [
         "Anomalias são suspeitas para investigação humana; nenhuma transação foi bloqueada ou revertida automaticamente.",
-        "Limiar de valor atípico: |valor| > 3× média de |valores| da conta (mínimo de 5 transações por conta).",
+        "Valor atípico: com 5–11 transações na conta, piso determinístico |valor| > 3× média de |valores|; com 12 ou mais, escore robusto de Iglewicz–Hoaglin (mediana/MAD) > 3.5 com guarda de 2× mediana.",
         ...assumptions,
       ],
       dataSources: DATA_SOURCES,

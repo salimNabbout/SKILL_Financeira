@@ -374,6 +374,51 @@ describe("controles_internos_auditoria — scan_anomalies", () => {
     expect(found[0].entityId).toBe(outlier.id);
   });
 
+  it("com 12+ transações usa escore robusto (mediana/MAD): outlier claro é marcado, demais não", async () => {
+    const env = createTestEnv();
+    for (let i = 0; i < 12; i++) {
+      seedBankTx(env, {
+        amountCents: -10_000,
+        date: `2026-08-${String(i + 1).padStart(2, "0")}`,
+        description: `Tarifa mensal ${i}`,
+      });
+    }
+    const outlier = seedBankTx(env, {
+      amountCents: -900_000,
+      date: "2026-08-16",
+      description: "Transferência atípica",
+    });
+
+    const res = await runSkill(controlesInternosSkill, env.ctx(), { action: "scan_anomalies" });
+    const found = (res.data as ScanAnomaliesData).anomalies.filter(
+      (a) => a.type === "unusual_transaction_amount"
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0].entityId).toBe(outlier.id);
+    expect(found[0].detail).toContain("Iglewicz");
+    expect(res.assumptions.some((a) => a.includes("escore robusto"))).toBe(true);
+  });
+
+  it("guarda de 2× mediana: em série quase constante, desvio pequeno NÃO vira anomalia", async () => {
+    const env = createTestEnv();
+    // 12 valores idênticos → MAD 0 (escore degenera em infinito); a guarda de
+    // 2× mediana impede que uma variação de 1,5× seja marcada como atípica.
+    for (let i = 0; i < 12; i++) {
+      seedBankTx(env, {
+        amountCents: -10_000,
+        date: `2026-08-${String(i + 1).padStart(2, "0")}`,
+        description: `Assinatura ${i}`,
+      });
+    }
+    seedBankTx(env, { amountCents: -15_000, date: "2026-08-16", description: "Assinatura reajustada" });
+
+    const res = await runSkill(controlesInternosSkill, env.ctx(), { action: "scan_anomalies" });
+    const found = (res.data as ScanAnomaliesData).anomalies.filter(
+      (a) => a.type === "unusual_transaction_amount"
+    );
+    expect(found).toHaveLength(0);
+  });
+
   it("sem anomalias: resultado limpo e nenhum alerta", async () => {
     const env = createTestEnv();
     const payable = seedPayable(env, { amountCents: 100_000 });

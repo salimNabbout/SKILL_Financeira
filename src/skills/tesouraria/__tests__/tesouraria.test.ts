@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createTestEnv, type TestEnv } from "@/adapters/memory/test-env";
+import { addDays } from "@/core/dates";
 import { runSkill } from "@/core/skill";
 import {
   tesourariaSkill,
   type CashPositionData,
   type CashflowStatementData,
+  type ForecastCashData,
   type RefreshProjectionData,
   type ScenariosData,
 } from "../index";
@@ -557,5 +559,219 @@ describe("tesouraria_fluxo_caixa — validação de entrada", () => {
     expect(data.summary.horizonEnd).toBe("2026-11-16");
     expect(data.summary.totalOutCents).toBe(870_000);
     expect(Array.isArray(data.daily)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// forecast_cash — previsão estatística
+// ---------------------------------------------------------------------------
+
+// Hoje = 2026-08-18 (terça) → segunda-feira da semana corrente:
+const WEEK0 = "2026-08-17";
+
+async function seedForecastAccount(env: TestEnv): Promise<void> {
+  const now = env.clock.now().toISOString();
+  await env.repos.bankAccounts.create({
+    id: "acc_fc",
+    companyId: env.company.id,
+    name: "Conta Previsão",
+    bankCode: "001",
+    agency: "0001",
+    accountNumberMasked: "***1111",
+    type: "checking",
+    currency: "BRL",
+    openingBalanceCents: 0,
+    openingBalanceDate: "2026-01-01",
+    active: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+/** Semeia n semanas COMPLETAS de histórico terminando na semana anterior à corrente. */
+async function seedWeeklyPattern(
+  env: TestEnv,
+  weeks: Array<{ inCents?: number; outCents?: number }>
+): Promise<void> {
+  const now = env.clock.now().toISOString();
+  const n = weeks.length;
+  for (let i = 0; i < n; i++) {
+    const start = addDays(WEEK0, -7 * (n - i));
+    const w = weeks[i];
+    if (w.inCents) {
+      await env.repos.bankTransactions.create({
+        id: `ftx_in_${i}`,
+        companyId: env.company.id,
+        bankAccountId: "acc_fc",
+        date: start,
+        amountCents: w.inCents,
+        currency: "BRL",
+        description: `Recebimento semana ${i}`,
+        externalId: `f-in-${i}`,
+        source: "ofx",
+        reconciled: false,
+        createdAt: now,
+      });
+    }
+    if (w.outCents) {
+      await env.repos.bankTransactions.create({
+        id: `ftx_out_${i}`,
+        companyId: env.company.id,
+        bankAccountId: "acc_fc",
+        date: addDays(start, 2),
+        amountCents: -w.outCents,
+        currency: "BRL",
+        description: `Pagamento semana ${i}`,
+        externalId: `f-out-${i}`,
+        source: "ofx",
+        reconciled: false,
+        createdAt: now,
+      });
+    }
+  }
+}
+
+describe("tesouraria — forecast_cash", () => {
+  it("história estável: mediana vira estimativa, semana corrente proporcional e banda zero", async () => {
+    const env = createTestEnv();
+    await seedForecastAccount(env);
+    await seedWeeklyPattern(
+      env,
+      Array.from({ length: 12 }, () => ({ inCents: 100_000, outCents: 40_000 }))
+    );
+
+    const res = await runSkill(tesourariaSkill, env.ctx(), { action: "forecast_cash" });
+
+    expect(res.status).toBe("success");
+    expect(res.confidence).toBe(0.7);
+    const data = res.data as ForecastCashData;
+    expect(data.historyWeeksUsed).toBe(12);
+    expect(data.seasonalityApplied).toBe(false);
+    expect(data.baseline.weeklyMedianInCents).toBe(100_000);
+    expect(data.baseline.weeklyMedianOutCents).toBe(40_000);
+    expect(data.baseline.trendInCentsPerWeek).toBe(0);
+    expect(data.baseline.sigmaNetCents).toBe(0); // fluxo líquido constante
+    expect(data.weeks).toHaveLength(12);
+    expect(data.weeks[0].start).toBe(WEEK0);
+
+    // Semana corrente proporcional: hoje é terça → restam 6 dos 7 dias.
+    expect(data.weeks[0].statisticalInCents).toBe(Math.round((100_000 * 6) / 7));
+    expect(data.weeks[0].statisticalOutCents).toBe(Math.round((40_000 * 6) / 7));
+    // Semanas cheias: estimativa = mediana (tendência nula).
+    expect(data.weeks[1].statisticalInCents).toBe(100_000);
+    expect(data.weeks[1].statisticalOutCents).toBe(40_000);
+    // Sem títulos em aberto: previsto = estatístico.
+    expect(data.weeks[1].committedInCents).toBe(0);
+    expect(data.weeks[1].expectedInCents).toBe(100_000);
+
+    // Banda zero (dispersão nula) e saldo parte do disponível (12 × 60k = 720k).
+    expect(data.weeks[0].balanceCents).toBe(720_000 + data.weeks[0].expectedNetCents);
+    expect(data.weeks[3].balanceLowerCents).toBe(data.weeks[3].balanceCents);
+    expect(data.weeks[3].balanceUpperCents).toBe(data.weeks[3].balanceCents);
+
+    // Determinismo: mesma entrada → mesma saída.
+    const again = await runSkill(tesourariaSkill, env.ctx(), { action: "forecast_cash" });
+    expect(again.data).toEqual(res.data);
+  });
+
+  it("o comprometido (títulos em aberto) é piso do previsto na semana", async () => {
+    const env = createTestEnv();
+    await seedForecastAccount(env);
+    await seedWeeklyPattern(
+      env,
+      Array.from({ length: 12 }, () => ({ inCents: 100_000, outCents: 40_000 }))
+    );
+    const now = env.clock.now().toISOString();
+    await env.repos.receivables.create({
+      id: "rec_fc",
+      companyId: env.company.id,
+      customerId: "cus_1",
+      description: "Contrato grande",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-26", // semana k=1 (24 a 30/08)
+      amountCents: 500_000,
+      receivedCents: 0,
+      currency: "BRL",
+      status: "open",
+      installmentNumber: 1,
+      installmentCount: 1,
+      originKey: "rec-fc",
+      createdBy: "usr_analyst",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await runSkill(tesourariaSkill, env.ctx(), { action: "forecast_cash" });
+    const week1 = (res.data as ForecastCashData).weeks[1];
+    expect(week1.committedInCents).toBe(500_000);
+    expect(week1.statisticalInCents).toBe(100_000);
+    expect(week1.expectedInCents).toBe(500_000); // max(comprometido, estatístico)
+    expect(res.assumptions.join(" ")).toContain("PISO");
+  });
+
+  it("tendência de crescimento é capturada por Theil–Sen e a banda cresce com √k", async () => {
+    const env = createTestEnv();
+    await seedForecastAccount(env);
+    // 12 semanas crescendo 10k/semana: 100k, 110k, ..., 210k (sem saídas).
+    await seedWeeklyPattern(
+      env,
+      Array.from({ length: 12 }, (_, i) => ({ inCents: 100_000 + i * 10_000 }))
+    );
+
+    const res = await runSkill(tesourariaSkill, env.ctx(), { action: "forecast_cash" });
+    const data = res.data as ForecastCashData;
+    expect(data.baseline.trendInCentsPerWeek).toBe(10_000);
+    // Semana k=1 tem índice contínuo 13: 100k + 13×10k = 230k.
+    expect(data.weeks[1].statisticalInCents).toBe(230_000);
+    expect(data.weeks[2].statisticalInCents).toBe(240_000);
+
+    // Banda: MAD do líquido = 30k → σ = 30k × 1.4826; na semana k a banda é σ×√(k+1).
+    const sigma = 30_000 * 1.4826;
+    const band1 = data.weeks[1].balanceUpperCents - data.weeks[1].balanceCents;
+    const band2 = data.weeks[2].balanceUpperCents - data.weeks[2].balanceCents;
+    expect(band1).toBe(Math.round(sigma * Math.SQRT2));
+    expect(band2).toBeGreaterThan(band1);
+    expect(data.weeks[1].balanceCents - data.weeks[1].balanceLowerCents).toBe(band1);
+  });
+
+  it("histórico insuficiente (< 8 semanas): warning, parte estatística zerada, comprometido mantido", async () => {
+    const env = createTestEnv();
+    await seedForecastAccount(env);
+    await seedWeeklyPattern(
+      env,
+      Array.from({ length: 4 }, () => ({ inCents: 100_000 }))
+    );
+    const now = env.clock.now().toISOString();
+    await env.repos.receivables.create({
+      id: "rec_fc2",
+      companyId: env.company.id,
+      customerId: "cus_1",
+      description: "Título em aberto",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-20", // semana corrente
+      amountCents: 250_000,
+      receivedCents: 0,
+      currency: "BRL",
+      status: "open",
+      installmentNumber: 1,
+      installmentCount: 1,
+      originKey: "rec-fc2",
+      createdBy: "usr_analyst",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await runSkill(tesourariaSkill, env.ctx(), { action: "forecast_cash" });
+    expect(res.status).toBe("warning");
+    expect(res.confidence).toBe(0.5);
+    const data = res.data as ForecastCashData;
+    expect(data.historyWeeksUsed).toBe(4);
+    expect(data.weeks.every((w) => w.statisticalInCents === 0 && w.statisticalOutCents === 0)).toBe(
+      true
+    );
+    expect(data.weeks[0].committedInCents).toBe(250_000);
+    expect(data.weeks[0].expectedInCents).toBe(250_000);
+    expect(data.baseline.sigmaNetCents).toBe(0);
+    expect(res.assumptions.some((a) => a.includes("insuficiente"))).toBe(true);
   });
 });

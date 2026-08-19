@@ -24,6 +24,7 @@ SKILL_Financeira/
     │   ├── config.ts           # CompanyConfig (políticas como dados)
     │   ├── money.ts / dates.ts / ids.ts / clock.ts / errors.ts / ai.ts
     │   ├── integrations.ts     # portas: banco, cobrança, fiscal, mensageria
+    │   ├── stats.ts            # estatística robusta (mediana/MAD/Theil–Sen)
     │   ├── orchestrator/
     │   │   ├── orchestrator.ts # motor: idempotência, aprovações, consolidação
     │   │   ├── flows.ts        # fluxos integrados declarativos
