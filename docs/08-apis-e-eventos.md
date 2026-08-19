@@ -24,6 +24,7 @@ assinado (`financeira_session`); respostas padronizadas `{ data }` / `{ error: {
 | `GET /events` | Outbox de eventos de domínio |
 | `GET /reports/:report?format=json\|csv\|pdf&period=` | `daily_summary` · `monthly_close` · `executive_overview` com exportação |
 | `POST /import/statement` | Atalho para o fluxo `bank_statement_import` (OFX/CSV como texto) |
+| `POST /accounting/export` | Gera e baixa o lote contábil no layout escolhido (`padrao`/`dominio`/`omie`/`contmatic` — layouts de referência; requer `accounting.export`) |
 
 ### Exemplo — executar fluxo com idempotência
 

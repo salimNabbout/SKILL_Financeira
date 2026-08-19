@@ -40,6 +40,13 @@ import { NotFoundError, ValidationError } from "@/core/errors";
 import { formatBRL } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
+import {
+  EXPORT_LAYOUTS,
+  EXPORT_LAYOUT_IDS,
+  layoutFilename,
+  renderLayoutLines,
+  type ExportLayoutId,
+} from "./layouts";
 
 const SKILL = "integracao_contabil_fiscal" as const;
 const DATA_SOURCES = [
@@ -90,7 +97,10 @@ const prepareEntriesSchema = z.object({
 const exportBatchSchema = z.object({
   action: z.literal("export_batch"),
   period: periodSchema,
-  format: z.literal("csv"),
+  /** Compatibilidade: o conteúdo é sempre texto delimitado; o layout decide o formato. */
+  format: z.literal("csv").optional(),
+  /** Layout de exportação (default: "padrao"); demais são layouts de REFERÊNCIA. */
+  layout: z.enum(EXPORT_LAYOUT_IDS).optional(),
 });
 
 const checkMasterDataSchema = z.object({
@@ -157,9 +167,12 @@ export interface PrepareEntriesData {
 
 export interface ExportBatchData {
   batchId?: string;
+  /** Conteúdo do arquivo no layout escolhido (nome histórico mantido por compatibilidade). */
   csv: string;
   count: number;
   period: ISOMonth;
+  layout: { id: ExportLayoutId; name: string; fileExtension: string };
+  filename: string;
   formula: string;
 }
 
@@ -221,18 +234,6 @@ async function persistAlertDeduped(ctx: SkillContext, alert: SkillAlert): Promis
 /** Data de negócio (fuso da empresa) de um carimbo ISO-8601 UTC. */
 function businessDateOf(ctx: SkillContext, isoTimestamp: string): ISODate {
   return todayInTz(new Date(isoTimestamp), ctx.config.timezone);
-}
-
-/** Valor em centavos no formato CSV brasileiro: 123456 → "1234,56". */
-function csvAmount(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  const abs = Math.abs(cents);
-  return `${sign}${Math.floor(abs / 100)},${String(abs % 100).padStart(2, "0")}`;
-}
-
-/** Campo de texto do CSV: separador e quebras de linha viram espaço. */
-function csvText(text: string): string {
-  return text.replace(/[;\r\n]+/g, " ").trim();
 }
 
 interface EntryPlan {
@@ -461,7 +462,10 @@ async function exportBatch(
 ): Promise<SkillResult<ExportBatchData>> {
   const start = startOfMonth(input.period);
   const end = endOfMonth(input.period);
-  const formula = `lote = lançamentos com entryDate em [${start}, ${end}] e exported=false; valor CSV = centavos/100 com vírgula decimal`;
+  const layout = EXPORT_LAYOUTS[input.layout ?? "padrao"];
+  const layoutData = { id: layout.id, name: layout.name, fileExtension: layout.fileExtension };
+  const filename = layoutFilename(layout, input.period);
+  const formula = `lote = lançamentos com entryDate em [${start}, ${end}] e exported=false; layout "${layout.id}" declarativo (separador "${layout.separator}", data ${layout.dateFormat === "iso" ? "YYYY-MM-DD" : "DD/MM/AAAA"}, valor = centavos/100 com vírgula decimal)`;
 
   const pending = (
     await ctx.repos.accountingEntries.listByDateRange(ctx.companyId, start, end)
@@ -473,7 +477,15 @@ async function exportBatch(
     return makeResult(
       SKILL,
       ctx,
-      { batchId: undefined, csv: "", count: 0, period: input.period, formula },
+      {
+        batchId: undefined,
+        csv: "",
+        count: 0,
+        period: input.period,
+        layout: layoutData,
+        filename,
+        formula,
+      },
       {
         status: "warning",
         assumptions: [
@@ -487,18 +499,8 @@ async function exportBatch(
 
   const batchId = ctx.ids.next("batch");
   const nowIso = ctx.clock.now().toISOString();
-  const lines = ["data;conta_debito;conta_credito;valor;historico;origem"];
+  const lines = renderLayoutLines(layout, pending);
   for (const entry of pending) {
-    lines.push(
-      [
-        entry.entryDate,
-        entry.debitAccount,
-        entry.creditAccount,
-        csvAmount(entry.amountCents),
-        csvText(entry.memo),
-        `${entry.sourceType}:${entry.sourceId}`,
-      ].join(";")
-    );
     const before = { ...entry };
     entry.exported = true;
     entry.exportBatchId = batchId;
@@ -520,13 +522,20 @@ async function exportBatch(
     action: "accounting.batch_exported",
     entityType: "accounting_export_batch",
     entityId: batchId,
-    after: { batchId, period: input.period, count: pending.length, generatedAt: nowIso },
+    after: {
+      batchId,
+      period: input.period,
+      count: pending.length,
+      layout: layout.id,
+      filename,
+      generatedAt: nowIso,
+    },
     correlationId: ctx.correlationId,
   });
   await ctx.events.publish({
     companyId: ctx.companyId,
     type: "accounting.batch_exported",
-    payload: { batchId, period: input.period, count: pending.length },
+    payload: { batchId, period: input.period, count: pending.length, layout: layout.id },
     source: SKILL,
     correlationId: ctx.correlationId,
   });
@@ -534,11 +543,19 @@ async function exportBatch(
   return makeResult(
     SKILL,
     ctx,
-    { batchId, csv, count: pending.length, period: input.period, formula },
+    {
+      batchId,
+      csv,
+      count: pending.length,
+      period: input.period,
+      layout: layoutData,
+      filename,
+      formula,
+    },
     {
       assumptions: [
         ACCOUNTANT_ASSUMPTION,
-        "Formato CSV com separador ';' e vírgula decimal (padrão de importação de sistemas contábeis brasileiros).",
+        layout.reference,
       ],
       confidence: 1.0,
       dataSources: DATA_SOURCES,

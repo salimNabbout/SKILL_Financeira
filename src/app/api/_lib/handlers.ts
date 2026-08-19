@@ -55,6 +55,8 @@ import { runSkill, type SkillContext } from "@/core/skill";
 import type { SkillResult } from "@/core/types";
 import { verifyPassword } from "@/lib/password";
 import { verifyTotp } from "@/lib/totp";
+import { EXPORT_LAYOUT_IDS } from "@/skills/contabil/layouts";
+import type { ExportBatchData } from "@/skills/contabil";
 import { maskSensitive, publicCompany, publicUser, type PublicCompany, type PublicUser } from "./respond";
 
 // ---------------------------------------------------------------------------
@@ -806,6 +808,68 @@ export async function executeFlow(
     payload: input.payload ?? {},
     idempotencyKey: input.idempotencyKey,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Exportação contábil (fluxo accounting_export com layout escolhido)
+// ---------------------------------------------------------------------------
+
+export const accountingExportSchema = z.object({
+  period: periodSchema,
+  layout: z.enum(EXPORT_LAYOUT_IDS).optional(),
+});
+export type AccountingExportInput = z.infer<typeof accountingExportSchema>;
+
+export interface AccountingExportFile {
+  filename: string;
+  content: string;
+  contentType: string;
+  count: number;
+  batchId?: string;
+  period: string;
+  layoutId: string;
+}
+
+/**
+ * Executa o fluxo accounting_export e devolve o ARQUIVO do lote no layout
+ * escolhido. Repetir a mesma requisição devolve o mesmo lote (idempotência de
+ * requisição do orquestrador) — não gera lote novo nem re-marca lançamentos.
+ */
+export async function exportAccountingBatch(
+  deps: ApiDeps,
+  session: ApiSession,
+  rawInput: unknown
+): Promise<AccountingExportFile> {
+  const input = parse(accountingExportSchema, rawInput);
+  const response = await deps.orchestrator.execute({
+    flow: "accounting_export",
+    companyId: session.company.id,
+    actor: session.actor,
+    payload: { period: input.period, format: "csv", layout: input.layout },
+  });
+  if (response.status === "failed") {
+    throw new DomainError(
+      "export_failed",
+      `Exportação contábil falhou: ${response.consolidated.summary}`
+    );
+  }
+  const data = response.results.find((r) => r.stepId === "export")?.result?.data as
+    | ExportBatchData
+    | null
+    | undefined;
+  if (!data) {
+    throw new DomainError("export_failed", "O fluxo não produziu o lote de exportação.");
+  }
+  return {
+    filename: data.filename,
+    content: data.csv,
+    contentType:
+      data.layout.fileExtension === "txt" ? "text/plain; charset=utf-8" : "text/csv; charset=utf-8",
+    count: data.count,
+    batchId: data.batchId,
+    period: data.period,
+    layoutId: data.layout.id,
+  };
 }
 
 // ---------------------------------------------------------------------------

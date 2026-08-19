@@ -33,6 +33,7 @@ SKILL_Financeira/
     │   └── __tests__/          # testes do núcleo + integração ponta-a-ponta
     ├── skills/                 # AS 11 SKILLS (uma pasta cada, com __tests__/)
     │   ├── index.ts            # buildRegistry()
+    │   ├── contabil/layouts.ts # layouts declarativos de exportação contábil
     │   ├── contas-a-pagar/  contas-a-receber/  faturamento/
     │   ├── tesouraria/  conciliacao/  cobranca/  orcamento/
     │   ├── controladoria/  contabil/  controles-internos/  relatorios/

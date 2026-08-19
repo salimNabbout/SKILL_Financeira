@@ -48,6 +48,10 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
   para 1 título numa mesma decisão (parciais sequenciais cobrem o caso comum). DRE por
   competência usa data de emissão dos títulos; sem depreciação no EBITDA.
 - Orçamento por categoria×mês (centro de custo aceito no modelo; a UI edita por categoria).
+- Exportação contábil em layouts declarativos: além do padrão da plataforma, os layouts
+  Domínio/Omie/Contmatic são LAYOUTS DE REFERÊNCIA (aproximações dos formatos de importação
+  desses sistemas) — códigos de conta, histórico padrão e campos variam por instalação, e o
+  contador deve validar um lote de teste antes do primeiro uso real.
 - Previsão estatística de caixa (`forecast_cash`) é ESTIMATIVA determinística sobre o histórico
   semanal do extrato (mediana, tendência Theil–Sen, sazonalidade só com ≥ 52 semanas, banda
   ± MAD×1.4826×√k): rotulada como estimativa nas respostas, com o comprometido por títulos como
