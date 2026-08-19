@@ -304,6 +304,38 @@ describe("orquestrador", () => {
     expect(executions).toContain("after");
   });
 
+  it("retoma o fluxo mesmo se o vínculo flowRun.approvalId tiver se perdido (recuperação B1)", async () => {
+    const env = createTestEnv();
+    const { registry, executions } = buildFakes();
+    const orch = makeOrchestrator(env, registry);
+
+    const res = await orch.execute({
+      flow: "fake_approval",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: {},
+    });
+    expect(res.status).toBe("awaiting_approval");
+
+    // Simula a escrita perdida: o flowRun ficou sem approvalId (crash entre o
+    // create da aprovação e o update do flowRun). A aprovação, porém, guarda
+    // flowRunId — é por ele que a decisão deve reencontrar o fluxo.
+    const fr = env.db.flowRuns.find((f) => f.approvalId === res.approval!.id);
+    expect(fr).toBeDefined();
+    fr!.approvalId = undefined;
+
+    const resumed = (await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: res.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+      justification: "ok",
+    })) as Awaited<ReturnType<typeof orch.execute>>;
+
+    expect(resumed.status).toBe("completed");
+    expect(executions).toContain("after");
+  });
+
   it("impede que o solicitante aprove a própria solicitação (segregação)", async () => {
     const env = createTestEnv();
     const { registry } = buildFakes();

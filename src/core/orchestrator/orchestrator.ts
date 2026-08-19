@@ -307,7 +307,14 @@ export class Orchestrator {
       correlationId: approval.flowRunId ?? approval.id,
     });
 
-    const flowRun = await this.env.repos.flowRuns.findByApprovalId(companyId, approval.id);
+    // Recuperação (B1): se o vínculo flowRun.approvalId se perdeu (crash entre o
+    // create da aprovação e o update do flowRun), reencontra o fluxo pelo
+    // flowRunId que a própria aprovação carrega — evita o flowRun preso em
+    // "running" para sempre.
+    let flowRun = await this.env.repos.flowRuns.findByApprovalId(companyId, approval.id);
+    if (!flowRun && approval.flowRunId) {
+      flowRun = await this.env.repos.flowRuns.getById(companyId, approval.flowRunId);
+    }
     if (!flowRun) return { approval: decided };
 
     const flowDef = this.flows.get(flowRun.flow);
