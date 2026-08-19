@@ -232,6 +232,7 @@ export interface CompanyUser extends PublicUser {
 }
 
 export async function listCompanyUsers(deps: ApiDeps, session: ApiSession): Promise<CompanyUser[]> {
+  requirePermission(session, "user.manage");
   const memberships = await deps.repos.memberships.listByCompany(session.company.id);
   const out: CompanyUser[] = [];
   for (const m of memberships) {
@@ -284,6 +285,7 @@ export const createSupplierSchema = z.object({
 export type CreateSupplierInput = z.infer<typeof createSupplierSchema>;
 
 export async function listSuppliers(deps: ApiDeps, session: ApiSession): Promise<Supplier[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.suppliers.listAll(session.company.id);
 }
 
@@ -341,6 +343,7 @@ export const createCustomerSchema = z.object({
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 
 export async function listCustomers(deps: ApiDeps, session: ApiSession): Promise<Customer[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.customers.listAll(session.company.id);
 }
 
@@ -396,6 +399,7 @@ export const createCategorySchema = z.object({
 export type CreateCategoryInput = z.infer<typeof createCategorySchema>;
 
 export async function listCategories(deps: ApiDeps, session: ApiSession): Promise<Category[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.categories.listAll(session.company.id);
 }
 
@@ -440,6 +444,7 @@ export const createCostCenterSchema = z.object({
 export type CreateCostCenterInput = z.infer<typeof createCostCenterSchema>;
 
 export async function listCostCenters(deps: ApiDeps, session: ApiSession): Promise<CostCenter[]> {
+  requirePermission(session, "master_data.manage");
   return deps.repos.costCenters.listAll(session.company.id);
 }
 
@@ -486,6 +491,7 @@ export const createBankAccountSchema = z.object({
 export type CreateBankAccountInput = z.infer<typeof createBankAccountSchema>;
 
 export async function listBankAccounts(deps: ApiDeps, session: ApiSession): Promise<BankAccount[]> {
+  requirePermission(session, "bank_account.manage");
   return deps.repos.bankAccounts.listAll(session.company.id);
 }
 
@@ -565,6 +571,7 @@ export async function listPayables(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<Payable>> {
+  requirePermission(session, "report.view");
   const query = parse(listPayablesQuerySchema, rawQuery);
   // from/to não fazem parte do finder paginado do repositório: com eles, o
   // filtro roda em memória (total correto); sem eles, a paginação é do banco.
@@ -614,6 +621,7 @@ export async function listReceivables(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<Receivable>> {
+  requirePermission(session, "report.view");
   const query = parse(listReceivablesQuerySchema, rawQuery);
   if (query.from || query.to) {
     const all = await deps.repos.receivables.listAll(session.company.id);
@@ -699,6 +707,7 @@ export async function listBankTransactions(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<BankTransaction>> {
+  requirePermission(session, "reconciliation.manage");
   const query = parse(listBankTransactionsQuerySchema, rawQuery);
   return deps.repos.bankTransactions.listPage(session.company.id, {
     offset: query.offset,
@@ -721,6 +730,7 @@ export async function listApprovals(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Approval[]> {
+  requirePermission(session, "report.view");
   const query = parse(listApprovalsQuerySchema, rawQuery);
   const all = query.status
     ? await deps.repos.approvals.listByStatus(session.company.id, [query.status])
@@ -767,6 +777,7 @@ export async function listAlerts(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Alert[]> {
+  requirePermission(session, "report.view");
   const query = parse(listAlertsQuerySchema, rawQuery);
   const all = await deps.repos.alerts.listAll(session.company.id);
   return all
@@ -780,6 +791,10 @@ export async function acknowledgeAlert(
   session: ApiSession,
   id: string
 ): Promise<CreateOutcome<Alert>> {
+  // Reconhecer alerta é ação operacional: um viewer (só report.view) não deve
+  // silenciar alertas de risco. flow.execute cobre exatamente os papéis
+  // operacionais (analista, aprovador, contador, gestor, admin) e exclui o viewer.
+  requirePermission(session, "flow.execute");
   const alert = await deps.repos.alerts.getById(session.company.id, id);
   if (!alert) throw new NotFoundError("Alerta", id);
   if (alert.status !== "open") return { entity: alert, created: false };
@@ -953,6 +968,7 @@ export async function listEvents(
   session: ApiSession,
   rawQuery: unknown
 ): Promise<Page<EventRecordEntity>> {
+  requirePermission(session, "audit.view");
   const query = parse(eventsQuerySchema, rawQuery);
   return deps.repos.events.listPage(session.company.id, {
     offset: query.offset,

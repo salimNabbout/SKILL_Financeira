@@ -30,6 +30,7 @@ import {
   getPayable,
   importStatement,
   listAlerts,
+  listBankAccounts,
   listBankTransactions,
   listCompanies,
   listCompanyUsers,
@@ -427,14 +428,37 @@ describe("me, companies e users", () => {
     });
   });
 
-  it("listCompanyUsers devolve todos os usuários da empresa sem passwordHash", async () => {
+  it("listCompanyUsers exige user.manage: admin lê (sem passwordHash), viewer é barrado", async () => {
     const env = createTestEnv();
     const deps = buildDeps(env);
-    const session = await sessionFor(env, "viewer");
-    const users = await listCompanyUsers(deps, session);
+
+    const admin = await sessionFor(env, "admin");
+    const users = await listCompanyUsers(deps, admin);
     expect(users).toHaveLength(5);
     expect(JSON.stringify(users)).not.toContain("passwordHash");
     expect(users.find((u) => u.id === "usr_approver")?.role).toBe("approver");
+
+    // RBAC: um viewer NÃO deve listar os usuários da empresa pela API.
+    const viewer = await sessionFor(env, "viewer");
+    await expect(listCompanyUsers(deps, viewer)).rejects.toThrow(PermissionError);
+  });
+
+  it("listSuppliers exige master_data.manage: analyst lê, viewer é barrado", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const analyst = await sessionFor(env, "analyst");
+    await createSupplier(deps, analyst, { name: "Fornecedor X" });
+
+    expect(await listSuppliers(deps, analyst)).toHaveLength(1);
+    const viewer = await sessionFor(env, "viewer");
+    await expect(listSuppliers(deps, viewer)).rejects.toThrow(PermissionError);
+  });
+
+  it("listBankAccounts exige bank_account.manage: viewer é barrado", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const viewer = await sessionFor(env, "viewer");
+    await expect(listBankAccounts(deps, viewer)).rejects.toThrow(PermissionError);
   });
 });
 
@@ -620,7 +644,7 @@ describe("bank-transactions", () => {
   it("filtra por conta e por conciliação", async () => {
     const env = createTestEnv();
     const deps = buildDeps(env);
-    const session = await sessionFor(env, "viewer");
+    const session = await sessionFor(env, "analyst"); // reconciliation.manage
     const now = env.clock.now().toISOString();
     const base = {
       companyId: env.company.id,
