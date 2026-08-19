@@ -71,6 +71,17 @@ describe("buildXlsx", () => {
     expect(text).toContain("<v>2</v>");
   });
 
+  it("remove caracteres de controle invalidos em XML 1.0 (evita worksheet corrompida)", () => {
+    // SUB (0x1A), NUL (0x00) e BS (0x08) embutidos no texto.
+    const desc = "linha" + String.fromCharCode(0x1a) + "com" + String.fromCharCode(0x00) + "controle" + String.fromCharCode(0x08);
+    const text = Buffer.from(buildXlsx([{ name: "Ctrl", rows: [{ desc }] }])).toString("latin1");
+    // A celula fica com o texto legivel, sem os caracteres de controle.
+    expect(text).toContain(">linhacomcontrole</t>");
+    // Os caracteres de controle nao aparecem no conteudo da celula.
+    const forbidden = new RegExp("<t[^>]*>[^<]*[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]");
+    expect(forbidden.test(text)).toBe(false);
+  });
+
   it("suporta múltiplas abas e sanitiza nomes inválidos/duplicados", () => {
     const data = buildXlsx([
       { name: "Relatório: [1/2]?*", rows: [{ a: "x" }] },
