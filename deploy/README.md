@@ -22,7 +22,9 @@ Internet ──▶ nginx (VPS, :443 HTTPS) ──▶ 127.0.0.1:3000 (container a
 
 - O container **app** só escuta em `127.0.0.1:3000` — não fica exposto na internet.
 - O container **db** não publica porta nenhuma — só a rede interna do compose o alcança.
-- As **migrações** rodam sozinhas no start do container (entrypoint idempotente).
+- As **migrações** rodam num serviço `migrate` próprio, que executa
+  `prisma migrate deploy` (idempotente) e sai; o `app` só sobe depois que ele
+  termina com sucesso.
 
 ---
 
@@ -60,8 +62,8 @@ cd /opt/financeira/deploy
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
-O build gera a imagem standalone; o entrypoint aplica as migrações (0001→0007) e
-sobe o servidor. Acompanhe:
+O build gera a imagem standalone; o serviço `migrate` aplica as migrações
+(0001→0007) e sai; então o `app` sobe. Acompanhe:
 
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f app
