@@ -24,6 +24,30 @@ arquitetura (diagramas), catálogo e contratos das skills, orquestrador (regras 
 modelo de dados, APIs e eventos (`docs/openapi.yaml`), wireframes, estrutura, roadmap e
 critérios de aceite.
 
+## Publicação
+
+O app roda em produção como serviço Next.js + PostgreSQL. O empacotamento e o
+passo a passo de publicação (Docker: app + banco + migrações, atrás de nginx com
+HTTPS) estão em **[`deploy/README.md`](deploy/README.md)**; o checklist geral de
+produção (variáveis, migrações, verificação, rollback) está em
+**[`docs/DEPLOY.md`](docs/DEPLOY.md)**.
+
+Pontos essenciais para produção:
+
+- **`SESSION_SECRET` forte é obrigatório** — o app se recusa a iniciar em
+  `NODE_ENV=production` sem ele (gere com `openssl rand -base64 48`).
+- **HTTPS obrigatório** — o cookie de sessão é `secure`; atrás de proxy, envie o
+  `Host`/`X-Forwarded-Host` do domínio limpo e configure
+  `experimental.serverActions.allowedOrigins` (via `ALLOWED_ORIGINS`) para as
+  Server Actions não recusarem o request.
+- **Migrações** rodam num serviço `migrate` próprio (`prisma migrate deploy`,
+  idempotente); o `app` só sobe após elas concluírem.
+- **Primeiro acesso** sem dados fictícios: `scripts/create-admin.ts` cria a
+  empresa + admin reais a partir de variáveis de ambiente (ver `deploy/README.md`).
+- **Integrações externas** (banco, Pix/boleto, NF-e, mensageria) seguem **mock**
+  por padrão; ligar provedores reais é aditivo — ver `docs/DEPLOY.md` §8 e o molde
+  `src/integrations/providers/example-charge-provider.ts`.
+
 ## Como executar
 
 Pré-requisito: Node.js 22+.
@@ -74,6 +98,9 @@ Roteiro de demonstração sugerido:
    **Auditoria** (cadeia de hash verificada).
 
 ### Modo produção local (PostgreSQL)
+
+Para desenvolver contra um Postgres real na sua máquina (não é o deploy de
+produção — esse é o de [`deploy/README.md`](deploy/README.md)):
 
 ```bash
 cp .env.example .env            # ajuste SESSION_SECRET; deixe DEMO_MODE vazio/0
