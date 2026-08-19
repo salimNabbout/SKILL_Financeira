@@ -125,9 +125,14 @@ EVENT_BUS=bullmq REDIS_URL=redis://HOST:6379 npx tsx scripts/event-worker.ts
 
 ## 7. Endurecimentos recomendados (não bloqueiam, mas faça)
 
-- **`docker-compose.yml`** (se usado em produção): o Postgres usa senha fraca
-  (`financeira`) e publica portas em todas as interfaces. Para produção, use
-  senha via variável e faça bind em `127.0.0.1` (ex.: `127.0.0.1:5432:5432`).
+- **`docker-compose.yml`**: já faz bind em `127.0.0.1` por padrão (banco/Redis
+  não expostos na rede) e lê a senha de env. Em produção, defina
+  `POSTGRES_PASSWORD` com um valor forte (e o mesmo em `DATABASE_URL`):
+  ```bash
+  POSTGRES_PASSWORD='<senha-forte>' docker compose up -d db
+  ```
+  `DB_BIND` / `REDIS_BIND` permitem abrir para outras interfaces só quando
+  necessário (default `127.0.0.1`).
 - **Rate limiting** do login é **por processo**. Em várias réplicas, cada uma
   conta em separado; para um limite global, evolua para um limitador em Redis.
 - **Backups** do PostgreSQL: a trilha de auditoria e a âncora de head garantem
