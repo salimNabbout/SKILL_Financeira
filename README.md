@@ -11,7 +11,9 @@ e trilha de auditoria imutável.
 
 - **Fonte oficial dos dados**: PostgreSQL (Prisma). Respostas de IA nunca são fonte de dados.
 - **Regras financeiras determinísticas** em código, com fórmula/período/fonte declarados; IA
-  (mock heurístico plugável) apenas sugere classificação e explica.
+  apenas sugere classificação e explica — heurística local por padrão, com adaptador REAL
+  (Anthropic) opcional via `AI_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` (descrições redigidas
+  antes do envio, resposta validada contra lista fechada, falha degrada para a heurística).
 - **Nenhuma skill movimenta dinheiro sem aprovação humana** — e toda integração externa do MVP
   (banco, cobrança Pix/boleto, NF-e, envio de mensagens) é **mock identificado**, atrás de
   portas formais (`src/core/integrations.ts`) selecionadas por env `INTEGRATION_*`; declarar um

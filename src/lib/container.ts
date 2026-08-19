@@ -5,7 +5,7 @@
  * Singleton em globalThis para sobreviver ao hot-reload do Next em dev.
  */
 
-import { HeuristicClassifier } from "@/core/ai";
+import type { AiClassifier } from "@/core/ai";
 import { HashChainAuditTrail } from "@/core/audit";
 import { SystemClock } from "@/core/clock";
 import { InMemoryEventBus, type EventBus } from "@/core/events";
@@ -15,6 +15,7 @@ import type { SkillRegistry } from "@/core/orchestrator/registry";
 import type { Repositories } from "@/core/repositories";
 import type { Integrations } from "@/core/integrations";
 import { buildIntegrations } from "@/integrations/registry";
+import { buildAi } from "@/adapters/ai/registry";
 import { buildRegistry } from "@/skills";
 import { MemoryDb } from "@/adapters/memory/db";
 import { createMemoryRepositories } from "@/adapters/memory/repos";
@@ -28,7 +29,7 @@ export interface AppContainer {
   audit: HashChainAuditTrail;
   clock: SystemClock;
   ids: RandomIdGenerator;
-  ai: HeuristicClassifier;
+  ai: AiClassifier;
   integrations: Integrations;
   registry: SkillRegistry;
   orchestrator: Orchestrator;
@@ -45,7 +46,7 @@ export function isDemoMode(): boolean {
 async function build(): Promise<AppContainer> {
   const clock = new SystemClock();
   const ids = new RandomIdGenerator();
-  const ai = new HeuristicClassifier();
+  const ai = buildAi(); // heurística "mock" por padrão; AI_PROVIDER=anthropic + chave ativa a IA real
   const integrations = buildIntegrations(); // mocks por padrão; reais na v1.2
   const registry = buildRegistry();
 

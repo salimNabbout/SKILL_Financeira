@@ -70,8 +70,12 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
 - Modo demo mantém dados em memória (reinicia com o servidor); o modo PostgreSQL é a fonte
   oficial. Testes de repositório Prisma são de tipo/contrato (sem banco no ambiente de CI desta
   entrega); recomenda-se um smoke com banco real antes do primeiro deploy.
-- IA é heurística local (mock identificado): sugestão de categoria por palavras-chave; nenhuma
-  decisão automática deriva dela.
+- IA: heurística local (mock identificado) por padrão; adaptador REAL Anthropic opcional
+  (`AI_PROVIDER=anthropic` + chave — sem chave a inicialização falha alto). Em ambos os casos a
+  IA só SUGERE categoria com justificativa: descrições são redigidas (CPF/CNPJ/e-mail/dígitos
+  longos) antes de sair do servidor, a resposta só é aceita se apontar categoria da lista
+  fechada, a confiança tem teto de 0.9 e falhas degradam para a heurística com o motivo
+  declarado. Nenhuma decisão automática deriva da IA.
 
 **Segurança/LGPD**
 - Criptografia em repouso delegada ao PostgreSQL/infra (colunas não são cifradas

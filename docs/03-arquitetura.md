@@ -32,7 +32,7 @@ flowchart TB
         EVT["Barramento de eventos<br/>(in-process + outbox persistido)"]
         AUD["Trilha de auditoria<br/>(hash-chain imutável)"]
         REPO["Repositórios<br/>(interfaces)"]
-        AI["IA plugável<br/>(mock heurístico no MVP)"]
+        AI["IA plugável (AI_PROVIDER)<br/>heurística local / Anthropic opcional"]
     end
 
     subgraph Persistencia["Persistência"]
@@ -70,7 +70,7 @@ flowchart TB
 |---|---|---|
 | Fonte oficial de dados | PostgreSQL (Prisma) | Transacional, auditável; IA nunca é fonte |
 | Regras financeiras | Código determinístico tipado | Reprodutível, testável, com fórmula exposta |
-| Papel da IA | Classificação sugerida, explicação, recomendação | Interface `AiClassifier` plugável; mock heurístico no MVP |
+| Papel da IA | Classificação sugerida, explicação, recomendação | Interface `AiClassifier` plugável; heurística local por padrão, adaptador Anthropic opcional (redação LGPD + validação por lista fechada + degradação explícita) |
 | Comunicação entre skills | Eventos de domínio + orquestração explícita | Skills não se chamam diretamente; o orquestrador resolve dependências |
 | Dinheiro | Inteiro de centavos (`number` no domínio, `BigInt` no banco) | Sem float; seguro até dezenas de trilhões de centavos |
 | Datas de negócio | `ISODate` string no fuso da empresa | Sem bugs de fuso/DST; carimbos em UTC |

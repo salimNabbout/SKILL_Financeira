@@ -40,7 +40,8 @@ SKILL_Financeira/
     │   ├── controladoria/  contabil/  controles-internos/  relatorios/
     ├── adapters/
     │   ├── memory/             # repositórios em memória + test-env + demo-seed
-    │   └── prisma/             # repositórios PostgreSQL (produção)
+    │   ├── prisma/             # repositórios PostgreSQL (produção)
+    │   └── ai/                 # IA real (Anthropic) + seleção por AI_PROVIDER
     ├── integrations/           # adaptadores das portas de integração
     │   ├── mock.ts             # mocks determinísticos (identificados)
     │   └── registry.ts         # seleção por env INTEGRATION_* (falha alto)
