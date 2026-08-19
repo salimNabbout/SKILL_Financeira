@@ -75,12 +75,21 @@ Verifique que responde localmente (ainda sem HTTPS):
 curl -sSf http://127.0.0.1:3000/login >/dev/null && echo "app OK"
 ```
 
-> **Primeira publicação — dados iniciais:** o banco sobe vazio. Para popular a
-> carga de demonstração (empresa fictícia Café Aurora) **uma vez**:
+> **Primeira publicação — primeiro acesso:** o banco sobe vazio (sem usuários).
+> Rode um dos dois no container `migrate` (que tem `tsx` + `src/`):
+>
+> **(a) Uso real** — cria a SUA empresa + admin (recomendado):
 > ```bash
-> docker compose -f docker-compose.prod.yml --env-file .env.prod exec app node -e "require('child_process').execSync('npx tsx prisma/seed.ts',{stdio:'inherit'})"
+> docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm \
+>   -e COMPANY_NAME="Minha Empresa Ltda" -e COMPANY_CNPJ="00.000.000/0001-00" \
+>   -e ADMIN_NAME="Seu Nome" -e ADMIN_EMAIL="voce@empresa.com" -e ADMIN_PASSWORD="senhaForte" \
+>   migrate npx tsx scripts/create-admin.ts
 > ```
-> Em uso real com dados próprios, **pule o seed** e crie a empresa/usuários pela aplicação.
+>
+> **(b) Demonstração** — dados fictícios (Café Aurora, login `ana@cafeaurora.com.br` / `demo1234`):
+> ```bash
+> docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm migrate npx tsx prisma/seed.ts
+> ```
 
 ## 5. nginx + HTTPS
 

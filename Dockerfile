@@ -33,7 +33,11 @@ WORKDIR /app
 RUN apk add --no-cache openssl
 COPY --from=deps /app/node_modules ./node_modules
 COPY prisma ./prisma
-COPY package.json ./
+COPY package.json tsconfig.json ./
+# src/ e scripts/ para rodar utilitários pontuais (ex.: criar admin real)
+# além das migrações. Ver scripts/create-admin.ts e deploy/README.md.
+COPY src ./src
+COPY scripts ./scripts
 CMD ["npx", "prisma", "migrate", "deploy"]
 
 # --- Stage 3b: runner (imagem final enxuta, só o app) ----------------------
