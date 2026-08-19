@@ -53,7 +53,8 @@ import type { Repositories } from "@/core/repositories";
 import { todayInTz } from "@/core/dates";
 import { runSkill, type SkillContext } from "@/core/skill";
 import type { SkillResult } from "@/core/types";
-import { verifyPassword } from "@/lib/password";
+import { verifyPasswordAsync } from "@/lib/password";
+import { InMemoryRateLimiter } from "@/lib/rate-limit";
 import { verifyTotp } from "@/lib/totp";
 import { EXPORT_LAYOUT_IDS } from "@/skills/contabil/layouts";
 import type { ExportBatchData } from "@/skills/contabil";
@@ -133,12 +134,37 @@ export interface LoginResult {
   companyId: string;
 }
 
-export async function login(deps: ApiDeps, rawInput: unknown): Promise<LoginResult> {
+/** Contexto opcional do login: chave do cliente (IP) e limitador de tentativas. */
+export interface LoginContext {
+  clientKey?: string;
+  rateLimiter?: InMemoryRateLimiter;
+}
+
+// Limitador padrão por processo: 10 tentativas por IP+e-mail a cada 5 minutos.
+const defaultLoginRateLimiter = new InMemoryRateLimiter({ maxAttempts: 10, windowMs: 5 * 60_000 });
+
+export async function login(
+  deps: ApiDeps,
+  rawInput: unknown,
+  context: LoginContext = {}
+): Promise<LoginResult> {
   const input = parse(loginSchema, rawInput);
+
+  // Rate limit por (chave do cliente, e-mail) antes de gastar scrypt — contém
+  // brute-force e evita usar o custo do hash como amplificador de DoS.
+  const rateLimiter = context.rateLimiter ?? defaultLoginRateLimiter;
+  const rateKey = `${context.clientKey ?? "unknown"}:${input.email.toLowerCase()}`;
+  if (!rateLimiter.check(rateKey).allowed) {
+    throw new DomainError(
+      "too_many_attempts",
+      "Muitas tentativas de login. Aguarde alguns minutos e tente novamente."
+    );
+  }
+
   const user = await deps.repos.users.findByEmail(input.email);
   // Mensagem única para credencial errada — não revela se o e-mail existe.
   const invalid = new DomainError("invalid_credentials", "E-mail ou senha inválidos.");
-  if (!user || !user.active || !verifyPassword(input.password, user.passwordHash)) {
+  if (!user || !user.active || !(await verifyPasswordAsync(input.password, user.passwordHash))) {
     throw invalid;
   }
   if (user.totpEnabled && user.totpSecret) {
@@ -150,6 +176,8 @@ export async function login(deps: ApiDeps, rawInput: unknown): Promise<LoginResu
       );
     }
   }
+  // Autenticação bem-sucedida: zera o contador para não punir o usuário legítimo.
+  rateLimiter.reset(rateKey);
   const memberships = await deps.repos.memberships.listByUser(user.id);
   if (memberships.length === 0) {
     throw new DomainError("invalid_credentials", "Usuário sem empresa vinculada.");

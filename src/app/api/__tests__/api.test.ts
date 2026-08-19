@@ -15,6 +15,7 @@ import { SkillRegistry } from "@/core/orchestrator/registry";
 import type { OrchestratorResponse } from "@/core/orchestrator/orchestrator";
 import { makeResult, SKILL_NAMES, type SkillDefinition, type SkillName } from "@/core/skill";
 import { hashPassword } from "@/lib/password";
+import { InMemoryRateLimiter } from "@/lib/rate-limit";
 import { generateTotpSecret, totpCode } from "@/lib/totp";
 import { contabilSkill } from "@/skills/contabil";
 import {
@@ -299,6 +300,47 @@ describe("auth/login", () => {
     });
     return user;
   }
+
+  it("bloqueia após exceder o limite de tentativas por (chave, e-mail)", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    await seedLoginUser(env);
+
+    let now = 0;
+    const rateLimiter = new InMemoryRateLimiter({ maxAttempts: 3, windowMs: 60_000, now: () => now });
+    const ctx = { clientKey: "1.2.3.4", rateLimiter };
+    const bad = { email: "maria@teste.com.br", password: "errada" };
+
+    // 3 tentativas falhas consumem a janela.
+    for (let i = 0; i < 3; i++) {
+      await expect(login(deps, bad, ctx)).rejects.toThrow(/inválidos/);
+    }
+    // A 4ª — mesmo com a senha CORRETA — é barrada pelo rate limit.
+    await expect(
+      login(deps, { email: "maria@teste.com.br", password: "Segredo#123" }, ctx)
+    ).rejects.toThrow(/muitas tentativas/i);
+  });
+
+  it("login bem-sucedido zera o contador de tentativas da chave", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    await seedLoginUser(env);
+
+    let now = 0;
+    const rateLimiter = new InMemoryRateLimiter({ maxAttempts: 3, windowMs: 60_000, now: () => now });
+    const ctx = { clientKey: "1.2.3.4", rateLimiter };
+
+    await expect(
+      login(deps, { email: "maria@teste.com.br", password: "errada" }, ctx)
+    ).rejects.toThrow(/inválidos/);
+    // Sucesso reseta: novas tentativas voltam a ser permitidas sem bloqueio.
+    await login(deps, { email: "maria@teste.com.br", password: "Segredo#123" }, ctx);
+    for (let i = 0; i < 3; i++) {
+      await expect(
+        login(deps, { email: "maria@teste.com.br", password: "errada" }, ctx)
+      ).rejects.toThrow(/inválidos/);
+    }
+  });
 
   it("credenciais válidas devolvem usuário (sem hash) e companyId, com auditoria", async () => {
     const env = createTestEnv();
