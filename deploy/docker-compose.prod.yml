@@ -1,6 +1,7 @@
-# Produção: app (Next.js) + PostgreSQL, isolados em containers próprios.
-# O app expõe a porta APENAS em 127.0.0.1 — o nginx da VPS faz o proxy reverso
-# com HTTPS (ver deploy/nginx-financeira.conf). Nada aqui toca os outros sites.
+# Produção: app (Next.js) + PostgreSQL + migrate (roda uma vez), isolados em
+# containers próprios. O app expõe a porta APENAS em 127.0.0.1 — o nginx da VPS
+# faz o proxy reverso com HTTPS (ver deploy/nginx-financeira.conf).
+# Nada aqui toca os outros sites.
 #
 # Variáveis vêm de deploy/.env.prod (NÃO versionado). Ver deploy/README.md.
 #
@@ -16,21 +17,39 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - financeira_pgdata:/var/lib/postgresql/data
-    # Sem `ports:` — o banco só é acessível pela rede interna do compose (app).
+    # Sem `ports:` — o banco só é acessível pela rede interna do compose.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # Aplica as migrações e SAI. Roda no ambiente completo (node_modules com a CLI
+  # do Prisma), separado da imagem enxuta do app. É idempotente.
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public"
+    restart: "no"
+
   app:
     build:
       context: ..
       dockerfile: Dockerfile
+      target: runner
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      # Só sobe depois que as migrações terminarem com sucesso.
+      migrate:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       # DATABASE_URL usa o hostname do serviço `db` na rede interna do compose.

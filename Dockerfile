@@ -1,10 +1,11 @@
 # syntax=docker/dockerfile:1
 # ---------------------------------------------------------------------------
-# Imagem de produção do app (Next.js standalone + Prisma). Ver deploy/README.md.
-# Build:  docker build -t financeira-pme .
+# Imagem de produção do app (Next.js standalone). As MIGRAÇÕES rodam num serviço
+# à parte (target `migrate`, com node_modules completo) — a imagem do app fica
+# enxuta e sem a CLI do Prisma. Ver deploy/docker-compose.prod.yml e README.md.
 # ---------------------------------------------------------------------------
 
-# --- Stage 1: dependências (com devDeps, para buildar) ---------------------
+# --- Stage 1: dependências (com devDeps, para buildar e para migrar) --------
 FROM node:22-alpine AS deps
 WORKDIR /app
 # openssl é exigido pelo engine do Prisma no Alpine.
@@ -25,7 +26,17 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN DEMO_MODE=1 npm run build
 
-# --- Stage 3: runner (imagem final enxuta) ---------------------------------
+# --- Stage 3a: migrate (node_modules completo → Prisma CLI funciona) --------
+# Usado pelo serviço `migrate` do compose: roda `prisma migrate deploy` e sai.
+FROM node:22-alpine AS migrate
+WORKDIR /app
+RUN apk add --no-cache openssl
+COPY --from=deps /app/node_modules ./node_modules
+COPY prisma ./prisma
+COPY package.json ./
+CMD ["npx", "prisma", "migrate", "deploy"]
+
+# --- Stage 3b: runner (imagem final enxuta, só o app) ----------------------
 FROM node:22-alpine AS runner
 WORKDIR /app
 RUN apk add --no-cache openssl
@@ -42,20 +53,7 @@ COPY --from=build /app/.next/static ./.next/static
 # (Este projeto não tem pasta public/. Se adicionar assets estáticos lá,
 #  descomente: COPY --from=build /app/public ./public)
 
-# Prisma: pacote CLI (com os .wasm) + engines + client + migrações, para rodar
-# `prisma migrate deploy` no start. NÃO copiamos o symlink .bin/prisma: ele
-# reloca o __dirname e a CLI não acha os .wasm. O entrypoint chama o entrypoint
-# real do pacote (prisma/build/index.js), que resolve os .wasm ao lado dele.
-COPY --from=build /app/node_modules/prisma ./node_modules/prisma
-COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build /app/prisma ./prisma
-
-# Entrypoint: aplica migrações e sobe o servidor.
-COPY deploy/docker-entrypoint.sh ./docker-entrypoint.sh
-RUN chmod +x ./docker-entrypoint.sh && chown -R nextjs:nodejs /app
-
+RUN chown -R nextjs:nodejs /app
 USER nextjs
 EXPOSE 3000
-ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["node", "server.js"]
