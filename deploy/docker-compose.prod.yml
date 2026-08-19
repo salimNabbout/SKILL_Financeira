@@ -1,0 +1,48 @@
+# Produção: app (Next.js) + PostgreSQL, isolados em containers próprios.
+# O app expõe a porta APENAS em 127.0.0.1 — o nginx da VPS faz o proxy reverso
+# com HTTPS (ver deploy/nginx-financeira.conf). Nada aqui toca os outros sites.
+#
+# Variáveis vêm de deploy/.env.prod (NÃO versionado). Ver deploy/README.md.
+#
+#   cd deploy && docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - financeira_pgdata:/var/lib/postgresql/data
+    # Sem `ports:` — o banco só é acessível pela rede interna do compose (app).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # DATABASE_URL usa o hostname do serviço `db` na rede interna do compose.
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public"
+      SESSION_SECRET: ${SESSION_SECRET}
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-America/Sao_Paulo}
+      # Integrações continuam mock por padrão (ver docs/DEPLOY.md §8 para ligar reais).
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    # Só localhost: o nginx da VPS faz o proxy para cá. Não exposto na rede.
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
+
+volumes:
+  financeira_pgdata:
