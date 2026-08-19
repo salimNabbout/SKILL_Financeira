@@ -125,3 +125,45 @@ describe("anthropic / seleção por env (buildAi)", () => {
     expect(() => buildAi({ AI_PROVIDER: "gemini" })).toThrow(/desconhecido/);
   });
 });
+
+describe("anthropic / resumo narrativo de relatórios", () => {
+  const NARRATIVE_INPUT = {
+    reportType: "daily_summary" as const,
+    periodLabel: "18/08/2026",
+    facts: [
+      { label: "saldo disponível", value: "R$ 19.500,00" },
+      { label: "vencidos a receber", value: "R$ 1.500,00" },
+    ],
+    risks: ["Cliente Beta (CNPJ 11.222.333/0001-44) com títulos vencidos."],
+    recommendations: ["Intensificar cobrança dos vencidos."],
+  };
+
+  it("usa o texto da IA, com fatos no prompt e riscos REDIGIDOS antes do envio", async () => {
+    const { fn, calls } = fakeFetch(
+      apiResponse("O dia fecha com caixa confortável e atenção aos vencidos.")
+    );
+    const classifier = new AnthropicClassifier({ apiKey: "sk-teste", fetchFn: fn });
+
+    const narrative = await classifier.narrateReport(NARRATIVE_INPUT);
+    expect(narrative.provider).toBe("anthropic");
+    expect(narrative.text).toBe("O dia fecha com caixa confortável e atenção aos vencidos.");
+
+    const body = JSON.parse(String(calls[0].init.body));
+    const prompt = body.messages[0].content as string;
+    expect(prompt).toContain("saldo disponível: R$ 19.500,00");
+    expect(prompt).toContain("não invente números");
+    expect(prompt).toContain("[CNPJ]"); // risco redigido
+    expect(prompt).not.toContain("11.222.333/0001-44");
+  });
+
+  it("falha na API degrada para a narrativa determinística local com o motivo", async () => {
+    const { fn } = fakeFetch(new Error("rede caiu"));
+    const classifier = new AnthropicClassifier({ apiKey: "sk-secreta", fetchFn: fn });
+
+    const narrative = await classifier.narrateReport(NARRATIVE_INPUT);
+    expect(narrative.provider).toBe("mock");
+    expect(narrative.text).toContain("IA indisponível");
+    expect(narrative.text).toContain("Resumo do dia de 18/08/2026");
+    expect(narrative.text).not.toContain("sk-secreta");
+  });
+});

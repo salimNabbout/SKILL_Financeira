@@ -131,9 +131,9 @@ Notação: campos `?` são opcionais; valores monetários em **centavos**; datas
 ### relatorios_gerenciais
 | Ação | Entrada | Saída |
 |---|---|---|
-| `daily_summary` | — | `{ date, facts, calculations, risks, recommendations, sources }` |
-| `monthly_close` | `period` | `{ period, facts, calculations (inclui DRE simplificada por caixa), highlights, risks, recommendations }` |
-| `executive_overview` | — | `{ asOf, kpis, trend, risks, opportunities, recommendations }` |
+| `daily_summary` | — | `{ date, facts, calculations, risks, recommendations, sources, narrative: {text, provider} }` |
+| `monthly_close` | `period` | `{ period, facts, calculations (inclui DRE simplificada por caixa), highlights, risks, recommendations, narrative }` |
+| `executive_overview` | — | `{ asOf, kpis, trend, risks, opportunities, recommendations, narrative }` |
 | `export_data` | `report, period?` | `{ report, title, subtitle, rows: [{metrica, valor, unidade, fonte}] }` |
 
 ## Eventos consumidos e publicados

@@ -20,6 +20,8 @@ import {
   type AiClassifier,
   type CategoryCandidate,
   type ClassificationSuggestion,
+  type ReportNarrative,
+  type ReportNarrativeInput,
 } from "@/core/ai";
 
 export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
@@ -96,6 +98,42 @@ export class AnthropicClassifier implements AiClassifier {
     };
   }
 
+  /**
+   * Resumo narrativo dos fatos determinísticos do relatório. Textos livres
+   * (riscos/recomendações podem citar clientes) são redigidos antes do envio;
+   * falhas degradam para a narrativa determinística local, com o motivo.
+   */
+  async narrateReport(input: ReportNarrativeInput): Promise<ReportNarrative> {
+    const factsList = input.facts.map((f) => `- ${f.label}: ${f.value}`).join("\n");
+    const risksList = input.risks.map((r) => `- ${redactSensitive(r)}`).join("\n");
+    const recsList = input.recommendations.map((r) => `- ${redactSensitive(r)}`).join("\n");
+    const prompt = [
+      "Você resume relatórios financeiros de PMEs brasileiras para gestores.",
+      "Escreva um parágrafo de 3 a 5 frases em pt-BR, tom objetivo e claro.",
+      "REGRA ABSOLUTA: não invente números nem fatos — use SOMENTE os itens listados abaixo; os números oficiais são os do relatório.",
+      "Responda apenas com o parágrafo, sem títulos nem marcadores.",
+      "",
+      `Relatório: ${input.reportType} · Período: ${input.periodLabel}`,
+      "Fatos calculados:",
+      factsList,
+      ...(risksList ? ["Riscos identificados:", risksList] : []),
+      ...(recsList ? ["Recomendações determinísticas:", recsList] : []),
+    ].join("\n");
+
+    try {
+      const text = (await this.callMessages(prompt, 500)).trim();
+      if (!text) throw new Error("resposta vazia");
+      return { text: text.slice(0, 1500), provider: this.provider };
+    } catch (error) {
+      const reason = error instanceof Error ? error.name : "erro desconhecido";
+      const fallback = await this.fallback.narrateReport(input);
+      return {
+        text: `[IA indisponível — ${reason}; resumo determinístico local] ${fallback.text}`,
+        provider: fallback.provider,
+      };
+    }
+  }
+
   private async callApi(redactedDescription: string, candidates: CategoryCandidate[]): Promise<string> {
     const list = candidates
       .map((c) => `- id: ${c.id} | nome: ${c.name} | tipo: ${c.kind === "income" ? "receita" : "despesa"}`)
@@ -110,7 +148,10 @@ export class AnthropicClassifier implements AiClassifier {
       "",
       `Descrição do lançamento (dados sensíveis já redigidos): "${redactedDescription}"`,
     ].join("\n");
+    return this.callMessages(prompt, 300);
+  }
 
+  private async callMessages(prompt: string, maxTokens: number): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -123,7 +164,7 @@ export class AnthropicClassifier implements AiClassifier {
         },
         body: JSON.stringify({
           model: this.model,
-          max_tokens: 300,
+          max_tokens: maxTokens,
           temperature: 0,
           messages: [{ role: "user", content: prompt }],
         }),

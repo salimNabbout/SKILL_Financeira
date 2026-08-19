@@ -19,6 +19,22 @@ export interface ClassificationSuggestion {
   rationale: string;
 }
 
+export interface ReportNarrativeInput {
+  reportType: "daily_summary" | "monthly_close" | "executive_overview";
+  /** Rótulo do período em pt-BR (ex.: "18/08/2026", "agosto/2026"). */
+  periodLabel: string;
+  /** Fatos DETERMINÍSTICOS já formatados (rótulo + valor); a IA não calcula nada. */
+  facts: Array<{ label: string; value: string }>;
+  risks: string[];
+  recommendations: string[];
+}
+
+export interface ReportNarrative {
+  text: string;
+  /** Provedor que gerou o texto — exibido na UI para transparência. */
+  provider: string;
+}
+
 export interface AiClassifier {
   /** Identificação do provedor — exibida na UI para transparência ("mock" no MVP). */
   readonly provider: string;
@@ -26,6 +42,12 @@ export interface AiClassifier {
     description: string,
     candidates: CategoryCandidate[]
   ): Promise<ClassificationSuggestion>;
+  /**
+   * Resumo narrativo de um relatório A PARTIR dos fatos determinísticos já
+   * calculados — a IA nunca produz números novos; os oficiais são os do
+   * relatório. Implementações degradam para texto determinístico em falha.
+   */
+  narrateReport(input: ReportNarrativeInput): Promise<ReportNarrative>;
 }
 
 /**
@@ -70,4 +92,31 @@ export class HeuristicClassifier implements AiClassifier {
       rationale: "Heurística (mock): nenhum padrão conhecido na descrição; revisar manualmente.",
     };
   }
+
+  /** Narrativa determinística por template — mesma entrada, mesmo texto. */
+  async narrateReport(input: ReportNarrativeInput): Promise<ReportNarrative> {
+    const title = REPORT_TITLES[input.reportType];
+    const factsPart = input.facts
+      .slice(0, 6)
+      .map((f) => `${f.label} ${f.value}`)
+      .join("; ");
+    const risksPart =
+      input.risks.length > 0
+        ? ` Pontos de atenção: ${input.risks.length} risco(s) identificado(s), sendo o primeiro: ${input.risks[0]}`
+        : " Nenhum risco identificado.";
+    const recsPart =
+      input.recommendations.length > 0
+        ? ` Há ${input.recommendations.length} recomendação(ões) sugerida(s).`
+        : "";
+    return {
+      text: `${title} de ${input.periodLabel} — ${factsPart}.${risksPart}${recsPart}`,
+      provider: this.provider,
+    };
+  }
 }
+
+const REPORT_TITLES: Record<ReportNarrativeInput["reportType"], string> = {
+  daily_summary: "Resumo do dia",
+  monthly_close: "Fechamento do mês",
+  executive_overview: "Visão executiva",
+};

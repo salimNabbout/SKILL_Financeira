@@ -748,3 +748,38 @@ describe("relatorios_gerenciais — export_data", () => {
     expect(byMetric.get("saldo_disponivel")).toBe(1_950_000);
   });
 });
+
+describe("relatorios_gerenciais — resumo narrativo", () => {
+  it("os três relatórios incluem narrativa determinística (mock) com transparência", async () => {
+    const env = createTestEnv();
+    await seedMainScenario(env);
+
+    const daily = await runSkill(relatoriosSkill, env.ctx(), { action: "daily_summary" });
+    const dailyData = daily.data as DailySummaryData;
+    expect(dailyData.narrative?.provider).toBe("mock");
+    // Texto derivado dos fatos determinísticos (saldo disponível formatado).
+    expect(dailyData.narrative?.text).toContain("Resumo do dia de 18/08/2026");
+    expect(dailyData.narrative?.text).toContain("saldo disponível");
+    expect(daily.assumptions.some((a) => a.includes('Resumo narrativo gerado por "mock"'))).toBe(
+      true
+    );
+
+    const monthly = await runSkill(relatoriosSkill, env.ctx(), {
+      action: "monthly_close",
+      period: "2026-07",
+    });
+    const monthlyData = monthly.data as MonthlyCloseData;
+    expect(monthlyData.narrative?.provider).toBe("mock");
+    expect(monthlyData.narrative?.text).toContain("Fechamento do mês de 2026-07");
+
+    const overview = await runSkill(relatoriosSkill, env.ctx(), { action: "executive_overview" });
+    const overviewData = overview.data as ExecutiveOverviewData;
+    expect(overviewData.narrative?.provider).toBe("mock");
+    expect(overviewData.narrative?.text).toContain("Visão executiva");
+    expect(overviewData.narrative?.text).toContain("tendência de entradas");
+
+    // Determinismo: repetir produz o mesmo texto.
+    const again = await runSkill(relatoriosSkill, env.ctx(), { action: "daily_summary" });
+    expect((again.data as DailySummaryData).narrative?.text).toBe(dailyData.narrative?.text);
+  });
+});

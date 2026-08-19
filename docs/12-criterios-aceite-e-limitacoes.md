@@ -75,7 +75,9 @@ Automatizado: `npm test` (unitários + integração) e `npm run test:e2e` (smoke
   IA só SUGERE categoria com justificativa: descrições são redigidas (CPF/CNPJ/e-mail/dígitos
   longos) antes de sair do servidor, a resposta só é aceita se apontar categoria da lista
   fechada, a confiança tem teto de 0.9 e falhas degradam para a heurística com o motivo
-  declarado. Nenhuma decisão automática deriva da IA.
+  declarado. Os relatórios gerenciais incluem um resumo narrativo gerado APENAS a partir dos
+  fatos determinísticos (provider declarado na UI; números oficiais são os do relatório).
+  Nenhuma decisão automática deriva da IA.
 
 **Segurança/LGPD**
 - Criptografia em repouso delegada ao PostgreSQL/infra (colunas não são cifradas
