@@ -56,6 +56,7 @@ import type { SkillResult } from "@/core/types";
 import { verifyPasswordAsync } from "@/lib/password";
 import { InMemoryRateLimiter } from "@/lib/rate-limit";
 import { verifyTotpConsume } from "@/lib/totp";
+import { toTitleCase } from "@/app/(app)/cadastros/_lib/form-utils";
 import { EXPORT_LAYOUT_IDS } from "@/skills/contabil/layouts";
 import type { ExportBatchData } from "@/skills/contabil";
 import { maskSensitive, publicCompany, publicUser, type PublicCompany, type PublicUser } from "./respond";
@@ -283,6 +284,8 @@ export const createSupplierSchema = z.object({
   email: z.string().trim().email("e-mail inválido").optional(),
   phone: z.string().trim().min(1).optional(),
   address: z.string().trim().min(1).optional(),
+  costClassification: z.enum(["fixed", "variable"]).optional(),
+  category: z.string().trim().min(1).optional(),
   /** Dados bancários crus: são mascarados ANTES de persistir (nunca guardados em claro). */
   bankInfo: z.string().trim().min(1).optional(),
   pixKey: z.string().trim().min(1).optional(),
@@ -319,6 +322,8 @@ export async function createSupplier(
     email: input.email,
     phone: input.phone,
     address: input.address,
+    costClassification: input.costClassification,
+    category: input.category ? toTitleCase(input.category) : undefined,
     bankInfoMasked: input.bankInfo ? maskSensitive(input.bankInfo) : undefined,
     pixKeyMasked: input.pixKey ? maskSensitive(input.pixKey) : undefined,
     active: true,

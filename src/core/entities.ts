@@ -86,6 +86,9 @@ export interface Customer {
   updatedAt: string;
 }
 
+/** Classificação de custo do fornecedor (fixo vs. variável) — para relatórios futuros. */
+export type CostClassification = "fixed" | "variable";
+
 export interface Supplier {
   id: ID;
   companyId: ID;
@@ -94,6 +97,10 @@ export interface Supplier {
   email?: string;
   phone?: string;
   address?: string;
+  /** Classificação do custo associada ao fornecedor. */
+  costClassification?: CostClassification;
+  /** Categoria livre do fornecedor (guardada em Title Case). */
+  category?: string;
   /** Dados bancários SEMPRE mascarados no domínio e nos logs. */
   bankInfoMasked?: string;
   pixKeyMasked?: string;

@@ -7,7 +7,24 @@ import {
   maskAccountNumber,
   parseBRLToCents,
   parseInstallmentsSpec,
+  toTitleCase,
+  toUpperName,
 } from "../_lib/form-utils";
+
+describe("toUpperName", () => {
+  it("coloca o nome inteiro em maiúsculas e apara espaços", () => {
+    expect(toUpperName("  fornecedora alfa ltda ")).toBe("FORNECEDORA ALFA LTDA");
+    expect(toUpperName("Beta ME")).toBe("BETA ME");
+  });
+});
+
+describe("toTitleCase", () => {
+  it("deixa a primeira letra de cada palavra maiúscula, o resto minúscula", () => {
+    expect(toTitleCase("material de escritório")).toBe("Material De Escritório");
+    expect(toTitleCase("SERVIÇOS  GERAIS")).toBe("Serviços Gerais");
+    expect(toTitleCase("  logística ")).toBe("Logística");
+  });
+});
 
 describe("parseBRLToCents", () => {
   it("converte formatos pt-BR comuns para centavos exatos", () => {
