@@ -109,6 +109,17 @@ export interface Supplier {
   updatedAt: string;
 }
 
+/** Categoria de fornecedores cadastrável (lista que alimenta o campo CATEGORIA). */
+export interface SupplierCategory {
+  id: ID;
+  companyId: ID;
+  /** Nome guardado em Title Case; único por empresa. */
+  name: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type BankAccountType = "checking" | "savings" | "payment";
 
 export interface BankAccount {

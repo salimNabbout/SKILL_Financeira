@@ -17,7 +17,13 @@ export interface KnownSupplier {
  * cadastrado, CNPJ/CPF, Classificação do Custo e Categoria são preenchidos com
  * o que foi salvo antes (editável). Client component só para essa interação.
  */
-export function SupplierForm({ known }: { known: KnownSupplier[] }) {
+export function SupplierForm({
+  known,
+  categories,
+}: {
+  known: KnownSupplier[];
+  categories: string[];
+}) {
   const byName = useMemo(() => {
     const m = new Map<string, KnownSupplier>();
     for (const k of known) m.set(k.name.trim().toUpperCase(), k);
@@ -87,12 +93,29 @@ export function SupplierForm({ known }: { known: KnownSupplier[] }) {
         </select>
       </Field>
       <Field label="CATEGORIA">
-        <input
+        <select
           name="category"
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           className={inputClass}
-        />
+        >
+          <option value="">— selecione —</option>
+          {/* Inclui a categoria autopreenchida mesmo se não estiver na lista
+              atual (ex.: fornecedor antigo com categoria já removida). */}
+          {category && !categories.includes(category) ? (
+            <option value={category}>{category}</option>
+          ) : null}
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        {categories.length === 0 ? (
+          <span className="mt-1 block text-xs text-[var(--ink-muted)]">
+            Cadastre categorias em “Categoria de Fornecedores”.
+          </span>
+        ) : null}
       </Field>
       <div className="flex items-end">
         <Button>Cadastrar</Button>

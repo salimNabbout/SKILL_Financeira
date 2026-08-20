@@ -8,20 +8,30 @@ export default async function CadastrosPage() {
   const { repos } = await getContainer();
   const companyId = session.company.id;
 
-  const [customers, suppliers, bankAccounts, categories, costCenters, chartAccounts, memberships] =
-    await Promise.all([
-      repos.customers.listAll(companyId),
-      repos.suppliers.listAll(companyId),
-      repos.bankAccounts.listAll(companyId),
-      repos.categories.listAll(companyId),
-      repos.costCenters.listAll(companyId),
-      repos.chartAccounts.listAll(companyId),
-      repos.memberships.listByCompany(companyId),
-    ]);
+  const [
+    customers,
+    suppliers,
+    supplierCategories,
+    bankAccounts,
+    categories,
+    costCenters,
+    chartAccounts,
+    memberships,
+  ] = await Promise.all([
+    repos.customers.listAll(companyId),
+    repos.suppliers.listAll(companyId),
+    repos.supplierCategories.listAll(companyId),
+    repos.bankAccounts.listAll(companyId),
+    repos.categories.listAll(companyId),
+    repos.costCenters.listAll(companyId),
+    repos.chartAccounts.listAll(companyId),
+    repos.memberships.listByCompany(companyId),
+  ]);
 
   const cards: Array<{ href: string; title: string; description: string; count: number }> = [
     { href: "/cadastros/clientes", title: "Clientes", description: "Quem compra da empresa — base de contas a receber e cobrança.", count: customers.length },
     { href: "/cadastros/fornecedores", title: "Fornecedores", description: "Quem fornece à empresa — base de contas a pagar.", count: suppliers.length },
+    { href: "/cadastros/categorias-fornecedores", title: "Categoria de Fornecedores", description: "Lista de categorias que alimenta o campo CATEGORIA do fornecedor.", count: supplierCategories.length },
     { href: "/cadastros/contas-bancarias", title: "Contas bancárias", description: "Contas da empresa (números sempre mascarados).", count: bankAccounts.length },
     { href: "/cadastros/categorias", title: "Categorias", description: "Classificação de receitas e despesas por grupo do DRE.", count: categories.length },
     { href: "/cadastros/centros-de-custo", title: "Centros de custo", description: "Alocação de custos por área ou projeto.", count: costCenters.length },

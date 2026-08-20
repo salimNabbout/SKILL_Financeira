@@ -28,31 +28,32 @@ model Company {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  memberships       Membership[]
-  customers         Customer[]
-  suppliers         Supplier[]
-  bankAccounts      BankAccount[]
-  bankTransactions  BankTransaction[]
-  payables          Payable[]
-  receivables       Receivable[]
-  payments          Payment[]
-  receipts          Receipt[]
-  documents         FinancialDocument[]
-  categories        Category[]
-  costCenters       CostCenter[]
-  chartAccounts     ChartAccount[]
-  budgets           Budget[]
-  approvals         Approval[]
-  reconciliations   ReconciliationMatch[]
-  events            EventRecord[]
-  alerts            Alert[]
-  skillExecutions   SkillExecution[]
-  auditRecords      AuditRecord[]
-  invoices          Invoice[]
-  collectionMsgs    CollectionMessage[]
-  accountingEntries AccountingEntry[]
-  flowRuns          FlowRun[]
-  idempotencyKeys   IdempotencyRecord[]
+  memberships        Membership[]
+  customers          Customer[]
+  suppliers          Supplier[]
+  supplierCategories SupplierCategory[]
+  bankAccounts       BankAccount[]
+  bankTransactions   BankTransaction[]
+  payables           Payable[]
+  receivables        Receivable[]
+  payments           Payment[]
+  receipts           Receipt[]
+  documents          FinancialDocument[]
+  categories         Category[]
+  costCenters        CostCenter[]
+  chartAccounts      ChartAccount[]
+  budgets            Budget[]
+  approvals          Approval[]
+  reconciliations    ReconciliationMatch[]
+  events             EventRecord[]
+  alerts             Alert[]
+  skillExecutions    SkillExecution[]
+  auditRecords       AuditRecord[]
+  invoices           Invoice[]
+  collectionMsgs     CollectionMessage[]
+  accountingEntries  AccountingEntry[]
+  flowRuns           FlowRun[]
+  idempotencyKeys    IdempotencyRecord[]
 
   @@unique([cnpj])
 }
@@ -130,6 +131,20 @@ model Supplier {
   company  Company   @relation(fields: [companyId], references: [id])
   payables Payable[]
 
+  @@index([companyId])
+}
+
+model SupplierCategory {
+  id        String   @id
+  companyId String
+  name      String // Title Case; único por empresa
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, name])
   @@index([companyId])
 }
 

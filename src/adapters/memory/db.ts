@@ -31,6 +31,7 @@ import type {
   ReconciliationMatch,
   SkillExecution,
   Supplier,
+  SupplierCategory,
   User,
 } from "@/core/entities";
 
@@ -40,6 +41,7 @@ export class MemoryDb {
   memberships: Membership[] = [];
   customers: Customer[] = [];
   suppliers: Supplier[] = [];
+  supplierCategories: SupplierCategory[] = [];
   bankAccounts: BankAccount[] = [];
   bankTransactions: BankTransaction[] = [];
   payables: Payable[] = [];

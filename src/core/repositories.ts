@@ -43,6 +43,7 @@ import type {
   ReconciliationStatus,
   SkillExecution,
   Supplier,
+  SupplierCategory,
   User,
 } from "./entities";
 
@@ -101,6 +102,7 @@ export interface MembershipRepo {
 
 export type CustomerRepo = BaseRepo<Customer>;
 export type SupplierRepo = BaseRepo<Supplier>;
+export type SupplierCategoryRepo = BaseRepo<SupplierCategory>;
 export type BankAccountRepo = BaseRepo<BankAccount>;
 export type CategoryRepo = BaseRepo<Category>;
 export type CostCenterRepo = BaseRepo<CostCenter>;
@@ -285,6 +287,7 @@ export interface Repositories {
   memberships: MembershipRepo;
   customers: CustomerRepo;
   suppliers: SupplierRepo;
+  supplierCategories: SupplierCategoryRepo;
   bankAccounts: BankAccountRepo;
   bankTransactions: BankTransactionRepo;
   payables: PayableRepo;
