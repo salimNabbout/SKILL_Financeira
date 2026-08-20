@@ -139,6 +139,25 @@ export function maskAccountNumber(fullNumber: string): string {
   return `****-${digits.slice(-4)}`;
 }
 
+/** Nome inteiro em MAIÚSCULAS, com espaços aparados e colapsados. */
+export function toUpperName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleUpperCase("pt-BR");
+}
+
+/** Title Case pt-BR: primeira letra de cada palavra maiúscula, resto minúscula. */
+export function toTitleCase(value: string): string {
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .map((w) =>
+      w.length === 0
+        ? w
+        : w.charAt(0).toLocaleUpperCase("pt-BR") + w.slice(1).toLocaleLowerCase("pt-BR")
+    )
+    .join(" ");
+}
+
 /** Lê um campo string obrigatório de FormData ("" se ausente). */
 export function fdString(fd: FormData, key: string): string {
   const v = fd.get(key);

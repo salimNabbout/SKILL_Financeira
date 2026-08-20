@@ -112,18 +112,20 @@ model Customer {
 }
 
 model Supplier {
-  id             String   @id
-  companyId      String
-  name           String
-  document       String? // CNPJ/CPF
-  email          String?
-  phone          String?
-  address        String?
-  bankInfoMasked String? // dados bancários sempre mascarados; alteração exige aprovação
-  pixKeyMasked   String?
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                 String   @id
+  companyId          String
+  name               String
+  document           String? // CNPJ/CPF
+  email              String?
+  phone              String?
+  address            String?
+  costClassification String? // fixed | variable
+  category           String? // categoria livre (Title Case)
+  bankInfoMasked     String? // dados bancários sempre mascarados; alteração exige aprovação
+  pixKeyMasked       String?
+  active             Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   company  Company   @relation(fields: [companyId], references: [id])
   payables Payable[]

@@ -514,6 +514,21 @@ describe("suppliers", () => {
     expect(JSON.stringify(audit)).not.toContain("987654321");
   });
 
+  it("persiste classificação de custo e categoria (categoria em Title Case)", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const session = await sessionFor(env, "analyst");
+
+    const { entity } = await createSupplier(deps, session, {
+      name: "Fornecedor Beta",
+      document: "22.333.444/0001-55",
+      costClassification: "fixed",
+      category: "material de escritório",
+    });
+    expect(entity.costClassification).toBe("fixed");
+    expect(entity.category).toBe("Material De Escritório");
+  });
+
   it("é idempotente por documento: repetir o POST não duplica", async () => {
     const env = createTestEnv();
     const deps = buildDeps(env);
