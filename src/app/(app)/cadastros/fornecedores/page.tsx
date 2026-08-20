@@ -21,9 +21,15 @@ export default async function FornecedoresPage({
   const { ok, erro } = await searchParams;
   const session = await requireSession();
   const { repos } = await getContainer();
-  const suppliers = await repos.suppliers.listAll(session.company.id);
+  const [suppliers, supplierCategories] = await Promise.all([
+    repos.suppliers.listAll(session.company.id),
+    repos.supplierCategories.listAll(session.company.id),
+  ]);
   const canManage = hasPermission(session.membership.role, "master_data.manage");
   const rows = [...suppliers].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const categoryOptions = [...supplierCategories]
+    .map((c) => c.name)
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
 
   const known: KnownSupplier[] = rows.map((s) => ({
     name: s.name,
@@ -93,7 +99,7 @@ export default async function FornecedoresPage({
 
       {canManage ? (
         <Card title="Novo fornecedor">
-          <SupplierForm known={known} />
+          <SupplierForm known={known} categories={categoryOptions} />
         </Card>
       ) : (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

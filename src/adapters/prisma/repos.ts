@@ -39,6 +39,7 @@ import type {
   ReconciliationMatch as DbReconciliationMatch,
   SkillExecution as DbSkillExecution,
   Supplier as DbSupplier,
+  SupplierCategory as DbSupplierCategory,
   User as DbUser,
 } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -79,6 +80,7 @@ import type {
   ReconciliationStatus,
   SkillExecution,
   Supplier,
+  SupplierCategory,
   User,
 } from "@/core/entities";
 import type {
@@ -111,6 +113,7 @@ import type {
   Repositories,
   SkillExecutionRepo,
   SupplierRepo,
+  SupplierCategoryRepo,
   UserRepo,
 } from "@/core/repositories";
 
@@ -286,6 +289,23 @@ const supplierToDb = (e: Supplier): Prisma.SupplierUncheckedCreateInput => ({
   category: strNull(e.category),
   bankInfoMasked: strNull(e.bankInfoMasked),
   pixKeyMasked: strNull(e.pixKeyMasked),
+  active: e.active,
+  createdAt: toInstant(e.createdAt),
+  updatedAt: toInstant(e.updatedAt),
+});
+
+const supplierCategoryToDomain = (r: DbSupplierCategory): SupplierCategory => ({
+  id: r.id,
+  companyId: r.companyId,
+  name: r.name,
+  active: r.active,
+  createdAt: fromInstant(r.createdAt),
+  updatedAt: fromInstant(r.updatedAt),
+});
+const supplierCategoryToDb = (e: SupplierCategory): Prisma.SupplierCategoryUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  name: e.name,
   active: e.active,
   createdAt: toInstant(e.createdAt),
   updatedAt: toInstant(e.updatedAt),
@@ -1085,6 +1105,31 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
         data: supplierToDb(entity),
       });
       return supplierToDomain(row);
+    },
+  };
+
+  const supplierCategories: SupplierCategoryRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.supplierCategory.findFirst({ where: { id, companyId } });
+      return row ? supplierCategoryToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.supplierCategory.findMany({
+        where: { companyId },
+        orderBy: { name: "asc" },
+      });
+      return rows.map(supplierCategoryToDomain);
+    },
+    async create(entity: SupplierCategory) {
+      const row = await prisma.supplierCategory.create({ data: supplierCategoryToDb(entity) });
+      return supplierCategoryToDomain(row);
+    },
+    async update(entity: SupplierCategory) {
+      const row = await prisma.supplierCategory.update({
+        where: { id: entity.id, companyId: entity.companyId },
+        data: supplierCategoryToDb(entity),
+      });
+      return supplierCategoryToDomain(row);
     },
   };
 
@@ -1934,6 +1979,7 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     memberships,
     customers,
     suppliers,
+    supplierCategories,
     bankAccounts,
     bankTransactions,
     payables,

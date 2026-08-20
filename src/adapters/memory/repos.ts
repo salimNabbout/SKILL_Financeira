@@ -570,6 +570,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     memberships: new MemMembershipRepo(db.memberships),
     customers: new MemBase(db.customers),
     suppliers: new MemBase(db.suppliers),
+    supplierCategories: new MemBase(db.supplierCategories),
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),
     payables: new MemPayableRepo(db.payables),
