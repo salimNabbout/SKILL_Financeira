@@ -133,10 +133,41 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f app
 docker compose -f docker-compose.prod.yml --env-file .env.prod restart app
 # parar tudo (mantém o volume do banco)
 docker compose -f docker-compose.prod.yml --env-file .env.prod down
-# backup do banco (faça periodicamente)
+# backup avulso do banco (o diário é automático — ver abaixo)
 docker compose -f docker-compose.prod.yml --env-file .env.prod exec db \
   pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > backup-$(date +%F).sql
 ```
+
+## Backup diário automático
+
+O script [`backup.sh`](backup.sh) faz o dump do Postgres, **valida antes de aceitar** (exige o
+marcador final do `pg_dump` e um tamanho mínimo — um dump truncado é descartado em vez de entrar
+na rotação), comprime e aplica retenção de 14 diários + 12 mensais em `/var/backups/financeira`
+(diretório `700`, arquivos `600`). O log fica em `/var/log/financeira-backup.log`.
+
+Instalar (uma vez, na VPS):
+
+```bash
+chmod 700 /opt/financeira/deploy/backup.sh
+/opt/financeira/deploy/backup.sh          # testar antes de agendar
+cat /var/log/financeira-backup.log        # deve terminar com uma linha "OK:"
+
+printf 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n30 2 * * * root /opt/financeira/deploy/backup.sh\n' \
+  > /etc/cron.d/financeira-backup
+chmod 644 /etc/cron.d/financeira-backup
+systemctl restart cron
+```
+
+Restaurar (o dump usa `--clean --if-exists`, então **substitui** o conteúdo atual):
+
+```bash
+gunzip -c /var/backups/financeira/financeira-AAAA-MM-DD_HHMM.sql.gz | \
+  docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+> ⚠️ Os backups ficam **na mesma VPS do banco**: protegem contra erro humano e migração ruim, não
+> contra a perda da máquina. Uma cópia off-site continua pendente.
 
 ## Rollback
 
