@@ -14,6 +14,8 @@ import {
   toUpperName,
 } from "@/app/(app)/cadastros/_lib/form-utils";
 import { parseSuppliersCsv } from "./_lib/csv";
+import { deleteSupplierByName } from "./_lib/delete";
+import { updateSupplierFields } from "./_lib/update";
 
 const PATH = "/cadastros/fornecedores";
 
@@ -38,8 +40,7 @@ export async function createSupplierAction(formData: FormData): Promise<void> {
   if (!rawName) fail("Informe o nome do fornecedor.");
   const name = toUpperName(rawName); // FORNECEDOR sempre em MAIÚSCULAS
 
-  const document = fdOptional(formData, "document");
-  if (!document) fail("Informe o CNPJ/CPF do fornecedor.");
+  const document = fdOptional(formData, "document"); // CNPJ/CPF opcional
 
   const costRaw = fdOptional(formData, "costClassification");
   const costClassification: CostClassification | undefined =
@@ -162,4 +163,71 @@ export async function importSuppliersAction(formData: FormData): Promise<void> {
 
   const errStr = parsed.errors.length > 0 ? ` ${parsed.errors.length} linha(s) ignorada(s).` : "";
   ok(`Importação concluída: ${criados} criado(s), ${pulados} já existia(m).${errStr}`);
+}
+
+/** Atualiza os dados de um fornecedor existente (botão Editar da lista). */
+export async function updateSupplierAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const container = await getContainer();
+  const companyId = session.company.id;
+
+  if (!hasPermission(session.membership.role, "master_data.manage")) {
+    fail("Sem permissão para gerenciar cadastros (master_data.manage).");
+  }
+  const id = fdString(formData, "id");
+  if (!id) fail("Fornecedor inválido para edição.");
+  const rawName = fdString(formData, "name");
+  if (!rawName) fail("Informe o nome do fornecedor.");
+
+  const costRaw = fdOptional(formData, "costClassification");
+  const costClassification: CostClassification | undefined =
+    costRaw === "fixed" || costRaw === "variable" ? costRaw : undefined;
+
+  try {
+    const updated = await updateSupplierFields(container, companyId, id, {
+      name: rawName,
+      document: fdOptional(formData, "document"),
+      email: fdOptional(formData, "email"),
+      phone: fdOptional(formData, "phone"),
+      costClassification,
+      category: fdOptional(formData, "category"),
+    });
+    await container.audit.record(companyId, {
+      actor: session.actor,
+      action: "supplier.updated",
+      entityType: "supplier",
+      entityId: updated.id,
+      after: updated,
+    });
+    ok(`Fornecedor "${updated.name}" atualizado.`);
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+}
+
+/** Exclui o fornecedor selecionado no campo FORNECEDOR (só se não tiver títulos). */
+export async function deleteSupplierAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const container = await getContainer();
+  const companyId = session.company.id;
+
+  if (!hasPermission(session.membership.role, "master_data.manage")) {
+    fail("Sem permissão para gerenciar cadastros (master_data.manage).");
+  }
+  const name = fdString(formData, "name");
+  if (!name) fail("Selecione um fornecedor no campo FORNECEDOR para excluir.");
+
+  try {
+    const deleted = await deleteSupplierByName(container, companyId, name);
+    await container.audit.record(companyId, {
+      actor: session.actor,
+      action: "supplier.deleted",
+      entityType: "supplier",
+      entityId: name,
+      before: { name: deleted },
+    });
+    ok(`Fornecedor "${deleted}" excluído.`);
+  } catch (error) {
+    fail(errorMessage(error));
+  }
 }

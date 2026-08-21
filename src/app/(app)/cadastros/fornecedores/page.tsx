@@ -4,7 +4,7 @@ import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { hasPermission } from "@/core/auth";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
-import { SupplierForm, type KnownSupplier } from "./_lib/supplier-form";
+import { SupplierForm, type EditingSupplier, type KnownSupplier } from "./_lib/supplier-form";
 import { importSuppliersAction } from "./actions";
 
 function costLabel(c?: "fixed" | "variable"): string {
@@ -16,9 +16,9 @@ function costLabel(c?: "fixed" | "variable"): string {
 export default async function FornecedoresPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; erro?: string }>;
+  searchParams: Promise<{ ok?: string; erro?: string; editar?: string }>;
 }) {
-  const { ok, erro } = await searchParams;
+  const { ok, erro, editar } = await searchParams;
   const session = await requireSession();
   const { repos } = await getContainer();
   const [suppliers, supplierCategories] = await Promise.all([
@@ -37,6 +37,19 @@ export default async function FornecedoresPage({
     costClassification: s.costClassification,
     category: s.category,
   }));
+
+  const editingSupplier = editar ? suppliers.find((s) => s.id === editar) : undefined;
+  const editing: EditingSupplier | undefined = editingSupplier
+    ? {
+        id: editingSupplier.id,
+        name: editingSupplier.name,
+        document: editingSupplier.document,
+        email: editingSupplier.email,
+        phone: editingSupplier.phone,
+        costClassification: editingSupplier.costClassification,
+        category: editingSupplier.category,
+      }
+    : undefined;
 
   return (
     <div>
@@ -79,7 +92,15 @@ export default async function FornecedoresPage({
           <EmptyState message="Nenhum fornecedor cadastrado." />
         ) : (
           <Table
-            headers={["Fornecedor", "CNPJ/CPF", "E-mail", "Classificação do Custo", "Categoria", "Situação"]}
+            headers={[
+              "Fornecedor",
+              "CNPJ/CPF",
+              "E-mail",
+              "Classificação do Custo",
+              "Categoria",
+              "Situação",
+              ...(canManage ? [""] : []),
+            ]}
           >
             {rows.map((s) => (
               <tr key={s.id}>
@@ -91,6 +112,16 @@ export default async function FornecedoresPage({
                 <Td>
                   <Badge tone={s.active ? "ok" : "neutral"}>{s.active ? "Ativo" : "Inativo"}</Badge>
                 </Td>
+                {canManage ? (
+                  <Td>
+                    <Link
+                      href={`/cadastros/fornecedores?editar=${s.id}`}
+                      className="text-sm text-[var(--brand)] underline"
+                    >
+                      Editar
+                    </Link>
+                  </Td>
+                ) : null}
               </tr>
             ))}
           </Table>
@@ -98,8 +129,15 @@ export default async function FornecedoresPage({
       </Card>
 
       {canManage ? (
-        <Card title="Novo fornecedor">
-          <SupplierForm known={known} categories={categoryOptions} />
+        <Card title={editing ? `Editar fornecedor: ${editing.name}` : "Novo fornecedor"}>
+          {editing ? (
+            <p className="mb-3 text-sm">
+              <Link href="/cadastros/fornecedores" className="text-[var(--brand)] underline">
+                ← Cancelar edição (voltar a Novo fornecedor)
+              </Link>
+            </p>
+          ) : null}
+          <SupplierForm known={known} categories={categoryOptions} editing={editing} />
         </Card>
       ) : (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
