@@ -101,7 +101,10 @@ export interface MembershipRepo {
 // --- Cadastros --------------------------------------------------------------
 
 export type CustomerRepo = BaseRepo<Customer>;
-export type SupplierRepo = BaseRepo<Supplier>;
+export interface SupplierRepo extends BaseRepo<Supplier> {
+  /** Remove um fornecedor. O chamador garante que não há vínculos (títulos). */
+  delete(companyId: ID, id: ID): Promise<void>;
+}
 export type SupplierCategoryRepo = BaseRepo<SupplierCategory>;
 export type BankAccountRepo = BaseRepo<BankAccount>;
 export type CategoryRepo = BaseRepo<Category>;

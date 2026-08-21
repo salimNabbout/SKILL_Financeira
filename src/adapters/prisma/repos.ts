@@ -1106,6 +1106,9 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       });
       return supplierToDomain(row);
     },
+    async delete(companyId: ID, id: ID) {
+      await prisma.supplier.deleteMany({ where: { id, companyId } });
+    },
   };
 
   const supplierCategories: SupplierCategoryRepo = {

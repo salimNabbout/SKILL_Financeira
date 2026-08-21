@@ -2,7 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { Button, Field, inputClass } from "@/components/ui";
-import { createSupplierAction } from "../actions";
+import {
+  createSupplierAction,
+  deleteSupplierAction,
+  updateSupplierAction,
+} from "../actions";
 
 /** Dados mínimos de cada fornecedor já cadastrado, para o autopreenchimento. */
 export interface KnownSupplier {
@@ -12,17 +16,30 @@ export interface KnownSupplier {
   category?: string;
 }
 
+/** Fornecedor sendo editado (modo edição do formulário). */
+export interface EditingSupplier {
+  id: string;
+  name: string;
+  document?: string;
+  email?: string;
+  phone?: string;
+  costClassification?: "fixed" | "variable";
+  category?: string;
+}
+
 /**
- * Formulário de novo fornecedor com AUTOPREENCHIMENTO: ao digitar um nome já
- * cadastrado, CNPJ/CPF, Classificação do Custo e Categoria são preenchidos com
- * o que foi salvo antes (editável). Client component só para essa interação.
+ * Formulário de fornecedor. Sem `editing`: cria (com AUTOPREENCHIMENTO ao digitar
+ * um nome já cadastrado) e permite EXCLUIR o fornecedor digitado. Com `editing`:
+ * edita o fornecedor daquele id. Client component só para essas interações.
  */
 export function SupplierForm({
   known,
   categories,
+  editing,
 }: {
   known: KnownSupplier[];
   categories: string[];
+  editing?: EditingSupplier;
 }) {
   const byName = useMemo(() => {
     const m = new Map<string, KnownSupplier>();
@@ -30,14 +47,18 @@ export function SupplierForm({
     return m;
   }, [known]);
 
-  const [name, setName] = useState("");
-  const [document, setDocument] = useState("");
-  const [cost, setCost] = useState("");
-  const [category, setCategory] = useState("");
+  const isEditing = Boolean(editing);
+  const [name, setName] = useState(editing?.name ?? "");
+  const [document, setDocument] = useState(editing?.document ?? "");
+  const [email, setEmail] = useState(editing?.email ?? "");
+  const [phone, setPhone] = useState(editing?.phone ?? "");
+  const [cost, setCost] = useState(editing?.costClassification ?? "");
+  const [category, setCategory] = useState(editing?.category ?? "");
 
   function onNameChange(value: string) {
     const upper = value.toUpperCase();
     setName(upper);
+    if (isEditing) return; // em edição, o nome não autopreenche de outro registro
     const match = byName.get(upper.trim());
     if (match) {
       // Autopreenche a partir do cadastro anterior (usuário pode editar).
@@ -48,37 +69,50 @@ export function SupplierForm({
   }
 
   return (
-    <form action={createSupplierAction} className="grid gap-4 md:grid-cols-4">
+    <form action={isEditing ? updateSupplierAction : createSupplierAction} className="grid gap-4 md:grid-cols-4">
+      {isEditing ? <input type="hidden" name="id" value={editing!.id} /> : null}
       <Field label="FORNECEDOR">
         <input
           name="name"
           required
-          list="fornecedores-conhecidos"
+          list={isEditing ? undefined : "fornecedores-conhecidos"}
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           className={inputClass}
           style={{ textTransform: "uppercase" }}
         />
-        <datalist id="fornecedores-conhecidos">
-          {known.map((k) => (
-            <option key={k.name} value={k.name} />
-          ))}
-        </datalist>
+        {!isEditing ? (
+          <datalist id="fornecedores-conhecidos">
+            {known.map((k) => (
+              <option key={k.name} value={k.name} />
+            ))}
+          </datalist>
+        ) : null}
       </Field>
-      <Field label="CNPJ/CPF">
+      <Field label="CNPJ/CPF (opcional)">
         <input
           name="document"
-          required
           value={document}
           onChange={(e) => setDocument(e.target.value)}
           className={inputClass}
         />
       </Field>
       <Field label="E-mail">
-        <input name="email" type="email" className={inputClass} />
+        <input
+          name="email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className={inputClass}
+        />
       </Field>
       <Field label="Telefone">
-        <input name="phone" className={inputClass} />
+        <input
+          name="phone"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          className={inputClass}
+        />
       </Field>
       <Field label="Classificação do CUSTO">
         <select
@@ -100,8 +134,6 @@ export function SupplierForm({
           className={inputClass}
         >
           <option value="">— selecione —</option>
-          {/* Inclui a categoria autopreenchida mesmo se não estiver na lista
-              atual (ex.: fornecedor antigo com categoria já removida). */}
           {category && !categories.includes(category) ? (
             <option value={category}>{category}</option>
           ) : null}
@@ -117,8 +149,18 @@ export function SupplierForm({
           </span>
         ) : null}
       </Field>
-      <div className="flex items-end">
-        <Button>Cadastrar</Button>
+      <div className="flex items-end gap-2">
+        <Button>{isEditing ? "Salvar" : "Cadastrar"}</Button>
+        {!isEditing ? (
+          // Exclui o fornecedor digitado no campo FORNECEDOR (formAction sobrepõe a action do form).
+          <button
+            type="submit"
+            formAction={deleteSupplierAction}
+            className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100"
+          >
+            Deletar
+          </button>
+        ) : null}
       </div>
     </form>
   );

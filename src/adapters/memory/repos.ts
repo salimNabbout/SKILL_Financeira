@@ -27,6 +27,7 @@ import type {
   ReconciliationMatch,
   ReconciliationStatus,
   SkillExecution,
+  Supplier,
   User,
 } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
@@ -53,6 +54,7 @@ import type {
   ReconciliationRepo,
   Repositories,
   SkillExecutionRepo,
+  SupplierRepo,
   UserRepo,
 } from "@/core/repositories";
 import type { MemoryDb } from "./db";
@@ -101,6 +103,13 @@ class MemBase<T extends { id: ID; companyId: ID }> implements BaseRepo<T> {
     if (idx < 0) throw new NotFoundError("Registro", entity.id);
     this.items[idx] = clone(entity);
     return clone(entity);
+  }
+}
+
+class MemSupplierRepo extends MemBase<Supplier> implements SupplierRepo {
+  async delete(companyId: ID, id: ID): Promise<void> {
+    const idx = this.items.findIndex((s) => s.companyId === companyId && s.id === id);
+    if (idx >= 0) this.items.splice(idx, 1);
   }
 }
 
@@ -569,7 +578,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     users: new MemUserRepo(db.users),
     memberships: new MemMembershipRepo(db.memberships),
     customers: new MemBase(db.customers),
-    suppliers: new MemBase(db.suppliers),
+    suppliers: new MemSupplierRepo(db.suppliers),
     supplierCategories: new MemBase(db.supplierCategories),
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),
