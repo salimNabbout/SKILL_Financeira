@@ -137,7 +137,15 @@ export default async function FornecedoresPage({
               </Link>
             </p>
           ) : null}
-          <SupplierForm known={known} categories={categoryOptions} editing={editing} />
+          {/* key força o React a remontar o form ao trocar de alvo (novo ⇄ editar,
+              ou editar A → editar B); sem isso os useState iniciais não recarregam
+              e as caixas ficam em branco ao clicar em "Editar". */}
+          <SupplierForm
+            key={editing?.id ?? "novo"}
+            known={known}
+            categories={categoryOptions}
+            editing={editing}
+          />
         </Card>
       ) : (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
