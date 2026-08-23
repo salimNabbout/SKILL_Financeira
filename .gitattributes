@@ -1,0 +1,3 @@
+# Scripts de shell devem SEMPRE usar LF, mesmo commitados do Windows —
+# CRLF quebra o shebang na VPS (/bin/bash^M: bad interpreter).
+*.sh text eol=lf
