@@ -8,7 +8,7 @@ import { todayInTz } from "@/core/dates";
 import type { RecurringStatus } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { setRecurringStatusAction } from "./actions";
-import { RecurringForm, type SupplierOption } from "./_lib/recurring-form";
+import { RecurringForm, type PartyOption } from "./_lib/recurring-form";
 
 function statusLabel(s: RecurringStatus): string {
   if (s === "active") return "Ativa";
@@ -20,12 +20,6 @@ function statusTone(s: RecurringStatus): "ok" | "neutral" | "warn" {
   if (s === "paused") return "warn";
   return "neutral";
 }
-function costLabel(c?: "fixed" | "variable"): string {
-  if (c === "fixed") return "Custo Fixo";
-  if (c === "variable") return "Custo Variável";
-  return "—";
-}
-
 export default async function RecorrenciasPage({
   searchParams,
 }: {
@@ -37,17 +31,25 @@ export default async function RecorrenciasPage({
   const companyId = session.company.id;
   const today = todayInTz(clock.now(), session.config.timezone);
 
-  const [templates, suppliers, supplierCategories] = await Promise.all([
+  const [templates, suppliers, customers, supplierCategories] = await Promise.all([
     repos.recurringTemplates.listAll(companyId),
     repos.suppliers.listAll(companyId),
+    repos.customers.listAll(companyId),
     repos.supplierCategories.listAll(companyId),
   ]);
 
   const canManage = hasPermission(session.membership.role, "master_data.manage");
-  const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
-  const supplierOptions: SupplierOption[] = suppliers
+  // Nome da contraparte: fornecedor (payable) ou cliente (receivable).
+  const partyName = new Map<string, string>([
+    ...suppliers.map((s) => [s.id, s.name] as const),
+    ...customers.map((c) => [c.id, c.name] as const),
+  ]);
+  const supplierOptions: PartyOption[] = suppliers
     .filter((s) => s.active)
     .map((s) => ({ id: s.id, name: s.name }));
+  const customerOptions: PartyOption[] = customers
+    .filter((c) => c.active)
+    .map((c) => ({ id: c.id, name: c.name }));
   const categoryOptions = [...supplierCategories]
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
@@ -60,7 +62,7 @@ export default async function RecorrenciasPage({
     <div>
       <PageHeader
         title="Recorrências"
-        subtitle="Despesas mensais que geram títulos a pagar automaticamente. O título de cada mês é criado no início do mês, com vencimento no dia informado."
+        subtitle="Despesas e receitas mensais que geram títulos automaticamente (a pagar ou a receber). O título de cada mês é criado no início do mês, com vencimento no dia informado."
         actions={<Link href="/cadastros" className="text-sm text-[var(--brand)] underline">← Cadastros</Link>}
       />
       <Flash ok={ok} erro={erro} />
@@ -72,27 +74,27 @@ export default async function RecorrenciasPage({
           <Table
             headers={[
               "Descrição",
-              "Fornecedor",
+              "Tipo",
+              "Contraparte",
               "Valor",
               "Vencimento",
               "Período",
-              "Custo",
               "Situação",
               ...(canManage ? [""] : []),
             ]}
-            align={["l", "l", "r", "l", "l", "l", "l", ...(canManage ? ["l" as const] : [])]}
+            align={["l", "l", "l", "r", "l", "l", "l", ...(canManage ? ["l" as const] : [])]}
           >
             {rows.map((t) => (
               <tr key={t.id}>
                 <Td>{t.description}</Td>
-                <Td>{supplierName.get(t.counterpartyId) ?? t.counterpartyId}</Td>
+                <Td>{t.kind === "payable" ? "A pagar" : "A receber"}</Td>
+                <Td>{partyName.get(t.counterpartyId) ?? t.counterpartyId}</Td>
                 <Td right>{formatBRL(t.amountCents)}</Td>
                 <Td>dia {t.dueDay}</Td>
                 <Td>
                   {formatBR(t.startDate)}
                   {t.endDate ? ` até ${formatBR(t.endDate)}` : " (sem fim)"}
                 </Td>
-                <Td>{costLabel(t.costClassification)}</Td>
                 <Td>
                   <Badge tone={statusTone(t.status)}>{statusLabel(t.status)}</Badge>
                 </Td>
@@ -136,11 +138,16 @@ export default async function RecorrenciasPage({
       </Card>
 
       {canManage ? (
-        <Card title="Nova recorrência (a pagar)">
-          <RecurringForm suppliers={supplierOptions} categories={categoryOptions} today={today} />
+        <Card title="Nova recorrência">
+          <RecurringForm
+            suppliers={supplierOptions}
+            customers={customerOptions}
+            categories={categoryOptions}
+            today={today}
+          />
           <p className="mt-3 text-xs text-[var(--ink-muted)]">
-            O app gera o título a pagar de cada mês automaticamente. Pausar suspende a geração;
-            encerrar a interrompe de vez. Títulos já gerados não são afetados.
+            O app gera o título de cada mês automaticamente (a pagar ou a receber). Pausar suspende a
+            geração; encerrar a interrompe de vez. Títulos já gerados não são afetados.
           </p>
         </Card>
       ) : (

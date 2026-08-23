@@ -13,6 +13,7 @@ import { addDays, addMonths, diffDays, formatBR, minDate, type ISODate } from "@
 import type { CurrencyCode, LateFeeResult } from "@/core/money";
 import { computeLateFee, formatBRL, splitInstallments } from "@/core/money";
 import type { Receipt, Receivable } from "@/core/entities";
+import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import type { ChargeResult } from "@/core/integrations";
 import { hashPayload } from "@/core/ids";
 import { ValidationError } from "@/core/errors";
@@ -81,6 +82,10 @@ const issueChargeSchema = z.object({
   kind: z.enum(["pix", "boleto"]),
 });
 
+const generateRecurringSchema = z.object({
+  action: z.literal("generate_recurring"),
+});
+
 export const contasAReceberInputSchema = z.discriminatedUnion("action", [
   createReceivableSchema,
   createFromInvoiceSchema,
@@ -88,6 +93,7 @@ export const contasAReceberInputSchema = z.discriminatedUnion("action", [
   registerReceiptSchema,
   projectionSchema,
   issueChargeSchema,
+  generateRecurringSchema,
 ]);
 
 export type ContasAReceberInput = z.infer<typeof contasAReceberInputSchema>;
@@ -159,12 +165,18 @@ export interface IssueChargeData {
   remainingCents: number;
 }
 
+export interface GenerateRecurringData {
+  /** Títulos a receber criados nesta rodada. */
+  generated: Array<{ templateId: string; receivableId: string; dueDate: string }>;
+}
+
 export type ContasAReceberData =
   | CreateReceivableData
   | ListOverdueData
   | RegisterReceiptData
   | ProjectionData
   | IssueChargeData
+  | GenerateRecurringData
   | null;
 
 // ---------------------------------------------------------------------------
@@ -779,9 +791,49 @@ export const contasAReceberSkill: SkillDefinition<ContasAReceberInput, ContasARe
         return projection(ctx, input);
       case "issue_charge":
         return issueCharge(ctx, input);
+      case "generate_recurring":
+        return generateRecurring(ctx);
     }
   },
 };
+
+/**
+ * Gera os títulos a receber recorrentes devidos no mês corrente. Para cada
+ * template ativo com kind=receivable dentro da janela, cria o título do mês
+ * reaproveitando createReceivable — idempotente por originKey (não duplica).
+ */
+async function generateRecurring(
+  ctx: SkillContext
+): Promise<SkillResult<GenerateRecurringData>> {
+  const today = ctx.today();
+  const templates = await ctx.repos.recurringTemplates.listActive(ctx.companyId);
+  const generated: GenerateRecurringData["generated"] = [];
+
+  for (const t of templates) {
+    if (t.kind !== "receivable") continue; // payable é do skill contas_a_pagar.
+    const month = shouldGenerateFor(t, today);
+    if (!month) continue;
+
+    const dueDate = dueDateForMonth(t, month);
+    const before = (await ctx.repos.receivables.listAll(ctx.companyId)).length;
+    const result = await createReceivable(ctx, {
+      action: "create_receivable",
+      customerId: t.counterpartyId,
+      description: `${t.description} (recorrência ${month})`,
+      issueDate: dueDate,
+      dueDate,
+      amountCents: t.amountCents,
+      installmentCount: 1,
+    });
+    const after = (await ctx.repos.receivables.listAll(ctx.companyId)).length;
+    const receivable = (result.data as CreateReceivableData | null)?.receivables?.[0];
+    if (receivable && after > before) {
+      generated.push({ templateId: t.id, receivableId: receivable.id, dueDate });
+    }
+  }
+
+  return makeResult(SKILL_NAME, ctx, { generated }, { dataSources: ["receivables"] });
+}
 
 /**
  * Emite código de cobrança (Pix copia-e-cola ou linha digitável de boleto) para

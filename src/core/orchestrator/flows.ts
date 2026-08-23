@@ -431,15 +431,22 @@ const accountingExport: FlowDefinition = {
 const recurringTitlesGenerate: FlowDefinition = {
   name: "recurring_titles_generate",
   description:
-    "Gera os títulos recorrentes (a pagar) devidos no mês corrente a partir dos modelos de recorrência cadastrados. Idempotente: não duplica títulos já gerados.",
+    "Gera os títulos recorrentes (a pagar e a receber) devidos no mês corrente a partir dos modelos de recorrência cadastrados. Idempotente: não duplica títulos já gerados.",
   requiredPermission: "payable.create",
   periodicDefault: true,
   steps: [
     {
-      id: "generate",
+      id: "generate_payables",
       skill: "contas_a_pagar",
       description: "Gerar títulos a pagar recorrentes do mês",
       buildInput: () => ({ action: "generate_recurring" }),
+    },
+    {
+      id: "generate_receivables",
+      skill: "contas_a_receber",
+      description: "Gerar títulos a receber recorrentes do mês",
+      buildInput: () => ({ action: "generate_recurring" }),
+      continueOnError: true,
     },
   ],
 };
