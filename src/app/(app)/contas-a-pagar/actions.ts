@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatBRL } from "@/lib/format";
-import type { Payable } from "@/core/entities";
+import type { Payable, Supplier } from "@/core/entities";
 import type { OrchestratorResponse } from "@/core/orchestrator/orchestrator";
 import {
   errorMessage,
@@ -28,7 +28,7 @@ function ok(message: string): never {
 
 export async function createPayableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
-  const { orchestrator } = await getContainer();
+  const { orchestrator, repos } = await getContainer();
 
   const supplierId = fdString(formData, "supplierId");
   const description = fdString(formData, "description");
@@ -51,6 +51,15 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     fail("Número de parcelas inválido (1 a 120).");
   }
 
+  // Classificação de custo é ESPELHO do fornecedor (não editável na tela).
+  let costClassification: Supplier["costClassification"];
+  try {
+    const supplier = await repos.suppliers.getById(session.company.id, supplierId);
+    costClassification = supplier?.costClassification;
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+
   let response: OrchestratorResponse;
   try {
     response = await orchestrator.execute({
@@ -63,8 +72,11 @@ export async function createPayableAction(formData: FormData): Promise<void> {
         issueDate,
         dueDate,
         amountCents,
-        categoryId: fdOptional(formData, "categoryId"),
-        costCenterId: fdOptional(formData, "costCenterId"),
+        // A caixa "Categoria" agora lista Categorias de Fornecedores (texto),
+        // gravadas em supplierCategory; a categoria contábil (categoryId) passa
+        // a ser sempre sugerida automaticamente pelo skill.
+        supplierCategory: fdOptional(formData, "supplierCategory"),
+        costClassification,
         installmentCount,
       },
     });

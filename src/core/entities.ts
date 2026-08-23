@@ -177,6 +177,10 @@ export interface Payable {
   status: PayableStatus;
   categoryId?: ID;
   costCenterId?: ID;
+  /** Categoria de fornecedor (texto), espelhada do cadastro no momento da entrada. */
+  supplierCategory?: string;
+  /** Classificação de custo (Fixo/Variável), espelhada do fornecedor na entrada. */
+  costClassification?: CostClassification;
   installmentNumber: number;
   installmentCount: number;
   /** Idempotência: fornecedor+documento+parcela. Único por empresa. */

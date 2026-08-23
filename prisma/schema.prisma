@@ -211,6 +211,8 @@ model Payable {
   status            String // open | scheduled | partially_paid | paid | canceled
   categoryId        String?
   costCenterId      String?
+  supplierCategory  String? // categoria de fornecedor (texto) espelhada na entrada
+  costClassification String? // fixed | variable — espelho do fornecedor na entrada
   installmentNumber Int       @default(1)
   installmentCount  Int       @default(1)
   originKey         String // chave de idempotência: fornecedor+documento+parcela

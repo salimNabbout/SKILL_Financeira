@@ -38,6 +38,8 @@ const dbPayableRow: AnyRow = {
   status: "open",
   categoryId: null,
   costCenterId: null,
+  supplierCategory: "Material de Escritório",
+  costClassification: "fixed",
   installmentNumber: 1,
   installmentCount: 1,
   originKey: "sup_1|NF-1|1",
@@ -152,6 +154,8 @@ describe("conversões banco -> domínio", () => {
     expect(found?.documentId).toBeUndefined();
     expect(found?.notes).toBeUndefined();
     expect(found?.canceledAt).toBeUndefined();
+    expect(found?.supplierCategory).toBe("Material de Escritório");
+    expect(found?.costClassification).toBe("fixed");
     expect(found?.createdAt).toBe("2026-03-01T12:34:56.000Z");
     expect(payable.findFirst).toHaveBeenCalledWith({
       where: { id: "pay_1", companyId: "co_demo" },
@@ -260,6 +264,9 @@ describe("conversões domínio -> banco", () => {
     expect(callArg.data.documentId).toBeNull();
     expect(callArg.data.notes).toBeNull();
     expect(callArg.data.canceledAt).toBeNull();
+    // opcionais ausentes viram null no banco
+    expect(callArg.data.supplierCategory).toBeNull();
+    expect(callArg.data.costClassification).toBeNull();
   });
 
   it("update escopa o where por { id, companyId }", async () => {
