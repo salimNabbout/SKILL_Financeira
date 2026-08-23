@@ -37,6 +37,7 @@ import type {
   Receipt as DbReceipt,
   Receivable as DbReceivable,
   ReconciliationMatch as DbReconciliationMatch,
+  RecurringTemplate as DbRecurringTemplate,
   SkillExecution as DbSkillExecution,
   Supplier as DbSupplier,
   SupplierCategory as DbSupplierCategory,
@@ -78,6 +79,7 @@ import type {
   ReceivableStatus,
   ReconciliationMatch,
   ReconciliationStatus,
+  RecurringTemplate,
   SkillExecution,
   Supplier,
   SupplierCategory,
@@ -110,6 +112,7 @@ import type {
   ReceiptRepo,
   ReceivableRepo,
   ReconciliationRepo,
+  RecurringTemplateRepo,
   Repositories,
   SkillExecutionRepo,
   SupplierRepo,
@@ -307,6 +310,43 @@ const supplierCategoryToDb = (e: SupplierCategory): Prisma.SupplierCategoryUnche
   companyId: e.companyId,
   name: e.name,
   active: e.active,
+  createdAt: toInstant(e.createdAt),
+  updatedAt: toInstant(e.updatedAt),
+});
+
+const recurringTemplateToDomain = (r: DbRecurringTemplate): RecurringTemplate => ({
+  id: r.id,
+  companyId: r.companyId,
+  kind: r.kind as RecurringTemplate["kind"],
+  counterpartyId: r.counterpartyId,
+  description: r.description,
+  amountCents: fromCents(r.amountCents),
+  dueDay: r.dueDay,
+  category: strOpt(r.category),
+  costClassification: (strOpt(r.costClassification) as RecurringTemplate["costClassification"]) ?? undefined,
+  startDate: fromDbDate(r.startDate),
+  endDate: fromDbDateOpt(r.endDate),
+  status: r.status as RecurringTemplate["status"],
+  createdBy: r.createdBy,
+  createdAt: fromInstant(r.createdAt),
+  updatedAt: fromInstant(r.updatedAt),
+});
+const recurringTemplateToDb = (
+  e: RecurringTemplate
+): Prisma.RecurringTemplateUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  kind: e.kind,
+  counterpartyId: e.counterpartyId,
+  description: e.description,
+  amountCents: toCents(e.amountCents),
+  dueDay: e.dueDay,
+  category: strNull(e.category),
+  costClassification: strNull(e.costClassification),
+  startDate: toDbDate(e.startDate),
+  endDate: toDbDateOpt(e.endDate),
+  status: e.status,
+  createdBy: e.createdBy,
   createdAt: toInstant(e.createdAt),
   updatedAt: toInstant(e.updatedAt),
 });
@@ -1137,6 +1177,38 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
         data: supplierCategoryToDb(entity),
       });
       return supplierCategoryToDomain(row);
+    },
+  };
+
+  const recurringTemplates: RecurringTemplateRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.recurringTemplate.findFirst({ where: { id, companyId } });
+      return row ? recurringTemplateToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.recurringTemplate.findMany({
+        where: { companyId },
+        orderBy: { createdAt: "asc" },
+      });
+      return rows.map(recurringTemplateToDomain);
+    },
+    async listActive(companyId: ID) {
+      const rows = await prisma.recurringTemplate.findMany({
+        where: { companyId, status: "active" },
+        orderBy: { createdAt: "asc" },
+      });
+      return rows.map(recurringTemplateToDomain);
+    },
+    async create(entity: RecurringTemplate) {
+      const row = await prisma.recurringTemplate.create({ data: recurringTemplateToDb(entity) });
+      return recurringTemplateToDomain(row);
+    },
+    async update(entity: RecurringTemplate) {
+      const row = await prisma.recurringTemplate.update({
+        where: { id: entity.id, companyId: entity.companyId },
+        data: recurringTemplateToDb(entity),
+      });
+      return recurringTemplateToDomain(row);
     },
   };
 
@@ -1987,6 +2059,7 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     customers,
     suppliers,
     supplierCategories,
+    recurringTemplates,
     bankAccounts,
     bankTransactions,
     payables,

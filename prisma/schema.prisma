@@ -32,6 +32,7 @@ model Company {
   customers          Customer[]
   suppliers          Supplier[]
   supplierCategories SupplierCategory[]
+  recurringTemplates RecurringTemplate[]
   bankAccounts       BankAccount[]
   bankTransactions   BankTransaction[]
   payables           Payable[]
@@ -146,6 +147,29 @@ model SupplierCategory {
 
   @@unique([companyId, name])
   @@index([companyId])
+}
+
+model RecurringTemplate {
+  id                 String   @id
+  companyId          String
+  kind               String // payable | receivable
+  counterpartyId     String // fornecedor (payable) ou cliente (receivable)
+  description        String
+  amountCents        BigInt
+  dueDay             Int // 1-31 (dias inexistentes caem no último dia do mês)
+  category           String? // categoria de fornecedor (payable)
+  costClassification String? // fixed | variable (payable)
+  startDate          DateTime @db.Date
+  endDate            DateTime? @db.Date
+  status             String   @default("active") // active | paused | ended
+  createdBy          String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([companyId, status])
 }
 
 model BankAccount {

@@ -424,6 +424,26 @@ const accountingExport: FlowDefinition = {
   ],
 };
 
+/**
+ * Geração de títulos recorrentes. Roda diariamente pelo scheduler; cria os
+ * títulos a pagar dos templates de recorrência devidos no mês (idempotente).
+ */
+const recurringTitlesGenerate: FlowDefinition = {
+  name: "recurring_titles_generate",
+  description:
+    "Gera os títulos recorrentes (a pagar) devidos no mês corrente a partir dos modelos de recorrência cadastrados. Idempotente: não duplica títulos já gerados.",
+  requiredPermission: "payable.create",
+  periodicDefault: true,
+  steps: [
+    {
+      id: "generate",
+      skill: "contas_a_pagar",
+      description: "Gerar títulos a pagar recorrentes do mês",
+      buildInput: () => ({ action: "generate_recurring" }),
+    },
+  ],
+};
+
 export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
@@ -434,6 +454,7 @@ export const BUILTIN_FLOWS: FlowDefinition[] = [
   dailySummary,
   monthlyClose,
   accountingExport,
+  recurringTitlesGenerate,
 ];
 
 export function buildFlowMap(flows: FlowDefinition[] = BUILTIN_FLOWS): Map<string, FlowDefinition> {

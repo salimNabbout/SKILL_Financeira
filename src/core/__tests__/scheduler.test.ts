@@ -100,11 +100,12 @@ describe("scheduler / collectDueJobs", () => {
     expect(jobs[1].flow).toBe("daily_summary");
   });
 
-  it("agenda padrão cobre sincronização, resumo e régua — todas diárias", () => {
+  it("agenda padrão cobre sincronização, resumo, régua e recorrência — todas diárias", () => {
     expect(DEFAULT_SCHEDULES.map((s) => s.flow)).toEqual([
       "bank_sync",
       "daily_summary",
       "dunning_run",
+      "recurring_titles_generate",
     ]);
     expect(DEFAULT_SCHEDULES.every((s) => s.cadence === "daily" && s.enabled)).toBe(true);
   });
