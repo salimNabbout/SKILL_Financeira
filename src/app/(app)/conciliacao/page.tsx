@@ -18,9 +18,9 @@ interface TargetInfo {
 export default async function ConciliacaoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; erro?: string; pt?: string; payable?: string }>;
+  searchParams: Promise<{ ok?: string; erro?: string; pt?: string }>;
 }) {
-  const { ok, erro, pt, payable } = await searchParams;
+  const { ok, erro, pt } = await searchParams;
   const session = await requireSession();
   const { repos } = await getContainer();
   const companyId = session.company.id;
@@ -108,9 +108,6 @@ export default async function ConciliacaoPage({
     return null;
   }
 
-  // Título vindo de "Conciliar" em Contas a Pagar: destaca qual conciliar.
-  const focusedPayable = payable ? payableById.get(payable) : undefined;
-
   const recentDecided = [...decided]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 15);
@@ -125,27 +122,6 @@ export default async function ConciliacaoPage({
         subtitle="Importação de extratos (OFX/CSV), conciliação automática com grau de confiança e revisão humana das sugestões."
       />
       <Flash ok={ok} erro={erro} />
-
-      {focusedPayable ? (
-        <div className="mb-6 rounded-lg border border-[var(--brand)] bg-[var(--brand)]/5 px-4 py-3">
-          <p className="text-sm font-medium">
-            Conciliando o título:{" "}
-            <strong>
-              {supplierName.get(focusedPayable.supplierId) ?? focusedPayable.supplierId} —{" "}
-              {focusedPayable.description}
-            </strong>
-          </p>
-          <p className="mt-1 text-sm">
-            {formatBRL(focusedPayable.amountCents - focusedPayable.paidCents)} em aberto, vence{" "}
-            {formatBR(focusedPayable.dueDate)}. Importe o extrato ou sincronize o banco abaixo e
-            confirme a sugestão de conciliação correspondente a este título.
-          </p>
-        </div>
-      ) : payable ? (
-        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Título {payable} não encontrado (pode já ter sido conciliado ou removido).
-        </div>
-      ) : null}
 
       <Card className="mb-6" title="1 — Importar extrato">
         <form action={importStatementAction} className="grid gap-4 md:grid-cols-3">

@@ -84,8 +84,8 @@ export default async function ContasAPagarPage({
           <EmptyState message="Nenhum título encontrado para o filtro selecionado." />
         ) : (
           <Table
-            headers={["Fornecedor", "Descrição", "Parcela", "Vencimento", "Valor", "Pago", "Status", "Conciliar", "Agendar pagamento"]}
-            align={["l", "l", "l", "l", "r", "r", "l", "l", "l"]}
+            headers={["Fornecedor", "Descrição", "Parcela", "Vencimento", "Valor", "Pago", "Status", "Pagar"]}
+            align={["l", "l", "l", "l", "r", "r", "l", "l"]}
           >
             {rows.map((p) => {
               const overdue = p.dueDate < today && p.status !== "paid" && p.status !== "canceled";
@@ -103,14 +103,6 @@ export default async function ContasAPagarPage({
                   <Td right>{formatBRL(p.paidCents)}</Td>
                   <Td>
                     <Badge tone={statusTone(p.status)}>{statusLabel(p.status)}</Badge>
-                  </Td>
-                  <Td>
-                    <Link
-                      href={`/conciliacao?payable=${p.id}`}
-                      className="text-sm text-[var(--brand)] underline"
-                    >
-                      Conciliar
-                    </Link>
                   </Td>
                   <Td>
                     {SCHEDULABLE.includes(p.status) ? (
@@ -136,7 +128,7 @@ export default async function ContasAPagarPage({
                           <option value="boleto">Boleto</option>
                           <option value="debit">Débito</option>
                         </select>
-                        <Button variant="secondary">Agendar</Button>
+                        <Button variant="secondary">Pagar</Button>
                       </form>
                     ) : (
                       <span className="text-xs text-[var(--ink-muted)]">—</span>

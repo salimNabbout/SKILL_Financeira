@@ -97,7 +97,7 @@ export async function createPayableAction(formData: FormData): Promise<void> {
 
 export async function schedulePaymentAction(formData: FormData): Promise<void> {
   const session = await requireSession();
-  const { orchestrator } = await getContainer();
+  const { orchestrator, repos } = await getContainer();
 
   const payableId = fdString(formData, "payableId");
   const bankAccountId = fdString(formData, "bankAccountId");
@@ -105,6 +105,20 @@ export async function schedulePaymentAction(formData: FormData): Promise<void> {
   const method = fdString(formData, "method");
   if (!payableId || !bankAccountId || !scheduledDate || !method) {
     fail("Preencha conta bancária, data e método do pagamento.");
+  }
+
+  // Fornecedor do título, para a mensagem deixar claro o que foi enviado.
+  let supplierName = "";
+  let payableAmount: number | undefined;
+  try {
+    const payable = await repos.payables.getById(session.company.id, payableId);
+    if (payable) {
+      payableAmount = payable.amountCents;
+      const supplier = await repos.suppliers.getById(session.company.id, payable.supplierId);
+      supplierName = supplier?.name ?? payable.supplierId;
+    }
+  } catch {
+    // Falha ao resolver o nome não deve impedir o fluxo; segue sem o nome.
   }
 
   let response: OrchestratorResponse;
@@ -120,11 +134,11 @@ export async function schedulePaymentAction(formData: FormData): Promise<void> {
   }
 
   if (response.status === "failed") fail(flowErrorMessage(response));
-  if (response.status === "awaiting_approval") {
-    const amount = response.approval?.amountCents;
-    ok(
-      `Aprovação solicitada${amount !== undefined ? ` (${formatBRL(amount)})` : ""} — acompanhe em Aprovações.`
-    );
-  }
-  ok(`Fluxo de pagamento concluído: ${response.consolidated.summary}`);
+
+  // O botão "Pagar" NÃO paga: schedule_payment cria um Payment pendente de
+  // aprovação. A mensagem explicita que nada foi pago — segue para /aprovacoes.
+  const amount = response.approval?.amountCents ?? payableAmount;
+  const quem = supplierName ? `de ${supplierName} ` : "";
+  const quanto = amount !== undefined ? `— ${formatBRL(amount)} ` : "";
+  ok(`Pagamento ${quem}${quanto}enviado para aprovação.`);
 }
