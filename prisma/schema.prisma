@@ -256,6 +256,7 @@ model Payable {
   @@unique([companyId, originKey])
   @@index([companyId, status, dueDate])
   @@index([companyId, dueDate]) // listagens paginadas ordenadas por vencimento
+  @@index([companyId, supplierId]) // filtro por fornecedor em Contas a Pagar
 }
 
 model Receivable {

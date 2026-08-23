@@ -1349,9 +1349,19 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       return rows.map(payableToDomain);
     },
     async listPage(companyId, query) {
+      // dueDate é @db.Date — comparações usam Date (toDbDate), não ISO string.
       const where = {
         companyId,
         ...(query.statuses !== undefined ? { status: { in: query.statuses } } : {}),
+        ...(query.supplierId ? { supplierId: query.supplierId } : {}),
+        ...(query.dueFrom || query.dueTo
+          ? {
+              dueDate: {
+                ...(query.dueFrom ? { gte: toDbDate(query.dueFrom) } : {}),
+                ...(query.dueTo ? { lte: toDbDate(query.dueTo) } : {}),
+              },
+            }
+          : {}),
       };
       const { skip, take } = pageArgs(query);
       const [rows, total] = await Promise.all([

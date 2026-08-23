@@ -144,10 +144,19 @@ export interface PayableRepo extends BaseRepo<Payable> {
   findByOriginKey(companyId: ID, originKey: string): Promise<Payable | null>;
   listByStatus(companyId: ID, statuses: PayableStatus[]): Promise<Payable[]>;
   listDueBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Payable[]>;
-  /** Ordem: vencimento asc, id asc. */
+  /**
+   * Ordem: vencimento asc, id asc. Filtros de status, fornecedor e intervalo
+   * de vencimento (dueFrom/dueTo, inclusivos) são aplicados no banco — a
+   * paginação e o `total` refletem o filtro.
+   */
   listPage(
     companyId: ID,
-    query: PageQuery & { statuses?: PayableStatus[] }
+    query: PageQuery & {
+      statuses?: PayableStatus[];
+      supplierId?: ID;
+      dueFrom?: ISODate;
+      dueTo?: ISODate;
+    }
   ): Promise<Page<Payable>>;
 }
 
