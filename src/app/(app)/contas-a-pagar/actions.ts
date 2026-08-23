@@ -34,8 +34,15 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   const description = fdString(formData, "description");
   const issueDate = fdString(formData, "issueDate");
   const dueDate = fdString(formData, "dueDate");
+  const supplierCategory = fdOptional(formData, "supplierCategory");
+  const costRaw = fdOptional(formData, "costClassification");
+  // Todos os campos são obrigatórios (validação no servidor, além do required do HTML).
   if (!supplierId || !description || !issueDate || !dueDate) {
     fail("Preencha fornecedor, descrição, emissão e vencimento.");
+  }
+  if (!supplierCategory) fail("Selecione a categoria.");
+  if (costRaw !== "fixed" && costRaw !== "variable") {
+    fail("Selecione a classificação do custo (Fixo ou Variável).");
   }
 
   let amountCents = 0;
@@ -51,10 +58,7 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     fail("Número de parcelas inválido (1 a 120).");
   }
 
-  // Classificação de custo é selecionável na tela (fixed | variable).
-  const costRaw = fdOptional(formData, "costClassification");
-  const costClassification: Supplier["costClassification"] =
-    costRaw === "fixed" || costRaw === "variable" ? costRaw : undefined;
+  const costClassification: Supplier["costClassification"] = costRaw;
 
   let response: OrchestratorResponse;
   try {
@@ -71,7 +75,7 @@ export async function createPayableAction(formData: FormData): Promise<void> {
         // A caixa "Categoria" agora lista Categorias de Fornecedores (texto),
         // gravadas em supplierCategory; a categoria contábil (categoryId) passa
         // a ser sempre sugerida automaticamente pelo skill.
-        supplierCategory: fdOptional(formData, "supplierCategory"),
+        supplierCategory,
         costClassification,
         installmentCount,
       },

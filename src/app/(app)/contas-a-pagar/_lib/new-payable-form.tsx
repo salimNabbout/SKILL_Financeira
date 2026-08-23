@@ -54,11 +54,12 @@ export function NewPayableForm({
           min={1}
           max={120}
           defaultValue={1}
+          required
           className={inputClass}
         />
       </Field>
       <Field label="Categoria">
-        <select name="supplierCategory" className={inputClass} defaultValue="">
+        <select name="supplierCategory" required className={inputClass} defaultValue="">
           <option value="">— selecione —</option>
           {categories.map((c) => (
             <option key={c} value={c}>
@@ -73,7 +74,7 @@ export function NewPayableForm({
         ) : null}
       </Field>
       <Field label="Classificação do CUSTO">
-        <select name="costClassification" className={inputClass} defaultValue="">
+        <select name="costClassification" required className={inputClass} defaultValue="">
           <option value="">— selecione —</option>
           <option value="fixed">Custo Fixo</option>
           <option value="variable">Custo Variável</option>

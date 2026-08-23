@@ -75,13 +75,18 @@ export default async function FornecedoresPage({
             Imprimir PDF
           </a>
           <form action={importSuppliersAction} className="flex items-center gap-2">
-            <input
-              type="file"
-              name="arquivo"
-              accept=".csv,text/csv"
-              required
-              className="text-sm"
-            />
+            {/* Label estilizado como os demais botões: esconde o input nativo
+                (que mostraria "Nenhum arquivo escolhido") e exibe só "Escolher arquivo". */}
+            <label className="cursor-pointer rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--muted)]">
+              Escolher arquivo
+              <input
+                type="file"
+                name="arquivo"
+                accept=".csv,text/csv"
+                required
+                className="sr-only"
+              />
+            </label>
             <Button>Importar CSV</Button>
           </form>
         </div>
