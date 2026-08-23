@@ -11,7 +11,12 @@
 import { z } from "zod";
 import { addDays, addMonths, diffDays, formatBR, minDate, type ISODate } from "@/core/dates";
 import type { CurrencyCode, LateFeeResult } from "@/core/money";
-import { computeLateFee, formatBRL, splitInstallments } from "@/core/money";
+import {
+  computeLateFee,
+  formatBRL,
+  receivableRemainingCents,
+  splitInstallments,
+} from "@/core/money";
 import type { Receipt, Receivable } from "@/core/entities";
 import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import type { ChargeResult } from "@/core/integrations";
@@ -508,7 +513,7 @@ async function listOverdue(ctx: SkillContext): Promise<SkillResult<ContasARecebe
 
   const overdue: OverdueItem[] = overdueReceivables.map((receivable) => {
     const daysLate = diffDays(receivable.dueDate, today);
-    const remainingCents = receivable.amountCents - receivable.receivedCents;
+    const remainingCents = receivableRemainingCents(receivable);
     const lateFee = computeLateFee(remainingCents, daysLate, ctx.config.lateFeeDefaults);
     return { receivable, daysLate, remainingCents, lateFee };
   });
@@ -599,7 +604,7 @@ async function registerReceipt(
     return errorResult(SKILL_NAME, ctx, "receivable_already_settled", `O título ${receivable.id} já está quitado.`);
   }
 
-  const remainingBefore = receivable.amountCents - receivable.receivedCents;
+  const remainingBefore = receivableRemainingCents(receivable);
   const assumptions: string[] = [];
 
   // Decomposição principal vs. encargos:
@@ -677,7 +682,7 @@ async function registerReceipt(
     correlationId: ctx.correlationId,
   });
 
-  const remainingCents = receivable.amountCents - receivable.receivedCents;
+  const remainingCents = receivableRemainingCents(receivable);
   await ctx.events.publish({
     companyId: ctx.companyId,
     type: "receivable.received",
@@ -737,7 +742,7 @@ async function projection(
       week: i + 1,
       weekStart,
       weekEnd,
-      expectedCents: inWeek.reduce((acc, r) => acc + (r.amountCents - r.receivedCents), 0),
+      expectedCents: inWeek.reduce((acc, r) => acc + receivableRemainingCents(r), 0),
       count: inWeek.length,
     });
   }
@@ -849,7 +854,7 @@ async function issueCharge(
   if (!receivable) {
     return errorResult(SKILL_NAME, ctx, "not_found", `Título a receber não encontrado: ${input.receivableId}.`);
   }
-  const remaining = receivable.amountCents - receivable.receivedCents;
+  const remaining = receivableRemainingCents(receivable);
   if (remaining <= 0 || receivable.status === "canceled" || receivable.status === "received") {
     return errorResult(
       SKILL_NAME,

@@ -16,7 +16,13 @@ import type { FinancialDocument, Payable, Payment } from "@/core/entities";
 import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import { NotFoundError, PermissionError, ValidationError } from "@/core/errors";
 import { hashPayload } from "@/core/ids";
-import { computeLateFee, formatBRL, splitInstallments, type CurrencyCode } from "@/core/money";
+import {
+  computeLateFee,
+  formatBRL,
+  payableRemainingCents,
+  splitInstallments,
+  type CurrencyCode,
+} from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { ApprovalRequestData, PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -192,10 +198,6 @@ export type ContasAPagarData =
 // ---------------------------------------------------------------------------
 
 const OPEN_STATUSES: Payable["status"][] = ["open", "partially_paid", "scheduled"];
-
-function remainingCents(p: Payable): number {
-  return p.amountCents - p.paidCents;
-}
 
 /**
  * Persiste um alerta apenas se não houver outro ABERTO com mesmo code+entityId
@@ -456,7 +458,7 @@ async function schedulePayment(
   const reservedCents = existingPayments
     .filter((p) => p.status === "pending_approval" || p.status === "approved")
     .reduce((acc, p) => acc + p.amountCents, 0);
-  const available = remainingCents(payable) - reservedCents;
+  const available = payableRemainingCents(payable) - reservedCents;
   const amount = input.amountCents ?? available;
   if (available <= 0) {
     throw new ValidationError(
@@ -611,10 +613,10 @@ async function resumePaymentDecision(ctx: SkillContext): Promise<SkillResult<Sch
 
     // Revalida o saldo no momento da execução: se outro pagamento foi executado
     // entre o agendamento e esta aprovação, este pagamento não pode sobre-baixar.
-    if (payment.amountCents > remainingCents(payable)) {
+    if (payment.amountCents > payableRemainingCents(payable)) {
       throw new ValidationError(
         `Pagamento ${payment.id} (${formatBRL(payment.amountCents)}) excede o saldo restante ` +
-          `do título ${payable.id} (${formatBRL(remainingCents(payable))}) no momento da execução.`
+          `do título ${payable.id} (${formatBRL(payableRemainingCents(payable))}) no momento da execução.`
       );
     }
 
@@ -753,7 +755,7 @@ async function listDue(ctx: SkillContext, input: ListDueInput): Promise<SkillRes
   const alerts: SkillAlert[] = [];
   const due: DuePayableEntry[] = [];
   for (const p of dueList) {
-    const remaining = remainingCents(p);
+    const remaining = payableRemainingCents(p);
     const daysLate = Math.max(0, diffDays(p.dueDate, today));
     const late = computeLateFee(remaining, daysLate, ctx.config.lateFeeDefaults);
     due.push({
@@ -839,7 +841,7 @@ async function forecastDisbursements(
     const effectiveDate = p.dueDate < today ? today : p.dueDate;
     if (p.dueDate < today) overdueClamped += 1;
     const weekIndex = Math.min(Math.floor(diffDays(today, effectiveDate) / 7), weekCount - 1);
-    weekly[weekIndex].totalCents += remainingCents(p);
+    weekly[weekIndex].totalCents += payableRemainingCents(p);
     weekly[weekIndex].count += 1;
   }
   if (overdueClamped > 0) {

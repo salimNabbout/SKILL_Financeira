@@ -13,7 +13,13 @@ import { z } from "zod";
 import { addDays, addMonths, diffDays, formatBR, type ISODate } from "@/core/dates";
 import type { CollectionMessage, Receivable } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
-import { computeLateFee, formatBRL, percentOf, splitInstallments } from "@/core/money";
+import {
+  computeLateFee,
+  formatBRL,
+  percentOf,
+  receivableRemainingCents,
+  splitInstallments,
+} from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { ApprovalRequestData, PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -167,10 +173,6 @@ export type CobrancaData =
 
 const OPEN_STATUSES: Receivable["status"][] = ["open", "partially_received"];
 
-function remainingCents(r: Receivable): number {
-  return r.amountCents - r.receivedCents;
-}
-
 function bucketFor(daysLate: number): AgingBucketLabel {
   for (const bucket of AGING_BUCKETS) {
     if (daysLate >= bucket.minDays && (bucket.maxDays === null || daysLate <= bucket.maxDays)) {
@@ -203,8 +205,8 @@ interface OverdueEntry {
 async function listOverdue(ctx: SkillContext, today: ISODate): Promise<OverdueEntry[]> {
   const open = await ctx.repos.receivables.listByStatus(ctx.companyId, OPEN_STATUSES);
   return open
-    .filter((r) => r.dueDate < today && remainingCents(r) > 0)
-    .map((r) => ({ receivable: r, remaining: remainingCents(r), daysLate: diffDays(r.dueDate, today) }))
+    .filter((r) => r.dueDate < today && receivableRemainingCents(r) > 0)
+    .map((r) => ({ receivable: r, remaining: receivableRemainingCents(r), daysLate: diffDays(r.dueDate, today) }))
     .sort((a, b) =>
       a.receivable.dueDate === b.receivable.dueDate
         ? a.receivable.id.localeCompare(b.receivable.id)
@@ -603,7 +605,7 @@ async function suggestRenegotiation(
       `Título ${receivable.id} não permite renegociação (status atual: ${receivable.status}).`
     );
   }
-  const principal = remainingCents(receivable);
+  const principal = receivableRemainingCents(receivable);
   if (principal <= 0) {
     throw new ValidationError(`Título ${receivable.id} não possui saldo em aberto.`);
   }
@@ -700,12 +702,12 @@ async function delinquencyIndicators(
 
   const openReceivables = (
     await ctx.repos.receivables.listByStatus(ctx.companyId, OPEN_STATUSES)
-  ).filter((r) => remainingCents(r) > 0);
+  ).filter((r) => receivableRemainingCents(r) > 0);
   const overdue = openReceivables
     .filter((r) => r.dueDate < today)
-    .map((r) => ({ receivable: r, remaining: remainingCents(r), daysLate: diffDays(r.dueDate, today) }));
+    .map((r) => ({ receivable: r, remaining: receivableRemainingCents(r), daysLate: diffDays(r.dueDate, today) }));
 
-  const openCents = openReceivables.reduce((acc, r) => acc + remainingCents(r), 0);
+  const openCents = openReceivables.reduce((acc, r) => acc + receivableRemainingCents(r), 0);
   const overdueCents = overdue.reduce((acc, o) => acc + o.remaining, 0);
   const positionPeriod = `posição da carteira em ${today}`;
 

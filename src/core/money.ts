@@ -4,7 +4,34 @@
  * Nunca usar float para valores monetários.
  */
 
+// `import type` (apagado na compilação) — evita ciclo em runtime com entities,
+// que por sua vez importa CurrencyCode daqui.
+import type { Payable, Receivable } from "./entities";
+
 export type CurrencyCode = "BRL" | "USD" | "EUR";
+
+/**
+ * Saldo em aberto de um título a pagar, em centavos.
+ *
+ * Clampado em 0 (`Math.max`): saldo negativo não tem significado de domínio.
+ * Se `paidCents > amountCents` houve pagamento a maior — um caso de auditoria,
+ * não um número para propagar em somas de saldo. Fluxos que precisem detectar
+ * pagamento a maior devem comparar os campos diretamente, não usar este helper.
+ */
+export function payableRemainingCents(p: Payable): number {
+  return Math.max(0, p.amountCents - p.paidCents);
+}
+
+/**
+ * Saldo em aberto de um título a receber, em centavos.
+ *
+ * Usa `receivedCents` (Receivable não tem `paidCents`). Clampado em 0 pela
+ * mesma razão de `payableRemainingCents`: saldo negativo (recebido a maior) é
+ * caso de auditoria, não valor a propagar em somas.
+ */
+export function receivableRemainingCents(r: Receivable): number {
+  return Math.max(0, r.amountCents - r.receivedCents);
+}
 
 export interface Money {
   amountCents: number;

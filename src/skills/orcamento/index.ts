@@ -19,7 +19,7 @@ import { assertPermission } from "@/core/auth";
 import { addMonths, monthOf, startOfMonth, type ISOMonth } from "@/core/dates";
 import type { Budget, BudgetLine, ID } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
-import { formatBRL } from "@/core/money";
+import { formatBRL, payableRemainingCents } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -622,7 +622,7 @@ async function checkImpact(
           monthOf(p.dueDate) === period &&
           p.categoryId === payable.categoryId
       )
-      .reduce((acc, p) => acc + (p.amountCents - p.paidCents), 0);
+      .reduce((acc, p) => acc + payableRemainingCents(p), 0);
     const executed = items
       .filter(
         (i) => i.kind === "expense" && i.period === period && i.categoryId === payable.categoryId
