@@ -117,12 +117,39 @@ Ver também `docs/DEPLOY.md` (checklist geral) e §8 (ligar integrações reais)
 
 ## Atualizar (novas versões)
 
+**Recomendado — script `publicar.sh`** (um comando, faz tudo e verifica):
+
 ```bash
-cd /opt/financeira && git pull
-cd deploy && docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+# Da sua máquina, com o atalho SSH "financeira" no ~/.ssh/config:
+ssh financeira "/opt/financeira/deploy/publicar.sh"
+
+# Ou já dentro da VPS:
+/opt/financeira/deploy/publicar.sh
 ```
 
-O rebuild reaplica migrações pendentes automaticamente (idempotente).
+O [`publicar.sh`](publicar.sh) faz: `git fetch` + `reset --hard origin/main` → `build app migrate`
+→ `up -d --force-recreate app` (o app depende do serviço `migrate`, então migrações pendentes são
+aplicadas automaticamente antes de subir) → aguarda o app responder `200` em `/login` e mostra o
+commit publicado. Para com erro claro se algo falhar.
+
+Atalho SSH (no `~/.ssh/config` da sua máquina Windows/Linux), para `ssh financeira` sem senha/IP:
+
+```
+Host financeira
+    HostName 2.25.132.128
+    User root
+    IdentityFile ~/.ssh/financeira_key
+```
+
+**Manual (alternativa):**
+
+```bash
+cd /opt/financeira && git fetch origin main && git reset --hard origin/main
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod build app migrate
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --force-recreate app
+```
+
+O `up --force-recreate` reaplica migrações pendentes automaticamente (o app depende do `migrate`).
 
 ## Operação
 
