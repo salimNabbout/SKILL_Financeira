@@ -1,27 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { Button, Field, inputClass } from "@/components/ui";
-import type { CostClassification } from "@/core/entities";
 import { createPayableAction } from "../actions";
 
-/** Fornecedor com a classificação de custo, para o espelho reativo no form. */
+/** Fornecedor exibido no select de novo título. */
 export interface SupplierOption {
   id: string;
   name: string;
-  costClassification?: CostClassification;
-}
-
-function costLabel(c?: CostClassification): string {
-  if (c === "fixed") return "Custo Fixo";
-  if (c === "variable") return "Custo Variável";
-  return "—";
 }
 
 /**
- * Formulário de novo título a pagar. Client component para espelhar a
- * Classificação de CUSTO do fornecedor selecionado (somente leitura) — a caixa
- * "Categoria" lista Categorias de Fornecedores (texto), não o plano de contas.
+ * Formulário de novo título a pagar. As caixas "Categoria" (Categorias de
+ * Fornecedores) e "Classificação do CUSTO" (Custo Fixo/Variável) são
+ * selecionáveis — nenhuma deriva do cadastro do fornecedor.
  */
 export function NewPayableForm({
   suppliers,
@@ -32,25 +23,10 @@ export function NewPayableForm({
   categories: string[];
   today: string;
 }) {
-  const byId = useMemo(() => {
-    const m = new Map<string, SupplierOption>();
-    for (const s of suppliers) m.set(s.id, s);
-    return m;
-  }, [suppliers]);
-
-  const [supplierId, setSupplierId] = useState("");
-  const cost = supplierId ? byId.get(supplierId)?.costClassification : undefined;
-
   return (
     <form action={createPayableAction} className="grid gap-4 md:grid-cols-3">
       <Field label="Fornecedor">
-        <select
-          name="supplierId"
-          required
-          value={supplierId}
-          onChange={(e) => setSupplierId(e.target.value)}
-          className={inputClass}
-        >
+        <select name="supplierId" required className={inputClass} defaultValue="">
           <option value="">Selecione…</option>
           {suppliers.map((s) => (
             <option key={s.id} value={s.id}>
@@ -82,7 +58,7 @@ export function NewPayableForm({
         />
       </Field>
       <Field label="Categoria">
-        <select name="supplierCategory" className={inputClass}>
+        <select name="supplierCategory" className={inputClass} defaultValue="">
           <option value="">— selecione —</option>
           {categories.map((c) => (
             <option key={c} value={c}>
@@ -97,11 +73,11 @@ export function NewPayableForm({
         ) : null}
       </Field>
       <Field label="Classificação do CUSTO">
-        {/* Espelho da classificação do fornecedor selecionado (somente leitura). */}
-        <input value={costLabel(cost)} readOnly disabled className={inputClass} />
-        <span className="mt-1 block text-xs text-[var(--ink-muted)]">
-          Definida no cadastro do fornecedor.
-        </span>
+        <select name="costClassification" className={inputClass} defaultValue="">
+          <option value="">— selecione —</option>
+          <option value="fixed">Custo Fixo</option>
+          <option value="variable">Custo Variável</option>
+        </select>
       </Field>
       <div className="flex items-end">
         <Button>Criar título</Button>

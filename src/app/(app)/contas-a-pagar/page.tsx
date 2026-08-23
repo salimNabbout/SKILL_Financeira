@@ -48,10 +48,9 @@ export default async function ContasAPagarPage({
   const activeAccounts = bankAccounts.filter((b) => b.active);
   const rows = page.items;
 
-  // Opções do fornecedor levam a classificação de custo (espelho reativo no form).
   const supplierOptions: SupplierOption[] = suppliers
     .filter((s) => s.active)
-    .map((s) => ({ id: s.id, name: s.name, costClassification: s.costClassification }));
+    .map((s) => ({ id: s.id, name: s.name }));
   const categoryOptions = [...supplierCategories]
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
