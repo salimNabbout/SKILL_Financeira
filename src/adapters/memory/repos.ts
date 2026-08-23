@@ -328,13 +328,25 @@ class MemReceivableRepo extends MemBase<Receivable> implements ReceivableRepo {
   }
   async listPage(
     companyId: ID,
-    query: { offset?: number; limit?: number; statuses?: ReceivableStatus[] }
+    query: {
+      offset?: number;
+      limit?: number;
+      statuses?: ReceivableStatus[];
+      customerId?: ID;
+      dueFrom?: ISODate;
+      dueTo?: ISODate;
+    }
   ) {
+    // dueDate é ISODate (YYYY-MM-DD): comparação lexicográfica = cronológica.
+    // Filtros aplicados ANTES da paginação para que `total` reflita o filtro.
     const filtered = this.items
       .filter(
         (r) =>
           r.companyId === companyId &&
-          (query.statuses === undefined || query.statuses.includes(r.status))
+          (query.statuses === undefined || query.statuses.includes(r.status)) &&
+          (query.customerId === undefined || r.customerId === query.customerId) &&
+          (query.dueFrom === undefined || r.dueDate >= query.dueFrom) &&
+          (query.dueTo === undefined || r.dueDate <= query.dueTo)
       )
       .sort((a, b) =>
         a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
