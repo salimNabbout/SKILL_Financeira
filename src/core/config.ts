@@ -185,9 +185,18 @@ export function resolveCompanyConfig(raw: unknown): CompanyConfig {
       ? (r.dunningSteps as DunningStep[])
       : d.dunningSteps;
 
+  // Agendas: a lista da empresa tem precedência (customizações preservadas),
+  // mas as agendas padrão cujo id ela não define são ACRESCENTADAS. Assim,
+  // agendas novas do sistema (ex.: recorrência) passam a valer também para
+  // empresas com config antigo, sem sobrescrever o que a empresa customizou.
   const schedules =
     Array.isArray(r.schedules) && r.schedules.length > 0
-      ? (r.schedules as ScheduleDefinition[])
+      ? (() => {
+          const own = r.schedules as ScheduleDefinition[];
+          const ownIds = new Set(own.map((s) => s.id));
+          const missing = d.schedules.filter((s) => !ownIds.has(s.id));
+          return [...own, ...missing];
+        })()
       : d.schedules;
 
   const passwordPolicy = isPlainObject(r.passwordPolicy)
