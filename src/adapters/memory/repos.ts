@@ -264,13 +264,25 @@ class MemPayableRepo extends MemBase<Payable> implements PayableRepo {
   }
   async listPage(
     companyId: ID,
-    query: { offset?: number; limit?: number; statuses?: PayableStatus[] }
+    query: {
+      offset?: number;
+      limit?: number;
+      statuses?: PayableStatus[];
+      supplierId?: ID;
+      dueFrom?: ISODate;
+      dueTo?: ISODate;
+    }
   ) {
+    // dueDate é ISODate (YYYY-MM-DD): comparação lexicográfica = cronológica.
+    // Filtros aplicados ANTES da paginação para que `total` reflita o filtro.
     const filtered = this.items
       .filter(
         (p) =>
           p.companyId === companyId &&
-          (query.statuses === undefined || query.statuses.includes(p.status))
+          (query.statuses === undefined || query.statuses.includes(p.status)) &&
+          (query.supplierId === undefined || p.supplierId === query.supplierId) &&
+          (query.dueFrom === undefined || p.dueDate >= query.dueFrom) &&
+          (query.dueTo === undefined || p.dueDate <= query.dueTo)
       )
       .sort((a, b) =>
         a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
