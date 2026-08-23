@@ -27,7 +27,7 @@ import {
   type ISODate,
   type ISOMonth,
 } from "@/core/dates";
-import { formatBRL } from "@/core/money";
+import { formatBRL, payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import type { ReportNarrative } from "@/core/ai";
 import { ValidationError } from "@/core/errors";
 import type { AlertSeverity, PendingItem, SkillAlert } from "@/core/types";
@@ -242,14 +242,6 @@ const FORMULA_TREND =
 // Helpers de leitura (somente leitura — sem efeitos colaterais)
 // ---------------------------------------------------------------------------
 
-function payableRemaining(p: Payable): number {
-  return Math.max(0, p.amountCents - p.paidCents);
-}
-
-function receivableRemaining(r: Receivable): number {
-  return Math.max(0, r.amountCents - r.receivedCents);
-}
-
 /** % com 1 casa decimal, apenas para exibição (dinheiro permanece inteiro). */
 function ratioPercent(partCents: number, wholeCents: number): number {
   return wholeCents > 0 ? Math.round((partCents * 1000) / wholeCents) / 10 : 0;
@@ -325,13 +317,13 @@ async function computeDailySummary(ctx: SkillContext): Promise<DailyComputation>
   const receivablesDueToday = openReceivables.filter((r) => r.dueDate === today);
   const overduePayablesCents = openPayables
     .filter((p) => p.dueDate < today)
-    .reduce((acc, p) => acc + payableRemaining(p), 0);
+    .reduce((acc, p) => acc + payableRemainingCents(p), 0);
   const overdueReceivablesCents = openReceivables
     .filter((r) => r.dueDate < today)
-    .reduce((acc, r) => acc + receivableRemaining(r), 0);
-  const payablesPortfolioCents = openPayables.reduce((acc, p) => acc + payableRemaining(p), 0);
+    .reduce((acc, r) => acc + receivableRemainingCents(r), 0);
+  const payablesPortfolioCents = openPayables.reduce((acc, p) => acc + payableRemainingCents(p), 0);
   const receivablesPortfolioCents = openReceivables.reduce(
-    (acc, r) => acc + receivableRemaining(r),
+    (acc, r) => acc + receivableRemainingCents(r),
     0
   );
 
@@ -344,10 +336,10 @@ async function computeDailySummary(ctx: SkillContext): Promise<DailyComputation>
   // Projeção 7d: vencidos e não liquidados entram como movimento de hoje.
   const inflows7dCents = openReceivables
     .filter((r) => r.dueDate <= horizonEnd)
-    .reduce((acc, r) => acc + receivableRemaining(r), 0);
+    .reduce((acc, r) => acc + receivableRemainingCents(r), 0);
   const outflows7dCents = openPayables
     .filter((p) => p.dueDate <= horizonEnd)
-    .reduce((acc, p) => acc + payableRemaining(p), 0);
+    .reduce((acc, p) => acc + payableRemainingCents(p), 0);
   const projected7dEndingBalanceCents = availableCents + inflows7dCents - outflows7dCents;
 
   // Riscos — regras explícitas:
@@ -415,10 +407,10 @@ async function computeDailySummary(ctx: SkillContext): Promise<DailyComputation>
     date: today,
     facts: {
       availableCents,
-      payablesDueTodayCents: payablesDueToday.reduce((acc, p) => acc + payableRemaining(p), 0),
+      payablesDueTodayCents: payablesDueToday.reduce((acc, p) => acc + payableRemainingCents(p), 0),
       payablesDueTodayCount: payablesDueToday.length,
       receivablesDueTodayCents: receivablesDueToday.reduce(
-        (acc, r) => acc + receivableRemaining(r),
+        (acc, r) => acc + receivableRemainingCents(r),
         0
       ),
       receivablesDueTodayCount: receivablesDueToday.length,
@@ -719,10 +711,10 @@ async function computeExecutiveOverview(ctx: SkillContext): Promise<ExecutiveCom
   ]);
   const overduePayablesCents = openPayables
     .filter((p) => p.dueDate < today)
-    .reduce((acc, p) => acc + payableRemaining(p), 0);
+    .reduce((acc, p) => acc + payableRemainingCents(p), 0);
   const overdueReceivablesCents = openReceivables
     .filter((r) => r.dueDate < today)
-    .reduce((acc, r) => acc + receivableRemaining(r), 0);
+    .reduce((acc, r) => acc + receivableRemainingCents(r), 0);
   const pendingApprovalsCount = (
     await ctx.repos.approvals.listByStatus(ctx.companyId, ["pending"])
   ).length;

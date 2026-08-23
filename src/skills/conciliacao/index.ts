@@ -25,7 +25,7 @@ import type {
 } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
 import { hashPayload } from "@/core/ids";
-import { formatBRL } from "@/core/money";
+import { formatBRL, payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 import { normalizeText, parseCnab240, parseCsvStatement, parseOfx } from "@/lib/importers";
@@ -337,7 +337,7 @@ async function applySettlement(
     }
     const receivable = await ctx.repos.receivables.getById(ctx.companyId, match.targetId);
     if (!receivable) throw new NotFoundError("Título a receber", match.targetId);
-    const remaining = receivable.amountCents - receivable.receivedCents;
+    const remaining = receivableRemainingCents(receivable);
     if (remaining <= 0 || receivable.status === "canceled" || receivable.status === "received") {
       throw new ValidationError(
         `Título a receber ${receivable.id} não possui saldo em aberto para conciliar (status: ${receivable.status}).`
@@ -396,7 +396,7 @@ async function applySettlement(
     const amount = applied;
     const payable = await ctx.repos.payables.getById(ctx.companyId, match.targetId);
     if (!payable) throw new NotFoundError("Título a pagar", match.targetId);
-    const remaining = payable.amountCents - payable.paidCents;
+    const remaining = payableRemainingCents(payable);
     if (remaining <= 0 || payable.status === "canceled" || payable.status === "paid") {
       throw new ValidationError(
         `Título a pagar ${payable.id} não possui saldo em aberto para conciliar (status: ${payable.status}).`
@@ -774,10 +774,12 @@ async function autoMatch(
   );
 
   // Controle de saldo restante EM MEMÓRIA durante o lote: um título não pode
-  // ser casado por duas transações além do saldo.
-  const payableRemaining = new Map(payables.map((p) => [p.id, p.amountCents - p.paidCents]));
+  // ser casado por duas transações além do saldo. O saldo inicial é clampado
+  // em 0 (helper) — títulos sem saldo (≤0) não casam, e as subtrações abaixo
+  // já usam Math.max(0, ...), então o pareamento não muda.
+  const payableRemaining = new Map(payables.map((p) => [p.id, payableRemainingCents(p)]));
   const receivableRemaining = new Map(
-    receivables.map((r) => [r.id, r.amountCents - r.receivedCents])
+    receivables.map((r) => [r.id, receivableRemainingCents(r)])
   );
   // Sugestões pendentes de rodadas anteriores também reservam saldo do alvo
   // (a porção do match, quando presente; senão o valor da transação).

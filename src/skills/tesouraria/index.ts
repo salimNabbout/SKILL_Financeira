@@ -39,7 +39,7 @@ import {
   toUtcNoon,
   type ISODate,
 } from "@/core/dates";
-import { formatBRL, percentOf } from "@/core/money";
+import { formatBRL, payableRemainingCents, percentOf, receivableRemainingCents } from "@/core/money";
 import { median, robustStdDev, theilSenTrend, trendAt } from "@/core/stats";
 import type { SkillAlert } from "@/core/types";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
@@ -316,14 +316,6 @@ async function loadCashBase(ctx: SkillContext): Promise<CashBase> {
     pendingPayments,
     pendingByPayable,
   };
-}
-
-function payableRemainingCents(p: Payable): number {
-  return Math.max(0, p.amountCents - p.paidCents);
-}
-
-function receivableRemainingCents(r: Receivable): number {
-  return Math.max(0, r.amountCents - r.receivedCents);
 }
 
 function committedCents(base: CashBase): number {

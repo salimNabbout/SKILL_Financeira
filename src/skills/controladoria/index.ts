@@ -12,7 +12,7 @@ import { z } from "zod";
 import { addDays, monthOf, type ISODate, type ISOMonth } from "@/core/dates";
 import type { Category, DreGroup, ID, Payable, Receivable } from "@/core/entities";
 import { NotFoundError } from "@/core/errors";
-import { formatBRL } from "@/core/money";
+import { formatBRL, payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -542,8 +542,8 @@ async function indicators(
   // --- Capital de giro (foto de hoje) --------------------------------------
   const arOpen = await ctx.repos.receivables.listByStatus(ctx.companyId, AR_OPEN_STATUSES);
   const apOpen = await ctx.repos.payables.listByStatus(ctx.companyId, AP_OPEN_STATUSES);
-  const arOpenCents = arOpen.reduce((acc, r) => acc + (r.amountCents - r.receivedCents), 0);
-  const apOpenCents = apOpen.reduce((acc, p) => acc + (p.amountCents - p.paidCents), 0);
+  const arOpenCents = arOpen.reduce((acc, r) => acc + receivableRemainingCents(r), 0);
+  const apOpenCents = apOpen.reduce((acc, p) => acc + payableRemainingCents(p), 0);
   const capitalGiroCents = arOpenCents - apOpenCents;
   entries.push({
     key: "capital_giro",
