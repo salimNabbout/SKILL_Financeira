@@ -88,7 +88,7 @@ export function Badge({
 }) {
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${BADGE_TONES[tone] ?? BADGE_TONES.neutral}`}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-full border px-2 py-0.5 text-center text-xs font-medium ${BADGE_TONES[tone] ?? BADGE_TONES.neutral}`}
     >
       {children}
     </span>
@@ -156,7 +156,7 @@ export function Button({
   formAction,
 }: {
   children: ReactNode;
-  variant?: "primary" | "secondary" | "danger";
+  variant?: "primary" | "secondary" | "danger" | "success";
   type?: "submit" | "button";
   name?: string;
   value?: string;
@@ -168,7 +168,9 @@ export function Button({
       ? "bg-[var(--brand)] text-[var(--brand-ink)] hover:opacity-90"
       : variant === "danger"
         ? "bg-[var(--crit)] text-white hover:opacity-90"
-        : "border border-[var(--line)] bg-white text-[var(--ink)] hover:bg-slate-50";
+        : variant === "success"
+          ? "bg-[var(--ok)] text-white hover:opacity-90"
+          : "border border-[var(--line)] bg-white text-[var(--ink)] hover:bg-slate-50";
   return (
     <button
       type={type}

@@ -660,7 +660,6 @@ describe("payables", () => {
       amountCents: 100_000,
       scheduledDate: "2026-08-20",
       status: "pending_approval",
-      method: "pix",
       requestedBy: "usr_analyst",
       createdAt: now,
       updatedAt: now,
@@ -780,7 +779,6 @@ describe("approvals", () => {
         payableId: "pay_x",
         bankAccountId: "acc_1",
         scheduledDate: "2026-08-20",
-        method: "pix",
       },
     });
     expect(res.status).toBe("awaiting_approval");

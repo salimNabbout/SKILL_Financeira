@@ -148,7 +148,6 @@ async function seedPayment(
     scheduledDate,
     executedAt: status === "executed" ? `${scheduledDate}T14:00:00Z` : undefined,
     status,
-    method: "pix",
     requestedBy: "usr_analyst",
     executedBy: status === "executed" ? "usr_manager" : undefined,
     createdAt: now,

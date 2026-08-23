@@ -60,7 +60,6 @@ const schedulePaymentSchema = z.object({
   payableId: z.string().min(1),
   bankAccountId: z.string().min(1),
   scheduledDate: isoDateSchema,
-  method: z.enum(["pix", "ted", "boleto", "debit"]),
   amountCents: z.number().int().positive().optional(),
 });
 
@@ -480,7 +479,6 @@ async function schedulePayment(
     amountCents: amount,
     scheduledDate: input.scheduledDate,
     status: "pending_approval",
-    method: input.method,
     requestedBy: ctx.actor.id,
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -517,7 +515,6 @@ async function schedulePayment(
       payableId: payable.id,
       amountCents: amount,
       scheduledDate: payment.scheduledDate,
-      method: payment.method,
     },
     source: SKILL,
     correlationId: ctx.correlationId,

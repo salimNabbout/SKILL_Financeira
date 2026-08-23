@@ -120,7 +120,6 @@ async function schedule(env: TestEnv, payableId: string, amountCents?: number) {
     payableId,
     bankAccountId: "ba_1",
     scheduledDate: "2026-08-19",
-    method: "pix",
     ...(amountCents !== undefined ? { amountCents } : {}),
   });
   return { res, data: res.data as SchedulePaymentData };
@@ -158,7 +157,6 @@ async function decide(
     payableId: "ignorado-na-retomada",
     bankAccountId: "ba_1",
     scheduledDate: "2026-08-19",
-    method: "pix",
   });
   return { res, data: res.data as SchedulePaymentData };
 }
@@ -520,7 +518,6 @@ describe("contas_a_pagar — schedule_payment e aprovação", () => {
       payableId: payable.id,
       bankAccountId: "ba_nao_existe",
       scheduledDate: "2026-08-19",
-      method: "pix",
     });
     expect(badAccount.status).toBe("error");
     expect(badAccount.alerts[0].code).toBe("not_found");

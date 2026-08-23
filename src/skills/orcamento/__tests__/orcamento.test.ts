@@ -91,7 +91,6 @@ function seedExecutedPayment(
     scheduledDate: executedAt.slice(0, 10),
     executedAt,
     status: "executed",
-    method: "pix",
     requestedBy: "usr_analyst",
     executedBy: "usr_approver",
     createdAt: now,

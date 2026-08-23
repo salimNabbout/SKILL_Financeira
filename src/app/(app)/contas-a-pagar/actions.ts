@@ -102,9 +102,8 @@ export async function schedulePaymentAction(formData: FormData): Promise<void> {
   const payableId = fdString(formData, "payableId");
   const bankAccountId = fdString(formData, "bankAccountId");
   const scheduledDate = fdString(formData, "scheduledDate");
-  const method = fdString(formData, "method");
-  if (!payableId || !bankAccountId || !scheduledDate || !method) {
-    fail("Preencha conta bancária, data e método do pagamento.");
+  if (!payableId || !bankAccountId || !scheduledDate) {
+    fail("Preencha conta bancária e data do pagamento.");
   }
 
   // Fornecedor do título, para a mensagem deixar claro o que foi enviado.
@@ -127,7 +126,7 @@ export async function schedulePaymentAction(formData: FormData): Promise<void> {
       flow: "schedule_payment",
       companyId: session.company.id,
       actor: session.actor,
-      payload: { payableId, bankAccountId, scheduledDate, method },
+      payload: { payableId, bankAccountId, scheduledDate },
     });
   } catch (error) {
     fail(errorMessage(error));

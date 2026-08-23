@@ -226,7 +226,6 @@ export interface Payable {
 }
 
 export type ReceivableStatus = "open" | "partially_received" | "received" | "canceled";
-export type PaymentMethod = "pix" | "ted" | "boleto" | "debit";
 export type ReceiptMethod = "pix" | "boleto" | "card" | "transfer" | "cash";
 
 export interface Receivable {
@@ -267,7 +266,6 @@ export interface Payment {
   scheduledDate: ISODate;
   executedAt?: string;
   status: PaymentStatus;
-  method: PaymentMethod;
   approvalId?: ID;
   requestedBy: ID;
   executedBy?: ID;
