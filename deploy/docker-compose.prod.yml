@@ -63,5 +63,28 @@ services:
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
 
+  # Agendador de rotinas: dispara os fluxos das agendas (recorrência de títulos,
+  # sincronização bancária, resumo diário, régua de cobrança) nas horas locais
+  # configuradas. Reaproveita a imagem `migrate` (tem node_modules + src +
+  # scripts + tsx). Idempotente por construção — não duplica títulos/rotinas.
+  scheduler:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: migrate
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public"
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-America/Sao_Paulo}
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    command: ["npx", "tsx", "scripts/scheduler.ts"]
+
 volumes:
   financeira_pgdata:

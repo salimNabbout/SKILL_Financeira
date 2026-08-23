@@ -145,11 +145,22 @@ Host financeira
 
 ```bash
 cd /opt/financeira && git fetch origin main && git reset --hard origin/main
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod build app migrate
-docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --force-recreate app
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod build app migrate scheduler
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod up -d --force-recreate app scheduler
 ```
 
-O `up --force-recreate` reaplica migrações pendentes automaticamente (o app depende do `migrate`).
+O `up --force-recreate` reaplica migrações pendentes automaticamente (app e scheduler dependem do `migrate`).
+
+## Agendador (scheduler)
+
+O serviço **`scheduler`** roda `scripts/scheduler.ts` continuamente (`restart: unless-stopped`) e dispara as rotinas nas horas locais configuradas: **recorrência de títulos (5h)**, sincronização bancária (6h), resumo diário (7h) e régua de cobrança (8h). Sem ele, essas rotinas **não** executam sozinhas. É idempotente (não duplica títulos/rotinas) e seguro (cobrança só agenda mensagens; pagamentos param em aprovação).
+
+```bash
+# logs do agendador
+docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f scheduler
+# forçar disparo mais rápido para testar (intervalo em ms; default 60000)
+# (definir SCHEDULER_INTERVAL_MS no serviço scheduler do compose)
+```
 
 ## Operação
 
