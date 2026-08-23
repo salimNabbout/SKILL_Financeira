@@ -165,10 +165,19 @@ export interface ReceivableRepo extends BaseRepo<Receivable> {
   listByStatus(companyId: ID, statuses: ReceivableStatus[]): Promise<Receivable[]>;
   listDueBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Receivable[]>;
   listByCustomer(companyId: ID, customerId: ID): Promise<Receivable[]>;
-  /** Ordem: vencimento asc, id asc. */
+  /**
+   * Ordem: vencimento asc, id asc. Filtros de status, cliente e intervalo de
+   * vencimento (dueFrom/dueTo, inclusivos) são aplicados no banco — a paginação
+   * e o `total` refletem o filtro.
+   */
   listPage(
     companyId: ID,
-    query: PageQuery & { statuses?: ReceivableStatus[] }
+    query: PageQuery & {
+      statuses?: ReceivableStatus[];
+      customerId?: ID;
+      dueFrom?: ISODate;
+      dueTo?: ISODate;
+    }
   ): Promise<Page<Receivable>>;
 }
 
