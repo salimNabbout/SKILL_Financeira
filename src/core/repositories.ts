@@ -35,6 +35,7 @@ import type {
   Payable,
   PayableStatus,
   Payment,
+  RecurringTemplate,
   PaymentStatus,
   Receipt,
   Receivable,
@@ -106,6 +107,12 @@ export interface SupplierRepo extends BaseRepo<Supplier> {
   delete(companyId: ID, id: ID): Promise<void>;
 }
 export type SupplierCategoryRepo = BaseRepo<SupplierCategory>;
+
+export interface RecurringTemplateRepo extends BaseRepo<RecurringTemplate> {
+  /** Recorrências com status "active" (candidatas à geração). */
+  listActive(companyId: ID): Promise<RecurringTemplate[]>;
+}
+
 export type BankAccountRepo = BaseRepo<BankAccount>;
 export type CategoryRepo = BaseRepo<Category>;
 export type CostCenterRepo = BaseRepo<CostCenter>;
@@ -291,6 +298,7 @@ export interface Repositories {
   customers: CustomerRepo;
   suppliers: SupplierRepo;
   supplierCategories: SupplierCategoryRepo;
+  recurringTemplates: RecurringTemplateRepo;
   bankAccounts: BankAccountRepo;
   bankTransactions: BankTransactionRepo;
   payables: PayableRepo;

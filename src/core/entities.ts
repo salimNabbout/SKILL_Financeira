@@ -120,6 +120,39 @@ export interface SupplierCategory {
   updatedAt: string;
 }
 
+/** Tipo de recorrência: título a pagar ou a receber. */
+export type RecurringKind = "payable" | "receivable";
+/** Estado da recorrência. `paused` suspende a geração; `ended` a encerra. */
+export type RecurringStatus = "active" | "paused" | "ended";
+
+/**
+ * Modelo de recorrência mensal. Cadastrado uma vez; o scheduler gera o título
+ * do mês (a pagar ou a receber) automaticamente, com vencimento no `dueDay`.
+ */
+export interface RecurringTemplate {
+  id: ID;
+  companyId: ID;
+  kind: RecurringKind;
+  /** Fornecedor (kind=payable) ou cliente (kind=receivable). */
+  counterpartyId: ID;
+  description: string;
+  amountCents: number;
+  /** Dia do vencimento (1–31); dias inexistentes caem no último dia do mês. */
+  dueDay: number;
+  /** Categoria de fornecedor (texto), só para kind=payable. */
+  category?: string;
+  /** Classificação de custo, só para kind=payable. */
+  costClassification?: CostClassification;
+  /** A partir de quando gerar (inclusive). */
+  startDate: ISODate;
+  /** Até quando gerar (inclusive); ausente = indefinido. */
+  endDate?: ISODate;
+  status: RecurringStatus;
+  createdBy: ID;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type BankAccountType = "checking" | "savings" | "payment";
 
 export interface BankAccount {

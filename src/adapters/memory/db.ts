@@ -29,6 +29,7 @@ import type {
   Receipt,
   Receivable,
   ReconciliationMatch,
+  RecurringTemplate,
   SkillExecution,
   Supplier,
   SupplierCategory,
@@ -42,6 +43,7 @@ export class MemoryDb {
   customers: Customer[] = [];
   suppliers: Supplier[] = [];
   supplierCategories: SupplierCategory[] = [];
+  recurringTemplates: RecurringTemplate[] = [];
   bankAccounts: BankAccount[] = [];
   bankTransactions: BankTransaction[] = [];
   payables: Payable[] = [];

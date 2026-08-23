@@ -13,6 +13,7 @@ import { z } from "zod";
 import { assertSegregation, hasPermission } from "@/core/auth";
 import { addDays, addMonths, diffDays, isISODate, minDate, type ISODate } from "@/core/dates";
 import type { FinancialDocument, Payable, Payment } from "@/core/entities";
+import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import { NotFoundError, PermissionError, ValidationError } from "@/core/errors";
 import { hashPayload } from "@/core/ids";
 import { computeLateFee, formatBRL, splitInstallments, type CurrencyCode } from "@/core/money";
@@ -83,6 +84,10 @@ const cancelPayableSchema = z.object({
   reason: z.string().min(1),
 });
 
+const generateRecurringSchema = z.object({
+  action: z.literal("generate_recurring"),
+});
+
 export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   createPayableSchema,
   schedulePaymentSchema,
@@ -90,6 +95,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   forecastDisbursementsSchema,
   detectDuplicatesSchema,
   cancelPayableSchema,
+  generateRecurringSchema,
 ]);
 
 export type CreatePayableInput = z.infer<typeof createPayableSchema>;
@@ -98,6 +104,7 @@ export type ListDueInput = z.infer<typeof listDueSchema>;
 export type ForecastDisbursementsInput = z.infer<typeof forecastDisbursementsSchema>;
 export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
+export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
 export type ContasAPagarInput = z.infer<typeof contasAPagarInputSchema>;
 
 // ---------------------------------------------------------------------------
@@ -167,13 +174,19 @@ export interface CancelPayableData {
   reason: string;
 }
 
+export interface GenerateRecurringData {
+  /** Títulos criados nesta rodada (vazio se nada era devido ou já existia). */
+  generated: Array<{ templateId: string; payableId: string; dueDate: string }>;
+}
+
 export type ContasAPagarData =
   | CreatePayableData
   | SchedulePaymentData
   | ListDueData
   | ForecastDisbursementsData
   | DetectDuplicatesData
-  | CancelPayableData;
+  | CancelPayableData
+  | GenerateRecurringData;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1034,6 +1047,49 @@ async function cancelPayable(
   );
 }
 
+/**
+ * Gera os títulos a pagar recorrentes devidos no mês corrente. Para cada
+ * template ativo (kind=payable) cuja janela inclui o mês de hoje, cria o título
+ * do mês reaproveitando createPayable — idempotente por originKey (que inclui o
+ * vencimento do mês), então rodar de novo no mesmo mês não duplica.
+ */
+async function generateRecurring(
+  ctx: SkillContext
+): Promise<SkillResult<GenerateRecurringData>> {
+  const today = ctx.today();
+  const templates = await ctx.repos.recurringTemplates.listActive(ctx.companyId);
+  const generated: GenerateRecurringData["generated"] = [];
+
+  for (const t of templates) {
+    if (t.kind !== "payable") continue; // Contas a Receber vem em etapa posterior.
+    const month = shouldGenerateFor(t, today);
+    if (!month) continue;
+
+    const dueDate = dueDateForMonth(t, month);
+    // createPayable é idempotente por originKey; para saber se o título é NOVO
+    // (e não um replay do mesmo mês), comparamos a contagem antes/depois.
+    const before = (await ctx.repos.payables.listAll(ctx.companyId)).length;
+    const result = await createPayable(ctx, {
+      action: "create_payable",
+      supplierId: t.counterpartyId,
+      description: `${t.description} (recorrência ${month})`,
+      issueDate: dueDate,
+      dueDate,
+      amountCents: t.amountCents,
+      supplierCategory: t.category,
+      costClassification: t.costClassification,
+      installmentCount: 1,
+    });
+    const after = (await ctx.repos.payables.listAll(ctx.companyId)).length;
+    const payable = (result.data as CreatePayableData | undefined)?.payables?.[0];
+    if (payable && after > before) {
+      generated.push({ templateId: t.id, payableId: payable.id, dueDate });
+    }
+  }
+
+  return makeResult(SKILL, ctx, { generated }, { dataSources: DATA_SOURCES });
+}
+
 // ---------------------------------------------------------------------------
 // Definição da skill
 // ---------------------------------------------------------------------------
@@ -1068,6 +1124,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return detectDuplicates(ctx);
       case "cancel_payable":
         return cancelPayable(ctx, input);
+      case "generate_recurring":
+        return generateRecurring(ctx);
     }
   },
 };

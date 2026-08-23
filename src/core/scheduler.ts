@@ -44,6 +44,15 @@ export const DEFAULT_SCHEDULES: ScheduleDefinition[] = [
   },
   { id: "resumo_diario", flow: "daily_summary", cadence: "daily", hourLocal: 7, enabled: true },
   { id: "regua_cobranca", flow: "dunning_run", cadence: "daily", hourLocal: 8, enabled: true },
+  {
+    // Gera os títulos recorrentes do mês. Roda diariamente e o próprio flow
+    // decide o que é devido (idempotente); pega quem cadastrar durante o mês.
+    id: "recorrencia_titulos",
+    flow: "recurring_titles_generate",
+    cadence: "daily",
+    hourLocal: 5,
+    enabled: true,
+  },
 ];
 
 const HOUR_MS = 60 * 60 * 1000;

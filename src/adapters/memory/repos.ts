@@ -26,6 +26,7 @@ import type {
   ReceivableStatus,
   ReconciliationMatch,
   ReconciliationStatus,
+  RecurringTemplate,
   SkillExecution,
   Supplier,
   User,
@@ -52,6 +53,7 @@ import type {
   ReceiptRepo,
   ReceivableRepo,
   ReconciliationRepo,
+  RecurringTemplateRepo,
   Repositories,
   SkillExecutionRepo,
   SupplierRepo,
@@ -274,6 +276,17 @@ class MemPayableRepo extends MemBase<Payable> implements PayableRepo {
         a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1
       );
     return paginate(filtered, query);
+  }
+}
+
+class MemRecurringTemplateRepo
+  extends MemBase<RecurringTemplate>
+  implements RecurringTemplateRepo
+{
+  async listActive(companyId: ID) {
+    return clone(
+      this.items.filter((t) => t.companyId === companyId && t.status === "active")
+    );
   }
 }
 
@@ -580,6 +593,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     customers: new MemBase(db.customers),
     suppliers: new MemSupplierRepo(db.suppliers),
     supplierCategories: new MemBase(db.supplierCategories),
+    recurringTemplates: new MemRecurringTemplateRepo(db.recurringTemplates),
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),
     payables: new MemPayableRepo(db.payables),
