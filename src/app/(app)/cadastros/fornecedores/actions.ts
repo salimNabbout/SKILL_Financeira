@@ -183,8 +183,9 @@ export async function updateSupplierAction(formData: FormData): Promise<void> {
   const costClassification: CostClassification | undefined =
     costRaw === "fixed" || costRaw === "variable" ? costRaw : undefined;
 
+  let updated;
   try {
-    const updated = await updateSupplierFields(container, companyId, id, {
+    updated = await updateSupplierFields(container, companyId, id, {
       name: rawName,
       document: fdOptional(formData, "document"),
       email: fdOptional(formData, "email"),
@@ -199,10 +200,12 @@ export async function updateSupplierAction(formData: FormData): Promise<void> {
       entityId: updated.id,
       after: updated,
     });
-    ok(`Fornecedor "${updated.name}" atualizado.`);
   } catch (error) {
     fail(errorMessage(error));
   }
+  // ok() chama redirect(), que lança NEXT_REDIRECT — precisa ficar FORA do try,
+  // senão o catch acima o captura e o exibe como erro na tela.
+  ok(`Fornecedor "${updated.name}" atualizado.`);
 }
 
 /** Exclui o fornecedor selecionado no campo FORNECEDOR (só se não tiver títulos). */
@@ -217,8 +220,9 @@ export async function deleteSupplierAction(formData: FormData): Promise<void> {
   const name = fdString(formData, "name");
   if (!name) fail("Selecione um fornecedor no campo FORNECEDOR para excluir.");
 
+  let deleted;
   try {
-    const deleted = await deleteSupplierByName(container, companyId, name);
+    deleted = await deleteSupplierByName(container, companyId, name);
     await container.audit.record(companyId, {
       actor: session.actor,
       action: "supplier.deleted",
@@ -226,8 +230,10 @@ export async function deleteSupplierAction(formData: FormData): Promise<void> {
       entityId: name,
       before: { name: deleted },
     });
-    ok(`Fornecedor "${deleted}" excluído.`);
   } catch (error) {
     fail(errorMessage(error));
   }
+  // ok() chama redirect(), que lança NEXT_REDIRECT — precisa ficar FORA do try,
+  // senão o catch acima o captura e o exibe como erro na tela.
+  ok(`Fornecedor "${deleted}" excluído.`);
 }
