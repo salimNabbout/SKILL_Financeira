@@ -28,6 +28,31 @@ describe("resolveCompanyConfig — merge profundo e validação (E1)", () => {
     const invalido = resolveCompanyConfig({ approvalTiers: "lixo" as unknown });
     expect(invalido.approvalTiers).toEqual(DEFAULT_COMPANY_CONFIG.approvalTiers);
   });
+
+  it("mescla agendas padrão faltantes quando a empresa tem lista customizada", () => {
+    // Config antigo: só as 3 agendas legadas, sem a recorrência.
+    const legado = [
+      { id: "sincronizacao_bancaria", flow: "bank_sync", cadence: "daily", enabled: true, hourLocal: 6 },
+      { id: "resumo_diario", flow: "daily_summary", cadence: "daily", enabled: true, hourLocal: 7 },
+      { id: "regua_cobranca", flow: "dunning_run", cadence: "daily", enabled: true, hourLocal: 8 },
+    ];
+    const config = resolveCompanyConfig({ schedules: legado });
+    const ids = config.schedules.map((s) => s.id);
+    // Preserva as customizadas E acrescenta as novas do sistema (recorrência).
+    expect(ids).toContain("sincronizacao_bancaria");
+    expect(ids).toContain("recorrencia_titulos");
+  });
+
+  it("respeita a customização da empresa para uma agenda que ela já define", () => {
+    // Empresa desabilitou a sincronização — a mescla NÃO deve reabilitá-la.
+    const config = resolveCompanyConfig({
+      schedules: [
+        { id: "sincronizacao_bancaria", flow: "bank_sync", cadence: "daily", enabled: false, hourLocal: 6 },
+      ],
+    });
+    const sync = config.schedules.find((s) => s.id === "sincronizacao_bancaria");
+    expect(sync?.enabled).toBe(false);
+  });
 });
 
 describe("requiredRoleForAmount — robusto à ordem dos tiers (E2)", () => {
