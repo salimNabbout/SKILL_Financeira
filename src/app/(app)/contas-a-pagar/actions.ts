@@ -28,7 +28,7 @@ function ok(message: string): never {
 
 export async function createPayableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
-  const { orchestrator, repos } = await getContainer();
+  const { orchestrator } = await getContainer();
 
   const supplierId = fdString(formData, "supplierId");
   const description = fdString(formData, "description");
@@ -51,14 +51,10 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     fail("Número de parcelas inválido (1 a 120).");
   }
 
-  // Classificação de custo é ESPELHO do fornecedor (não editável na tela).
-  let costClassification: Supplier["costClassification"];
-  try {
-    const supplier = await repos.suppliers.getById(session.company.id, supplierId);
-    costClassification = supplier?.costClassification;
-  } catch (error) {
-    fail(errorMessage(error));
-  }
+  // Classificação de custo é selecionável na tela (fixed | variable).
+  const costRaw = fdOptional(formData, "costClassification");
+  const costClassification: Supplier["costClassification"] =
+    costRaw === "fixed" || costRaw === "variable" ? costRaw : undefined;
 
   let response: OrchestratorResponse;
   try {
