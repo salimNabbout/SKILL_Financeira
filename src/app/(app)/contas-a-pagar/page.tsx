@@ -122,13 +122,7 @@ export default async function ContasAPagarPage({
                           defaultValue={p.dueDate >= today ? p.dueDate : today}
                           className={`${inputClass} w-36`}
                         />
-                        <select name="method" required className={`${inputClass} w-24`}>
-                          <option value="pix">Pix</option>
-                          <option value="ted">TED</option>
-                          <option value="boleto">Boleto</option>
-                          <option value="debit">Débito</option>
-                        </select>
-                        <Button variant="secondary">Pagar</Button>
+                        <Button variant="success">Pagar</Button>
                       </form>
                     ) : (
                       <span className="text-xs text-[var(--ink-muted)]">—</span>

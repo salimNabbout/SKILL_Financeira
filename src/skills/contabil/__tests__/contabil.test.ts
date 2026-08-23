@@ -128,7 +128,6 @@ function seedPayment(env: TestEnv, over: Partial<Payment> = {}): Payment {
     scheduledDate: "2026-08-15",
     executedAt: "2026-08-15T12:00:00Z",
     status: "executed",
-    method: "pix",
     approvalId: "apr_x",
     requestedBy: "usr_analyst",
     executedBy: "usr_approver",

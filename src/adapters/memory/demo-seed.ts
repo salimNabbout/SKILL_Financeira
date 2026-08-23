@@ -10,12 +10,7 @@
 import type { Clock } from "@/core/clock";
 import { DEFAULT_COMPANY_CONFIG } from "@/core/config";
 import { addDays, addMonths, monthOf, todayInTz, toUtcNoon, type ISODate } from "@/core/dates";
-import type {
-  PaymentMethod,
-  ReceiptMethod,
-  ReceivableStatus,
-  RoleName,
-} from "@/core/entities";
+import type { ReceiptMethod, ReceivableStatus, RoleName } from "@/core/entities";
 import type { Repositories } from "@/core/repositories";
 import { hashPassword } from "@/lib/password";
 
@@ -303,7 +298,6 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
     payableId: string;
     amountCents: number;
     date: ISODate;
-    method: PaymentMethod;
     requiredRole: RoleName;
     summary: string;
   }> = [
@@ -313,7 +307,6 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
       payableId: "pv_paid_1",
       amountCents: 780_000,
       date: paidDate1,
-      method: "ted",
       requiredRole: "finance_manager",
       summary: "Pagamento Torrefação Serra Alta — lote de café verde (R$ 7.800,00)",
     },
@@ -323,7 +316,6 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
       payableId: "pv_paid_2",
       amountCents: 139_520,
       date: paidDate2,
-      method: "pix",
       requiredRole: "approver",
       summary: "Pagamento Luz & Força Energia — fatura mensal (R$ 1.395,20)",
     },
@@ -354,7 +346,6 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
       scheduledDate: ps.date,
       executedAt: instantOf(ps.date),
       status: "executed",
-      method: ps.method,
       approvalId: ps.approvalId,
       requestedBy: "usr_carla",
       executedBy: "usr_bruno",

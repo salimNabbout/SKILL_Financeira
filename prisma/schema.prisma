@@ -308,7 +308,6 @@ model Payment {
   scheduledDate DateTime  @db.Date
   executedAt    DateTime?
   status        String // pending_approval | approved | executed | rejected | canceled
-  method        String // pix | ted | boleto | debit
   approvalId    String?
   requestedBy   String
   executedBy    String?

@@ -186,7 +186,6 @@ async function seedMainScenario(env: TestEnv): Promise<void> {
     amountCents: 250_000,
     scheduledDate: "2026-08-27",
     status: "pending_approval",
-    method: "pix",
     requestedBy: "usr_analyst",
     createdAt: now,
     updatedAt: now,
