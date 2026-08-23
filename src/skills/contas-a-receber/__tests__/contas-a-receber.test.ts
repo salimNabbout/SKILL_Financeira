@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createTestEnv, type TestEnv } from "@/adapters/memory/test-env";
-import type { Category, Customer, Invoice, Receivable } from "@/core/entities";
+import type {
+  Category,
+  Customer,
+  Invoice,
+  Receivable,
+  RecurringTemplate,
+} from "@/core/entities";
 import { runSkill } from "@/core/skill";
 import {
   contasAReceberSkill,
   type CreateReceivableData,
+  type GenerateRecurringData,
   type IssueChargeData,
   type ListOverdueData,
   type ProjectionData,
@@ -812,5 +819,67 @@ describe("contas_a_receber / issue_charge", () => {
     });
     expect(missing.status).toBe("error");
     expect(missing.alerts[0].code).toBe("not_found");
+  });
+});
+
+function seedTemplate(env: TestEnv, over: Partial<RecurringTemplate> = {}): RecurringTemplate {
+  const now = env.clock.now().toISOString();
+  const t: RecurringTemplate = {
+    id: `rec_${(seedSeq += 1)}`,
+    companyId: env.company.id,
+    kind: "receivable",
+    counterpartyId: "cus_1",
+    description: "Mensalidade",
+    amountCents: 50_000,
+    dueDay: 10,
+    startDate: "2026-01-01",
+    status: "active",
+    createdBy: env.actorFor("admin").id,
+    createdAt: now,
+    updatedAt: now,
+    ...over,
+  };
+  env.db.recurringTemplates.push(t);
+  return t;
+}
+
+describe("contas_a_receber — generate_recurring", () => {
+  it("gera o título a receber do mês corrente com vencimento no dueDay", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedTemplate(env, { dueDay: 10, amountCents: 50_000 });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(), { action: "generate_recurring" });
+
+    expect(res.status).toBe("success");
+    const data = res.data as GenerateRecurringData;
+    expect(data.generated).toHaveLength(1);
+    // TODAY = 2026-08-18 → mês 2026-08 → vencimento 2026-08-10
+    const r = env.db.receivables.find((x) => x.id === data.generated[0].receivableId);
+    expect(r?.dueDate).toBe("2026-08-10");
+    expect(r?.amountCents).toBe(50_000);
+  });
+
+  it("é idempotente: gerar duas vezes no mesmo mês não duplica", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedTemplate(env);
+
+    await runSkill(contasAReceberSkill, env.ctx(), { action: "generate_recurring" });
+    const second = await runSkill(contasAReceberSkill, env.ctx(), { action: "generate_recurring" });
+
+    expect(env.db.receivables).toHaveLength(1);
+    expect((second.data as GenerateRecurringData).generated).toHaveLength(0);
+  });
+
+  it("ignora templates de kind=payable (esses são do contas a pagar)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedTemplate(env, { kind: "payable", counterpartyId: "sup_1" });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(), { action: "generate_recurring" });
+
+    expect((res.data as GenerateRecurringData).generated).toHaveLength(0);
+    expect(env.db.receivables).toHaveLength(0);
   });
 });

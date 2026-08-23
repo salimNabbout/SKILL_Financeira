@@ -26,7 +26,7 @@ function ok(message: string): never {
   redirect(`${PATH}?ok=${encodeURIComponent(message)}`);
 }
 
-/** Cadastra uma recorrência (por enquanto, apenas do tipo "a pagar"). */
+/** Cadastra uma recorrência a pagar (fornecedor) ou a receber (cliente). */
 export async function createRecurringAction(formData: FormData): Promise<void> {
   const session = await requireSession();
   const container = await getContainer();
@@ -36,11 +36,15 @@ export async function createRecurringAction(formData: FormData): Promise<void> {
     fail("Sem permissão para gerenciar cadastros (master_data.manage).");
   }
 
+  const kind = fdString(formData, "kind");
+  if (kind !== "payable" && kind !== "receivable") fail("Tipo de recorrência inválido.");
+  const isPayable = kind === "payable";
+
   const counterpartyId = fdString(formData, "counterpartyId");
   const description = fdString(formData, "description");
   const dueDayRaw = fdString(formData, "dueDay");
   const startDate = fdString(formData, "startDate");
-  if (!counterpartyId) fail("Selecione o fornecedor.");
+  if (!counterpartyId) fail(isPayable ? "Selecione o fornecedor." : "Selecione o cliente.");
   if (!description) fail("Informe a descrição.");
   if (!startDate || !isISODate(startDate)) fail("Informe a data de início.");
 
@@ -53,8 +57,9 @@ export async function createRecurringAction(formData: FormData): Promise<void> {
   if (endDate && !isISODate(endDate)) fail("Data-fim inválida.");
   if (endDate && endDate < startDate) fail("A data-fim não pode ser anterior ao início.");
 
-  const category = fdOptional(formData, "category");
-  const costRaw = fdOptional(formData, "costClassification");
+  // Categoria/classificação de custo só se aplicam a despesas (a pagar).
+  const category = isPayable ? fdOptional(formData, "category") : undefined;
+  const costRaw = isPayable ? fdOptional(formData, "costClassification") : undefined;
   const costClassification: CostClassification | undefined =
     costRaw === "fixed" || costRaw === "variable" ? costRaw : undefined;
 
@@ -71,7 +76,7 @@ export async function createRecurringAction(formData: FormData): Promise<void> {
     const template: RecurringTemplate = {
       id: container.ids.next("rec"),
       companyId,
-      kind: "payable",
+      kind,
       counterpartyId,
       description,
       amountCents,
