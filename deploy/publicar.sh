@@ -26,14 +26,15 @@ git reset --hard origin/main
 COMMIT="$(git log --oneline -1)"
 echo "    Código em: ${COMMIT}"
 
-echo "==> 2/5 Construindo imagens (app + migrate)…"
-# Rebuilda as duas: se houver migração nova, ela entra na imagem migrate.
-dc build app migrate
+echo "==> 2/5 Construindo imagens (app + migrate + scheduler)…"
+# Rebuilda as três: se houver migração nova, ela entra na imagem migrate; o
+# scheduler roda o código novo (recorrência e demais rotinas).
+dc build app migrate scheduler
 
-echo "==> 3/5 Recriando o container do app…"
-# O app depende de 'migrate' (service_completed_successfully): o compose roda
-# a migração pendente automaticamente antes de subir o app.
-dc up -d --force-recreate app
+echo "==> 3/5 Recriando os containers (app + scheduler)…"
+# O app/scheduler dependem de 'migrate' (service_completed_successfully): o
+# compose roda a migração pendente automaticamente antes de subir.
+dc up -d --force-recreate app scheduler
 
 echo "==> 4/5 Aguardando o app responder…"
 # Porta local do app (do .env.prod); default 3000 se não definida.
