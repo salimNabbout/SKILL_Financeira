@@ -336,6 +336,30 @@ describe("contas_a_pagar — create_payable", () => {
     expect(res.pending_items.some((p) => p.code === "sem_categoria")).toBe(true);
   });
 
+  it("persiste categoria de fornecedor e classificação de custo no título", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedCategory(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        installmentCount: 2,
+        supplierCategory: "Material de Escritório",
+        costClassification: "fixed",
+      })
+    );
+
+    expect(res.status).toBe("success");
+    const data = res.data as CreatePayableData;
+    expect(data.payables).toHaveLength(2);
+    for (const p of data.payables) {
+      expect(p.supplierCategory).toBe("Material de Escritório");
+      expect(p.costClassification).toBe("fixed");
+    }
+  });
+
   it("valida fornecedor inexistente e vencimento anterior à emissão", async () => {
     const env = createTestEnv();
     seedSupplier(env);
