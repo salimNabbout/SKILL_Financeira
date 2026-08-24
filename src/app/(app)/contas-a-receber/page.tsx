@@ -11,6 +11,7 @@ import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { createReceivableAction, issueChargeAction, registerReceiptAction } from "./actions";
 import { MoneyInput } from "@/components/money-input";
+import { costCentersForScope } from "@/app/(app)/cadastros/_lib/cost-centers";
 
 const STATUS_FILTERS: Array<{ value: ReceivableStatus | "todos"; label: string }> = [
   { value: "todos", label: "Todos" },
@@ -80,7 +81,7 @@ export default async function ContasAReceberPage({
 
   const customerId = cliente || undefined;
 
-  const [page, customers, categories, bankAccounts, allReceivables] = await Promise.all([
+  const [page, customers, categories, bankAccounts, costCenters, allReceivables] = await Promise.all([
     // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
     // Filtros de status/cliente/vencimento aplicados no banco.
     repos.receivables.listPage(companyId, {
@@ -94,12 +95,16 @@ export default async function ContasAReceberPage({
     repos.customers.listAll(companyId),
     repos.categories.listAll(companyId),
     repos.bankAccounts.listAll(companyId),
+    repos.costCenters.listAll(companyId),
     // Só para derivar os anos existentes nos títulos (lista de anos é pequena).
     repos.receivables.listAll(companyId),
   ]);
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const incomeCategories = categories.filter((c) => c.kind === "income" && c.active);
   const activeAccounts = bankAccounts.filter((b) => b.active);
+  const costCenterOptions = costCentersForScope(costCenters, "receivable");
+  // Um listAll + Map: getById dentro do laço da tabela faria N consultas.
+  const costCenterCode = new Map(costCenters.map((c) => [c.id, c.code]));
   const rows = page.items;
 
   // Clientes ativos ordenados (pt-BR) para o select do filtro.
@@ -215,7 +220,18 @@ export default async function ContasAReceberPage({
           />
         ) : (
           <Table
-            headers={["Cliente", "Descrição", "Parcela", "Vencimento", "Valor", "Recebido", "Status", "Registrar recebimento", "Cobrança (mock)"]}
+            headers={[
+              "Cliente",
+              "Descrição",
+              "Parcela",
+              "Vencimento",
+              "Valor",
+              "Recebido",
+              "Status",
+              "Centro de custo",
+              "Registrar recebimento",
+              "Cobrança (mock)",
+            ]}
             align={["l", "l", "l", "l", "r", "r", "l", "l", "l"]}
           >
             {rows.map((r) => {
@@ -236,6 +252,11 @@ export default async function ContasAReceberPage({
                   <Td right>{formatBRL(r.receivedCents)}</Td>
                   <Td>
                     <Badge tone={statusTone(r.status)}>{statusLabel(r.status)}</Badge>
+                  </Td>
+                  <Td>
+                    <span className="tabular text-xs">
+                      {r.costCenterId ? (costCenterCode.get(r.costCenterId) ?? "—") : "—"}
+                    </span>
                   </Td>
                   <Td>
                     {RECEIVABLE_OPEN.includes(r.status) ? (
@@ -299,6 +320,17 @@ export default async function ContasAReceberPage({
       </Card>
 
       <Card title="Novo título">
+        {customers.length === 0 ? (
+          // Cliente é `required`: sem cadastro o select nasce vazio e o
+          // navegador barra o submit sem dizer o motivo.
+          <p className="text-sm text-[var(--ink-muted)]">
+            Antes de lançar títulos, cadastre{" "}
+            <Link href="/cadastros/clientes" className="text-[var(--brand)] underline">
+              um cliente
+            </Link>
+            .
+          </p>
+        ) : (
         <form action={createReceivableAction} className="grid gap-4 md:grid-cols-3">
           <Field label="Cliente">
             <select name="customerId" required className={inputClass}>
@@ -347,10 +379,21 @@ export default async function ContasAReceberPage({
               <option value="cash">Dinheiro</option>
             </select>
           </Field>
+          <Field label="Centro de custo (opcional)">
+            <select name="costCenterId" className={inputClass} defaultValue="">
+              <option value="">Sem centro de custo</option>
+              {costCenterOptions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.code} — {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
           <div className="flex items-end">
             <Button>Criar título</Button>
           </div>
         </form>
+        )}
         <p className="mt-3 text-xs text-[var(--ink-muted)]">
           Criação e baixa são registradas com auditoria automática pela skill de contas a receber
           (idempotente: reenviar o mesmo formulário não duplica títulos).

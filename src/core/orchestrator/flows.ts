@@ -451,8 +451,36 @@ const recurringTitlesGenerate: FlowDefinition = {
   ],
 };
 
+/**
+ * Edição de um título a pagar. Fluxo curto de propósito: a skill aplica as
+ * travas (o que já teve movimento financeiro não muda) e a tesouraria refaz a
+ * projeção, porque alterar valor ou vencimento desloca o caixa previsto.
+ */
+const payableUpdate: FlowDefinition = {
+  name: "payable_update",
+  description:
+    "Edita campos de um título a pagar (descrição, datas, valor, categoria, centro de custo) respeitando o que já teve movimento financeiro, e atualiza a projeção de caixa.",
+  requiredPermission: "payable.create",
+  steps: [
+    {
+      id: "ap_update",
+      skill: "contas_a_pagar",
+      description: "Atualizar título",
+      buildInput: (f) => ({ action: "update_payable", ...f.payload }),
+    },
+    {
+      id: "treasury_refresh",
+      skill: "tesouraria_fluxo_caixa",
+      description: "Atualizar projeção de desembolsos",
+      buildInput: () => ({ action: "refresh_projection", horizonDays: 90 }),
+      continueOnError: true,
+    },
+  ],
+};
+
 export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
+  payableUpdate,
   schedulePayment,
   bankStatementImport,
   bankSync,

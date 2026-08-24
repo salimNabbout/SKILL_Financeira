@@ -8,7 +8,9 @@ import { endOfMonth, isISODate, startOfMonth, todayInTz, type ISODate } from "@/
 import type { PayableStatus } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
-import { schedulePaymentAction } from "./actions";
+import { MoneyInput } from "@/components/money-input";
+import { costCentersForScope } from "@/app/(app)/cadastros/_lib/cost-centers";
+import { schedulePaymentAction, updatePayableAction } from "./actions";
 import { NewPayableForm, type SupplierOption } from "./_lib/new-payable-form";
 
 const STATUS_FILTERS: Array<{ value: PayableStatus | "todos"; label: string }> = [
@@ -40,9 +42,34 @@ export default async function ContasAPagarPage({
     fornecedor?: string;
     de?: string;
     ate?: string;
+    // Campos do formulário devolvidos quando a criação falha (ver actions.ts).
+    f_supplierId?: string;
+    f_description?: string;
+    f_amount?: string;
+    f_issueDate?: string;
+    f_dueDate?: string;
+    f_installmentCount?: string;
+    f_supplierCategory?: string;
+    f_costClassification?: string;
+    /** Id do título com a linha de edição aberta. */
+    editar?: string;
   }>;
 }) {
-  const { status, p, ok, erro, ano, mes, fornecedor, de, ate } = await searchParams;
+  const sp = await searchParams;
+  const { status, p, ok, erro, ano, mes, fornecedor, de, ate, editar } = sp;
+
+  // Preenchimento devolvido pela action em caso de erro, para o usuário não
+  // redigitar o formulário inteiro por causa de um campo.
+  const defaultsNovoTitulo = {
+    supplierId: sp.f_supplierId,
+    description: sp.f_description,
+    amount: sp.f_amount,
+    issueDate: sp.f_issueDate,
+    dueDate: sp.f_dueDate,
+    installmentCount: sp.f_installmentCount,
+    supplierCategory: sp.f_supplierCategory,
+    costClassification: sp.f_costClassification,
+  };
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
@@ -80,7 +107,7 @@ export default async function ContasAPagarPage({
 
   const supplierId = fornecedor || undefined;
 
-  const [page, suppliers, supplierCategories, bankAccounts, allPayables] = await Promise.all([
+  const [page, suppliers, supplierCategories, bankAccounts, costCenters, allPayables] = await Promise.all([
     // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
     // Filtros de status/fornecedor/vencimento aplicados no banco.
     repos.payables.listPage(companyId, {
@@ -94,11 +121,15 @@ export default async function ContasAPagarPage({
     repos.suppliers.listAll(companyId),
     repos.supplierCategories.listAll(companyId),
     repos.bankAccounts.listAll(companyId),
+    repos.costCenters.listAll(companyId),
     // Só para derivar os anos existentes nos títulos (lista de anos é pequena).
     repos.payables.listAll(companyId),
   ]);
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const activeAccounts = bankAccounts.filter((b) => b.active);
+  const costCenterOptions = costCentersForScope(costCenters, "payable");
+  // Um listAll + Map: getById dentro do laço da tabela faria N consultas.
+  const costCenterCode = new Map(costCenters.map((c) => [c.id, c.code]));
   const rows = page.items;
 
   const supplierOptions: SupplierOption[] = suppliers
@@ -138,8 +169,42 @@ export default async function ContasAPagarPage({
       />
       <Flash ok={ok} erro={erro} />
 
-      <Card className="mb-6" title="Novo título">
-        <NewPayableForm suppliers={supplierOptions} categories={categoryOptions} today={today} />
+      <Card
+        // Com erro, o card ganha contorno de atenção: o usuário precisa ver de
+        // imediato que o preenchimento continua ali, e não recomeçar do zero.
+        className={erro ? "mb-6 ring-2 ring-[var(--crit)]" : "mb-6"}
+        title="Novo título"
+      >
+        {supplierOptions.length === 0 || categoryOptions.length === 0 ? (
+          // Fornecedor e Categoria são `required`: sem cadastro, os selects
+          // nascem vazios e o navegador barra o submit sem explicar o motivo.
+          <p className="text-sm text-[var(--ink-muted)]">
+            Antes de lançar títulos, cadastre{" "}
+            {supplierOptions.length === 0 ? (
+              <Link href="/cadastros/fornecedores" className="text-[var(--brand)] underline">
+                um fornecedor
+              </Link>
+            ) : null}
+            {supplierOptions.length === 0 && categoryOptions.length === 0 ? " e " : null}
+            {categoryOptions.length === 0 ? (
+              <Link
+                href="/cadastros/categorias-fornecedores"
+                className="text-[var(--brand)] underline"
+              >
+                uma categoria de fornecedores
+              </Link>
+            ) : null}
+            .
+          </p>
+        ) : (
+          <NewPayableForm
+            suppliers={supplierOptions}
+            categories={categoryOptions}
+            costCenters={costCenterOptions}
+            today={today}
+            defaults={defaultsNovoTitulo}
+          />
+        )}
         <p className="mt-3 text-xs text-[var(--ink-muted)]">
           O título passa pelo fluxo de entrada de nota (validação de duplicidade, projeção de caixa e
           impacto orçamentário). Valores em reais são convertidos para centavos.
@@ -229,11 +294,87 @@ export default async function ContasAPagarPage({
           />
         ) : (
           <Table
-            headers={["Fornecedor", "Descrição", "Parcela", "Vencimento", "Valor", "Pago", "Status", "Pagar"]}
-            align={["l", "l", "l", "l", "r", "r", "l", "l"]}
+            headers={[
+              "Fornecedor",
+              "Descrição",
+              "Parcela",
+              "Vencimento",
+              "Valor",
+              "Pago",
+              "Status",
+              "Centro de custo",
+              "Pagar",
+              "Ações",
+            ]}
+            align={["l", "l", "l", "l", "r", "r", "l", "l", "l", "l"]}
           >
             {rows.map((p) => {
               const overdue = p.dueDate < today && p.status !== "paid" && p.status !== "canceled";
+              // Valor, emissão e vencimento só mudam com o título em aberto e
+              // sem pagamento: a skill recusa o resto, e desabilitar aqui evita
+              // o usuário digitar para levar erro depois.
+              const podeAlterarValores = p.status === "open" && p.paidCents === 0;
+              if (editar === p.id) {
+                return (
+                  <tr key={p.id}>
+                    <Td colSpan={10}>
+                      <form
+                        action={updatePayableAction}
+                        className="grid gap-3 md:grid-cols-4"
+                      >
+                        <input type="hidden" name="payableId" value={p.id} />
+                        <Field label="Descrição">
+                          <input
+                            name="description"
+                            required
+                            defaultValue={p.description}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <Field label="Valor total (R$)">
+                          <MoneyInput
+                            name="amount"
+                            required
+                            defaultValue={(p.amountCents / 100).toFixed(2).replace(".", ",")}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <Field label="Emissão">
+                          <input
+                            type="date"
+                            name="issueDate"
+                            required
+                            defaultValue={p.issueDate}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <Field label="Vencimento">
+                          <input
+                            type="date"
+                            name="dueDate"
+                            required
+                            defaultValue={p.dueDate}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <div className="flex items-end gap-3 md:col-span-4">
+                          <Button>Salvar</Button>
+                          <Link href="/contas-a-pagar" className="text-xs text-[var(--ink-muted)] underline">
+                            Cancelar
+                          </Link>
+                          {!podeAlterarValores ? (
+                            <span className="text-xs text-[var(--warn)]">
+                              Título {statusLabel(p.status).toLowerCase()}
+                              {p.paidCents > 0 ? " e com pagamento registrado" : ""}: valor, emissão e
+                              vencimento não podem ser alterados.
+                            </span>
+                          ) : null}
+                        </div>
+                      </form>
+                    </Td>
+                  </tr>
+                );
+              }
               return (
                 <tr key={p.id}>
                   <Td>{supplierName.get(p.supplierId) ?? p.supplierId}</Td>
@@ -250,7 +391,23 @@ export default async function ContasAPagarPage({
                     <Badge tone={statusTone(p.status)}>{statusLabel(p.status)}</Badge>
                   </Td>
                   <Td>
-                    {SCHEDULABLE.includes(p.status) ? (
+                    <span className="tabular text-xs">
+                      {p.costCenterId ? (costCenterCode.get(p.costCenterId) ?? "—") : "—"}
+                    </span>
+                  </Td>
+                  <Td>
+                    {SCHEDULABLE.includes(p.status) && activeAccounts.length === 0 ? (
+                      // Sem conta ativa o select nasceria vazio e, sendo
+                      // `required`, o navegador barraria o submit com o tooltip
+                      // "Selecione um item da lista" — que não diz o que fazer.
+                      // Melhor não oferecer o formulário e apontar o caminho.
+                      <Link
+                        href="/cadastros/contas-bancarias"
+                        className="text-xs text-[var(--brand)] underline"
+                      >
+                        Cadastre uma conta bancária para agendar pagamentos →
+                      </Link>
+                    ) : SCHEDULABLE.includes(p.status) ? (
                       <form action={schedulePaymentAction} className="flex flex-wrap items-center gap-1.5">
                         <input type="hidden" name="payableId" value={p.id} />
                         <select name="bankAccountId" required className={`${inputClass} w-36`}>
@@ -271,6 +428,14 @@ export default async function ContasAPagarPage({
                       </form>
                     ) : (
                       <span className="text-xs text-[var(--ink-muted)]">—</span>
+                    )}
+                  </Td>
+                  <Td>
+                    {p.status === "canceled" ? null : (
+                      <form method="get" action="/contas-a-pagar">
+                        <input type="hidden" name="editar" value={p.id} />
+                        <Button variant="warn">Editar</Button>
+                      </form>
                     )}
                   </Td>
                 </tr>

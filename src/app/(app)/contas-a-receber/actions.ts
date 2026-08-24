@@ -64,6 +64,10 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
       categoryId: fdOptional(formData, "categoryId"),
       installmentCount,
       method: fdOptional(formData, "method"),
+      // Vazio não vira string vazia: a skill espera undefined (campo .optional()).
+      ...(fdOptional(formData, "costCenterId")
+        ? { costCenterId: fdOptional(formData, "costCenterId") }
+        : {}),
     });
   } catch (error) {
     fail(errorMessage(error));

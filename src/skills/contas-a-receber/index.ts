@@ -309,7 +309,7 @@ async function createReceivable(
       SKILL_NAME,
       ctx,
       "invalid_dates",
-      `Vencimento (${input.dueDate}) não pode ser anterior à emissão (${input.issueDate}).`
+      "Verificar a Data da Emissão"
     );
   }
 

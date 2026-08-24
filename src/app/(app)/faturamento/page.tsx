@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
@@ -62,6 +63,17 @@ export default async function FaturamentoPage({
       </Card>
 
       <Card title="Nova fatura">
+        {customers.length === 0 ? (
+          // Cliente é `required`: sem cadastro o select nasce vazio e o
+          // navegador barra o submit sem dizer o motivo.
+          <p className="text-sm text-[var(--ink-muted)]">
+            Antes de emitir faturas, cadastre{" "}
+            <Link href="/cadastros/clientes" className="text-[var(--brand)] underline">
+              um cliente
+            </Link>
+            .
+          </p>
+        ) : (
         <form action={createInvoiceAction} className="grid gap-4 md:grid-cols-3">
           <Field label="Cliente">
             <select name="customerId" required className={inputClass}>
@@ -104,6 +116,7 @@ export default async function FaturamentoPage({
             <Button>Criar fatura</Button>
           </div>
         </form>
+        )}
       </Card>
     </div>
   );

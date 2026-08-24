@@ -89,9 +89,9 @@ test("máscara monetária: digitação, valor pequeno, colagem e gravação", as
 
   await page.getByRole("button", { name: "Criar título" }).click();
 
-  // O título gravado aparece com o valor formatado pelo servidor (formatBRL).
-  await expect(page.getByText(descricao)).toBeVisible();
-  await expect(page.getByRole("row", { name: new RegExp(descricao) })).toContainText(
-    "R$ 1.500.000,00"
-  );
+  // A mensagem de sucesso traz o valor JÁ formatado pelo servidor (formatBRL):
+  // é a prova de que o hidden atravessou parseBRLToCents com o número certo.
+  // Não procuramos a linha na tabela porque a listagem é paginada e outros
+  // specs criam títulos em paralelo no mesmo servidor demo.
+  await expect(page.locator("p.border-emerald-200")).toContainText("R$ 1.500.000,00");
 });

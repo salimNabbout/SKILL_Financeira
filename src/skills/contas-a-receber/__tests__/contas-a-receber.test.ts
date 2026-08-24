@@ -155,7 +155,7 @@ describe("contas_a_receber / create_receivable", () => {
     );
 
     expect(res.status).toBe("error");
-    expect(res.alerts?.[0]?.message).toMatch(/vencimento|anterior/i);
+    expect(res.alerts?.[0]?.message).toContain("Verificar a Data da Emissão");
     expect(env.db.receivables).toHaveLength(0);
   });
 

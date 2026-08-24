@@ -26,6 +26,39 @@ function ok(message: string): never {
   redirect(`${PATH}?ok=${encodeURIComponent(message)}`);
 }
 
+/**
+ * Campos do formulário de novo título devolvidos na URL quando a criação
+ * falha. Prefixados com `f_` para não colidirem com os filtros da listagem
+ * (status, ano, mes, fornecedor, de, ate).
+ */
+const CAMPOS_NOVO_TITULO = [
+  "supplierId",
+  "description",
+  "amount",
+  "issueDate",
+  "dueDate",
+  "installmentCount",
+  "supplierCategory",
+  "costClassification",
+  "costCenterId",
+] as const;
+
+/**
+ * Falha preservando o que o usuário digitou.
+ *
+ * Sem isso, um erro de validação (ex.: vencimento antes da emissão) recarrega
+ * a página e apaga o formulário inteiro — o usuário redigita tudo para corrigir
+ * um campo. Só os campos do título trafegam; nada sensível.
+ */
+function failComFormulario(message: string, formData: FormData): never {
+  const params = new URLSearchParams({ erro: message });
+  for (const campo of CAMPOS_NOVO_TITULO) {
+    const valor = formData.get(campo);
+    if (typeof valor === "string" && valor !== "") params.set(`f_${campo}`, valor);
+  }
+  redirect(`${PATH}?${params.toString()}`);
+}
+
 export async function createPayableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
   const { orchestrator } = await getContainer();
@@ -38,11 +71,11 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   const costRaw = fdOptional(formData, "costClassification");
   // Todos os campos são obrigatórios (validação no servidor, além do required do HTML).
   if (!supplierId || !description || !issueDate || !dueDate) {
-    fail("Preencha fornecedor, descrição, emissão e vencimento.");
+    failComFormulario("Preencha fornecedor, descrição, emissão e vencimento.", formData);
   }
-  if (!supplierCategory) fail("Selecione a categoria.");
+  if (!supplierCategory) failComFormulario("Selecione a categoria.", formData);
   if (costRaw !== "fixed" && costRaw !== "variable") {
-    fail("Selecione a classificação do custo (Fixo ou Variável).");
+    failComFormulario("Selecione a classificação do custo (Fixo ou Variável).", formData);
   }
 
   let amountCents = 0;
@@ -51,11 +84,11 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     amountCents = parseBRLToCents(fdString(formData, "amount"));
     installmentCount = Number(fdOptional(formData, "installmentCount") ?? "1");
   } catch (error) {
-    fail(errorMessage(error));
+    failComFormulario(errorMessage(error), formData);
   }
-  if (amountCents <= 0) fail("O valor do título deve ser positivo.");
+  if (amountCents <= 0) failComFormulario("O valor do título deve ser positivo.", formData);
   if (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 120) {
-    fail("Número de parcelas inválido (1 a 120).");
+    failComFormulario("Número de parcelas inválido (1 a 120).", formData);
   }
 
   const costClassification: Supplier["costClassification"] = costRaw;
@@ -78,21 +111,88 @@ export async function createPayableAction(formData: FormData): Promise<void> {
         supplierCategory,
         costClassification,
         installmentCount,
+        // Vazio não vira string vazia: a skill espera undefined (campo .optional()).
+        ...(fdOptional(formData, "costCenterId")
+          ? { costCenterId: fdOptional(formData, "costCenterId") }
+          : {}),
       },
     });
   } catch (error) {
-    fail(errorMessage(error));
+    failComFormulario(errorMessage(error), formData);
   }
 
   const created = response.results.find((r) => r.stepId === "ap_create")?.result;
   const payables = (created?.data as { payables?: Payable[] } | null)?.payables ?? [];
   if (response.status === "failed" && payables.length === 0) {
-    fail(flowErrorMessage(response));
+    failComFormulario(flowErrorMessage(response), formData);
   }
   ok(
     `Título criado: ${payables.length} parcela(s) somando ${formatBRL(amountCents)}.` +
       (response.idempotent_replay ? " (requisição repetida — nada foi duplicado)" : "")
   );
+}
+
+/**
+ * Edita um título a pagar. Passa pelo orquestrador (flow payable_update), que
+ * chama a skill — as travas de integridade (o que já teve movimento financeiro
+ * não muda) vivem lá, não aqui.
+ */
+export async function updatePayableAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator, repos } = await getContainer();
+  const companyId = session.company.id;
+
+  const payableId = fdString(formData, "payableId");
+  if (!payableId) fail("Título não informado.");
+  const description = fdString(formData, "description");
+  const issueDate = fdString(formData, "issueDate");
+  const dueDate = fdString(formData, "dueDate");
+  if (!description || !issueDate || !dueDate) {
+    fail("Preencha descrição, emissão e vencimento.");
+  }
+
+  let amountCents = 0;
+  try {
+    amountCents = parseBRLToCents(fdString(formData, "amount"));
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+  if (amountCents <= 0) fail("O valor do título deve ser positivo.");
+
+  // O `before` sai do repositório ANTES da execução: a auditoria da skill
+  // registra o par, e aqui usamos só para a mensagem de retorno.
+  const before = await repos.payables.getById(companyId, payableId);
+  if (!before) fail("Título não encontrado.");
+
+  const costRaw = fdOptional(formData, "costClassification");
+  const costCenterId = fdOptional(formData, "costCenterId");
+  const supplierCategory = fdOptional(formData, "supplierCategory");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "payable_update",
+      companyId,
+      actor: session.actor,
+      payload: {
+        payableId,
+        description,
+        issueDate,
+        dueDate,
+        amountCents,
+        ...(supplierCategory ? { supplierCategory } : {}),
+        ...(costRaw === "fixed" || costRaw === "variable" ? { costClassification: costRaw } : {}),
+        ...(costCenterId ? { costCenterId } : {}),
+      },
+    });
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+  if (response.status === "failed") {
+    fail(flowErrorMessage(response));
+  }
+
+  ok(`Título "${description}" atualizado.`);
 }
 
 export async function schedulePaymentAction(formData: FormData): Promise<void> {

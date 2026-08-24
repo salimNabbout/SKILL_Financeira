@@ -83,6 +83,27 @@ const detectDuplicatesSchema = z.object({
   action: z.literal("detect_duplicates"),
 });
 
+/**
+ * Edição de um título a pagar.
+ *
+ * O recorte de campos NÃO é arbitrário: só entram aqui os que podem mudar sem
+ * reescrever história financeira. `supplierId` fica de fora (trocar a
+ * contraparte é outro título — o certo é cancelar e recriar), e `status`/
+ * `paidCents` também, porque derivam de pagamentos e baixas, não de digitação.
+ */
+const updatePayableSchema = z.object({
+  action: z.literal("update_payable"),
+  payableId: z.string().min(1),
+  description: z.string().min(1).optional(),
+  issueDate: isoDateSchema.optional(),
+  dueDate: isoDateSchema.optional(),
+  amountCents: z.number().int().positive().optional(),
+  categoryId: z.string().min(1).optional(),
+  costCenterId: z.string().min(1).optional(),
+  supplierCategory: z.string().min(1).optional(),
+  costClassification: z.enum(["fixed", "variable"]).optional(),
+});
+
 const cancelPayableSchema = z.object({
   action: z.literal("cancel_payable"),
   payableId: z.string().min(1),
@@ -99,6 +120,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   listDueSchema,
   forecastDisbursementsSchema,
   detectDuplicatesSchema,
+  updatePayableSchema,
   cancelPayableSchema,
   generateRecurringSchema,
 ]);
@@ -108,6 +130,7 @@ export type SchedulePaymentInput = z.infer<typeof schedulePaymentSchema>;
 export type ListDueInput = z.infer<typeof listDueSchema>;
 export type ForecastDisbursementsInput = z.infer<typeof forecastDisbursementsSchema>;
 export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
+export type UpdatePayableInput = z.infer<typeof updatePayableSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
 export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
 export type ContasAPagarInput = z.infer<typeof contasAPagarInputSchema>;
@@ -174,6 +197,12 @@ export interface DetectDuplicatesData {
   suspects: DuplicateSuspect[];
 }
 
+export interface UpdatePayableData {
+  payable: Payable;
+  /** Campos efetivamente alterados (vazio quando nada mudou). */
+  changed: string[];
+}
+
 export interface CancelPayableData {
   payable: Payable;
   reason: string;
@@ -190,6 +219,7 @@ export type ContasAPagarData =
   | ListDueData
   | ForecastDisbursementsData
   | DetectDuplicatesData
+  | UpdatePayableData
   | CancelPayableData
   | GenerateRecurringData;
 
@@ -245,9 +275,7 @@ async function createPayable(
     throw new ValidationError(`Fornecedor inativo: ${supplier.name} (${supplier.id}).`);
   }
   if (input.dueDate < input.issueDate) {
-    throw new ValidationError(
-      `Vencimento (${input.dueDate}) não pode ser anterior à emissão (${input.issueDate}).`
-    );
+    throw new ValidationError("Verificar a Data da Emissão");
   }
   if (input.categoryId) {
     const category = await ctx.repos.categories.getById(ctx.companyId, input.categoryId);
@@ -955,6 +983,134 @@ async function detectDuplicates(ctx: SkillContext): Promise<SkillResult<DetectDu
   );
 }
 
+/**
+ * Edita um título a pagar.
+ *
+ * Regra central: o que já teve efeito financeiro não se reescreve. Um título
+ * pago foi conciliado com o extrato, entrou na auditoria e no DRE do mês —
+ * mudar o valor depois não é correção, é falsificação.
+ *
+ * Valor, emissão e vencimento só mudam com o título em "open". Além do
+ * pagamento, o motivo é a ALÇADA: um título "scheduled" tem aprovação
+ * pendente amarrada ao valor; deixar editar o valor permitiria aprovar
+ * R$ 4.000 e transformar em R$ 60.000 mantendo a assinatura de quem não tem
+ * alçada para isso. Descrição, categoria, centro de custo e classificação são
+ * reclassificação, não movimento — esses seguem editáveis sempre.
+ */
+async function updatePayable(
+  ctx: SkillContext,
+  input: UpdatePayableInput
+): Promise<SkillResult<UpdatePayableData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payable.create")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode editar títulos a pagar.`
+      );
+    }
+  }
+
+  const payable = await ctx.repos.payables.getById(ctx.companyId, input.payableId);
+  if (!payable) throw new NotFoundError("Título a pagar", input.payableId);
+  if (payable.status === "canceled") {
+    throw new ValidationError(`Título ${payable.id} está cancelado e não pode ser editado.`);
+  }
+
+  const payments = await ctx.repos.payments.listByPayable(ctx.companyId, payable.id);
+  const temPagamento = payable.paidCents > 0 || payments.some((p) => p.status === "executed");
+
+  const mudaValor = input.amountCents !== undefined && input.amountCents !== payable.amountCents;
+  const mudaEmissao = input.issueDate !== undefined && input.issueDate !== payable.issueDate;
+  const mudaVencimento = input.dueDate !== undefined && input.dueDate !== payable.dueDate;
+
+  if ((mudaValor || mudaEmissao) && temPagamento) {
+    throw new ValidationError(
+      `Título ${payable.id} já tem pagamento registrado: valor e emissão não podem ser alterados.`
+    );
+  }
+  if ((mudaValor || mudaEmissao || mudaVencimento) && payable.status !== "open") {
+    throw new ValidationError(
+      `Título ${payable.id} está "${payable.status}": valor, emissão e vencimento só podem ser alterados com o título em aberto.`
+    );
+  }
+
+  const issueDate = input.issueDate ?? payable.issueDate;
+  const dueDate = input.dueDate ?? payable.dueDate;
+  if (dueDate < issueDate) {
+    throw new ValidationError("Verificar a Data da Emissão");
+  }
+
+  if (input.categoryId) {
+    const category = await ctx.repos.categories.getById(ctx.companyId, input.categoryId);
+    if (!category) throw new NotFoundError("Categoria", input.categoryId);
+  }
+  if (input.costCenterId) {
+    const costCenter = await ctx.repos.costCenters.getById(ctx.companyId, input.costCenterId);
+    if (!costCenter) throw new NotFoundError("Centro de custo", input.costCenterId);
+  }
+
+  const before = { ...payable };
+  const changed: string[] = [];
+  const aplicar = <K extends keyof Payable>(campo: K, valor: Payable[K] | undefined): void => {
+    if (valor === undefined || payable[campo] === valor) return;
+    payable[campo] = valor;
+    changed.push(String(campo));
+  };
+
+  aplicar("description", input.description);
+  aplicar("issueDate", issueDate);
+  aplicar("dueDate", dueDate);
+  aplicar("amountCents", input.amountCents);
+  aplicar("categoryId", input.categoryId);
+  aplicar("costCenterId", input.costCenterId);
+  aplicar("supplierCategory", input.supplierCategory);
+  aplicar("costClassification", input.costClassification);
+
+  if (changed.length === 0) {
+    return makeResult(
+      SKILL,
+      ctx,
+      { payable, changed },
+      {
+        assumptions: ["Nenhum campo mudou; o título permanece como estava."],
+        dataSources: DATA_SOURCES,
+      }
+    );
+  }
+
+  payable.updatedAt = ctx.clock.now().toISOString();
+  await ctx.repos.payables.update(payable);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payable.updated",
+    entityType: "payable",
+    entityId: payable.id,
+    before,
+    after: payable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "payable.updated",
+    payload: { id: payable.id, changed },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL,
+    ctx,
+    { payable, changed },
+    {
+      assumptions: [
+        `Campos alterados: ${changed.join(", ")}.`,
+        "Parcelas irmãs não são afetadas: a edição vale para a parcela selecionada.",
+      ],
+      dataSources: DATA_SOURCES,
+    }
+  );
+}
+
 async function cancelPayable(
   ctx: SkillContext,
   input: CancelPayableInput
@@ -1121,6 +1277,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return forecastDisbursements(ctx, input);
       case "detect_duplicates":
         return detectDuplicates(ctx);
+      case "update_payable":
+        return updatePayable(ctx, input) as Promise<SkillResult<ContasAPagarData>>;
       case "cancel_payable":
         return cancelPayable(ctx, input);
       case "generate_recurring":
