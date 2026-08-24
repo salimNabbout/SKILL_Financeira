@@ -42,7 +42,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen">
-      <aside className="hidden w-60 shrink-0 border-r border-[var(--line)] bg-white p-4 md:block">
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 overflow-y-auto border-r border-[var(--line)] bg-white p-4 md:block">
         <div className="mb-6">
           <p className="text-lg font-semibold text-[var(--brand)]">Financeira PME</p>
           <p className="text-xs text-[var(--ink-muted)]">{session.company.name}</p>
