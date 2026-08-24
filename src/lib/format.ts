@@ -62,3 +62,94 @@ export const ROLE_LABELS: Record<string, string> = {
   accountant: "Contador(a)",
   viewer: "Visualização",
 };
+
+/**
+ * Rótulos de EXIBIÇÃO das ações da trilha de auditoria (coluna AÇÃO). Os
+ * códigos (ex.: "payable.settled_via_reconciliation") são identificadores de
+ * máquina — já gravados no banco, usados em testes — e NÃO devem ser
+ * renomeados; este mapa traduz só para a tela. A tela usa
+ * `ACTION_LABELS[r.action] ?? r.action` (fallback obrigatório para ações
+ * futuras). Um teste (src/lib/__tests__/action-labels.test.ts) garante que
+ * toda ação real do código tem entrada aqui.
+ */
+export const ACTION_LABELS: Record<string, string> = {
+  // Acesso e usuários
+  "auth.login": "Login realizado",
+  "auth.switch_company": "Empresa ativa trocada",
+  "user.created": "Usuário criado",
+  "user.password_changed": "Senha alterada",
+  "user.totp_enabled": "Verificação em duas etapas ativada",
+  "user.totp_disabled": "Verificação em duas etapas desativada",
+  "membership.created": "Acesso de usuário concedido",
+  "membership.updated": "Acesso de usuário alterado",
+
+  // Cadastros
+  "supplier.created": "Fornecedor cadastrado",
+  "supplier.updated": "Fornecedor alterado",
+  "supplier.deleted": "Fornecedor excluído",
+  "supplier_category.created": "Categoria de fornecedor criada",
+  "supplier_category.updated": "Categoria de fornecedor alterada",
+  "customer.created": "Cliente cadastrado",
+  "category.created": "Categoria criada",
+  "cost_center.created": "Centro de custo criado",
+  "chart_account.created": "Conta contábil criada",
+  "bank_account.created": "Conta bancária cadastrada",
+  "recurring_template.created": "Recorrência criada",
+  "recurring_template.updated": "Recorrência alterada",
+
+  // Contas a pagar e pagamentos
+  "payable.created": "Título a pagar criado",
+  "payable.updated": "Título a pagar alterado",
+  "payable.canceled": "Título a pagar cancelado",
+  "payable.settled_via_reconciliation": "Título baixado pela conciliação",
+  "payment.requested": "Pagamento solicitado",
+  "payment.executed": "Pagamento executado",
+  "payment.rejected": "Pagamento rejeitado",
+  "payment.canceled": "Pagamento cancelado",
+
+  // Contas a receber e recebimentos
+  "receivable.created": "Título a receber criado",
+  "receivable.updated": "Título a receber alterado",
+  "receivable.canceled": "Título a receber cancelado",
+  "receivable.receipt_registered": "Recebimento registrado",
+  "receivable.charge_issued": "Cobrança emitida",
+  "receipt.created": "Recebimento criado",
+
+  // Notas fiscais
+  "invoice.created": "Nota fiscal criada",
+  "invoice.issued": "Nota fiscal emitida",
+  "invoice.canceled": "Nota fiscal cancelada",
+
+  // Conciliação bancária
+  "statement.imported": "Extrato importado",
+  "statement.synced": "Extrato sincronizado",
+  "bank_transaction.reconciled": "Transação bancária conciliada",
+  "bank_transaction.unreconciled": "Conciliação de transação desfeita",
+  "reconciliation.confirmed": "Conciliação confirmada",
+  "reconciliation.rejected": "Conciliação rejeitada",
+
+  // Cobrança
+  "collection.message_drafted": "Mensagem de cobrança preparada",
+  "collection.message_sent": "Mensagem de cobrança enviada",
+  "collection.message_canceled": "Mensagem de cobrança cancelada",
+
+  // Aprovações
+  "approval.requested": "Aprovação solicitada",
+  "approval.partially_approved": "Aprovação parcial registrada",
+
+  // Alertas e controles
+  "alert.created": "Alerta gerado",
+  "alert.acknowledged": "Alerta reconhecido",
+  "controls.violation_detected": "Violação de controle detectada",
+
+  // Contabilidade
+  "accounting.entry_prepared": "Lançamento contábil preparado",
+  "accounting.entry_exported": "Lançamento contábil exportado",
+  "accounting.batch_exported": "Lote contábil exportado",
+
+  // Relatórios e processos
+  "report.generated": "Relatório gerado",
+  "flow.started": "Fluxo iniciado",
+  "flow.completed": "Fluxo concluído",
+  "flow.failed": "Fluxo interrompido por erro",
+};
