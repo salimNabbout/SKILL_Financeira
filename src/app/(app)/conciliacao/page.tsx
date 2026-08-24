@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/session";
 import { formatBR, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
 import type { ISODate } from "@/core/dates";
 import type { ReconciliationMatch } from "@/core/entities";
+import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { confirmMatchAction, importStatementAction, rejectMatchAction, syncBankAction } from "./actions";
@@ -70,7 +71,7 @@ export default async function ConciliacaoPage({
       return {
         label: "Título a pagar",
         description: `${supplierName.get(p.supplierId) ?? p.supplierId} — ${p.description}`,
-        amountCents: p.amountCents - p.paidCents,
+        amountCents: payableRemainingCents(p),
         date: p.dueDate,
       };
     }
@@ -80,7 +81,7 @@ export default async function ConciliacaoPage({
       return {
         label: "Título a receber",
         description: `${customerName.get(r.customerId) ?? r.customerId} — ${r.description}`,
-        amountCents: r.amountCents - r.receivedCents,
+        amountCents: receivableRemainingCents(r),
         date: r.dueDate,
       };
     }
