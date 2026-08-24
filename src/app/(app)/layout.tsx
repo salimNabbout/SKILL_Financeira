@@ -12,6 +12,7 @@ const NAV: Array<{ href: string; label: string }> = [
   { href: "/contas-a-receber", label: "Contas a receber" },
   { href: "/faturamento", label: "Faturamento" },
   { href: "/fluxo-de-caixa", label: "Fluxo de caixa" },
+  { href: "/agenda", label: "Agenda" },
   { href: "/conciliacao", label: "Conciliação" },
   { href: "/cobranca", label: "Cobrança" },
   { href: "/orcamento", label: "Orçamento" },
