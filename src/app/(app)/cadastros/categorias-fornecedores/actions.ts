@@ -31,6 +31,7 @@ export async function createSupplierCategoryAction(formData: FormData): Promise<
   const name = fdString(formData, "name");
   if (!name) fail("Informe o nome da categoria.");
 
+  let mensagem;
   try {
     const { category, created } = await addSupplierCategory(container, companyId, name);
     if (created) {
@@ -41,12 +42,16 @@ export async function createSupplierCategoryAction(formData: FormData): Promise<
         entityId: category.id,
         after: category,
       });
-      ok(`Categoria "${category.name}" cadastrada.`);
+      mensagem = `Categoria "${category.name}" cadastrada.`;
+    } else {
+      mensagem = `Categoria "${category.name}" já estava cadastrada.`;
     }
-    ok(`Categoria "${category.name}" já estava cadastrada.`);
   } catch (error) {
     fail(errorMessage(error));
   }
+  // ok() chama redirect(), que lança NEXT_REDIRECT — precisa ficar FORA do try,
+  // senão o catch acima o captura e o exibe como erro na tela.
+  ok(mensagem);
 }
 
 export async function updateSupplierCategoryAction(formData: FormData): Promise<void> {
@@ -62,30 +67,33 @@ export async function updateSupplierCategoryAction(formData: FormData): Promise<
   const name = fdString(formData, "name");
   if (!name) fail("Informe o nome da categoria.");
 
+  let mensagem;
   try {
     const result = await renameSupplierCategory(container, companyId, id, name);
     if (result.semMudanca) {
-      ok(`Categoria "${result.after.name}" já tinha esse nome.`);
+      mensagem = `Categoria "${result.after.name}" já tinha esse nome.`;
+    } else {
+      // O create registra apenas `after`; aqui o `before` é essencial — sem ele
+      // a trilha não mostra de que nome a categoria veio.
+      await container.audit.record(companyId, {
+        actor: session.actor,
+        action: "supplier_category.updated",
+        entityType: "supplier_category",
+        entityId: result.after.id,
+        before: result.before,
+        after: result.after,
+      });
+
+      const propagados = result.suppliersAtualizados + result.recorrenciasAtualizadas;
+      mensagem =
+        propagados === 0
+          ? `Categoria renomeada para "${result.after.name}".`
+          : `Categoria renomeada para "${result.after.name}" (${propagados} cadastro(s) atualizado(s)).`;
     }
-
-    // O create registra apenas `after`; aqui o `before` é essencial — sem ele a
-    // trilha não mostra de que nome a categoria veio.
-    await container.audit.record(companyId, {
-      actor: session.actor,
-      action: "supplier_category.updated",
-      entityType: "supplier_category",
-      entityId: result.after.id,
-      before: result.before,
-      after: result.after,
-    });
-
-    const propagados = result.suppliersAtualizados + result.recorrenciasAtualizadas;
-    ok(
-      propagados === 0
-        ? `Categoria renomeada para "${result.after.name}".`
-        : `Categoria renomeada para "${result.after.name}" (${propagados} cadastro(s) atualizado(s)).`
-    );
   } catch (error) {
     fail(errorMessage(error));
   }
+  // ok() chama redirect(), que lança NEXT_REDIRECT — precisa ficar FORA do try,
+  // senão o catch acima o captura e o exibe como erro na tela.
+  ok(mensagem);
 }
