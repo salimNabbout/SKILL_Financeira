@@ -156,7 +156,7 @@ export function Button({
   formAction,
 }: {
   children: ReactNode;
-  variant?: "primary" | "secondary" | "danger" | "success";
+  variant?: "primary" | "secondary" | "danger" | "success" | "warn";
   type?: "submit" | "button";
   name?: string;
   value?: string;
@@ -170,6 +170,10 @@ export function Button({
         ? "bg-[var(--crit)] text-white hover:opacity-90"
         : variant === "success"
           ? "bg-[var(--ok)] text-white hover:opacity-90"
+          : variant === "warn"
+            ? // --warn inverte entre os temas (escuro no claro, claro no escuro),
+              // por isso a tinta vem de --brand-ink, que inverte junto.
+              "bg-[var(--warn)] text-[var(--brand-ink)] hover:opacity-90"
           : "border border-[var(--line)] bg-white text-[var(--ink)] hover:bg-slate-50";
   return (
     <button

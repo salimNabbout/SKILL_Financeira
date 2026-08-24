@@ -7,6 +7,7 @@ import { requireSession } from "@/lib/session";
 import { hasPermission } from "@/core/auth";
 import { errorMessage, fdString } from "@/app/(app)/cadastros/_lib/form-utils";
 import { addSupplierCategory } from "./_lib/create";
+import { renameSupplierCategory } from "./_lib/update";
 
 const PATH = "/cadastros/categorias-fornecedores";
 
@@ -43,6 +44,47 @@ export async function createSupplierCategoryAction(formData: FormData): Promise<
       ok(`Categoria "${category.name}" cadastrada.`);
     }
     ok(`Categoria "${category.name}" já estava cadastrada.`);
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+}
+
+export async function updateSupplierCategoryAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const container = await getContainer();
+  const companyId = session.company.id;
+
+  if (!hasPermission(session.membership.role, "master_data.manage")) {
+    fail("Sem permissão para gerenciar cadastros (master_data.manage).");
+  }
+  const id = fdString(formData, "id");
+  if (!id) fail("Categoria não informada.");
+  const name = fdString(formData, "name");
+  if (!name) fail("Informe o nome da categoria.");
+
+  try {
+    const result = await renameSupplierCategory(container, companyId, id, name);
+    if (result.semMudanca) {
+      ok(`Categoria "${result.after.name}" já tinha esse nome.`);
+    }
+
+    // O create registra apenas `after`; aqui o `before` é essencial — sem ele a
+    // trilha não mostra de que nome a categoria veio.
+    await container.audit.record(companyId, {
+      actor: session.actor,
+      action: "supplier_category.updated",
+      entityType: "supplier_category",
+      entityId: result.after.id,
+      before: result.before,
+      after: result.after,
+    });
+
+    const propagados = result.suppliersAtualizados + result.recorrenciasAtualizadas;
+    ok(
+      propagados === 0
+        ? `Categoria renomeada para "${result.after.name}".`
+        : `Categoria renomeada para "${result.after.name}" (${propagados} cadastro(s) atualizado(s)).`
+    );
   } catch (error) {
     fail(errorMessage(error));
   }
