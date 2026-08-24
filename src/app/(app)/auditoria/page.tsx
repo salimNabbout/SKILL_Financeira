@@ -2,99 +2,13 @@ import Link from "next/link";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
-import { formatDateTime } from "@/lib/format";
+import { ACTION_LABELS, formatDateTime } from "@/lib/format";
 import { verifyChain } from "@/core/audit";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 
 function smallJson(value: unknown): string {
   const json = JSON.stringify(value, null, 1) ?? "null";
   return json.length > 2000 ? `${json.slice(0, 2000)}\n… (truncado)` : json;
-}
-
-/**
- * Descrições em linguagem corrente para os códigos técnicos de ação da
- * auditoria (ex.: "payable.updated" → "Conta a pagar alterada"). Apenas
- * apresentação: o código original continua sendo o dado registrado.
- */
-const ACTION_LABELS: Record<string, string> = {
-  "auth.login": "Entrou no sistema",
-  "auth.switch_company": "Trocou de empresa",
-  "user.created": "Usuário criado",
-  "user.password_changed": "Senha alterada",
-  "user.totp_enabled": "Verificação em duas etapas ativada",
-  "user.totp_disabled": "Verificação em duas etapas desativada",
-  "membership.created": "Acesso de usuário concedido",
-  "membership.updated": "Acesso de usuário alterado",
-
-  "supplier.created": "Fornecedor cadastrado",
-  "supplier.updated": "Fornecedor alterado",
-  "supplier.deleted": "Fornecedor excluído",
-  "supplier_category.created": "Categoria de fornecedor criada",
-  "customer.created": "Cliente cadastrado",
-  "category.created": "Categoria criada",
-  "cost_center.created": "Centro de custo criado",
-  "chart_account.created": "Conta contábil criada",
-  "bank_account.created": "Conta bancária cadastrada",
-  "recurring_template.created": "Recorrência criada",
-  "recurring_template.updated": "Recorrência alterada",
-
-  "payable.created": "Conta a pagar criada",
-  "payable.updated": "Conta a pagar alterada",
-  "payable.canceled": "Conta a pagar cancelada",
-  "payable.settled_via_reconciliation": "Conta a pagar baixada por conciliação",
-  "payment.requested": "Pagamento enviado para aprovação",
-  "payment.executed": "Pagamento efetuado",
-  "payment.rejected": "Pagamento recusado",
-  "payment.canceled": "Pagamento cancelado",
-
-  "receivable.created": "Conta a receber criada",
-  "receivable.updated": "Conta a receber alterada",
-  "receivable.canceled": "Conta a receber cancelada",
-  "receivable.receipt_registered": "Recebimento registrado",
-  "receivable.charge_issued": "Cobrança emitida",
-  "receipt.created": "Recebimento criado",
-
-  "invoice.created": "Nota fiscal criada",
-  "invoice.issued": "Nota fiscal emitida",
-  "invoice.canceled": "Nota fiscal cancelada",
-
-  "statement.imported": "Extrato bancário importado",
-  "statement.synced": "Extrato bancário sincronizado",
-  "bank_transaction.reconciled": "Transação conciliada",
-  "bank_transaction.unreconciled": "Conciliação desfeita",
-  "reconciliation.confirmed": "Conciliação confirmada",
-  "reconciliation.rejected": "Conciliação rejeitada",
-
-  "collection.message_drafted": "Mensagem de cobrança preparada",
-  "collection.message_sent": "Mensagem de cobrança enviada",
-  "collection.message_canceled": "Mensagem de cobrança cancelada",
-
-  "approval.requested": "Aprovação solicitada",
-  "approval.partially_approved": "Aprovação parcial",
-  "approval.approved": "Aprovação concedida",
-  "approval.rejected": "Aprovação recusada",
-
-  "alert.created": "Alerta gerado",
-  "alert.acknowledged": "Alerta reconhecido",
-  "controls.violation_detected": "Violação de controle detectada",
-
-  "accounting.entry_prepared": "Lançamento contábil preparado",
-  "accounting.entry_exported": "Lançamento contábil exportado",
-  "accounting.batch_exported": "Lote contábil exportado",
-
-  "report.generated": "Relatório gerado",
-  "flow.started": "Processo iniciado",
-  "flow.completed": "Processo concluído",
-  "flow.failed": "Processo falhou",
-};
-
-/** Rótulo legível da ação; se o código for novo, gera um fallback amigável. */
-function actionLabel(action: string): string {
-  const known = ACTION_LABELS[action];
-  if (known) return known;
-  // Fallback: transforma "algo.aconteceu" em "Algo aconteceu" (sem deixar em branco).
-  const readable = action.replace(/[._]/g, " ").trim();
-  return readable.charAt(0).toUpperCase() + readable.slice(1);
 }
 
 export default async function AuditoriaPage({
@@ -207,9 +121,11 @@ export default async function AuditoriaPage({
                   )}
                 </Td>
                 <Td>
-                  {/* Linguagem corrente para leigos; o código técnico fica no title (tooltip). */}
-                  <span className="text-sm" title={r.action}>
-                    {actionLabel(r.action)}
+                  {/* Rótulo em linguagem corrente; o código técnico fica abaixo,
+                      apagado (quem investiga um incidente precisa do código exato). */}
+                  <span className="text-sm">{ACTION_LABELS[r.action] ?? r.action}</span>
+                  <span className="tabular block text-[11px] text-[var(--ink-muted)]">
+                    {r.action}
                   </span>
                 </Td>
                 <Td>
