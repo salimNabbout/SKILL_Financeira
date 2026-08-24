@@ -138,6 +138,14 @@ export default async function ContasAPagarPage({
       />
       <Flash ok={ok} erro={erro} />
 
+      <Card className="mb-6" title="Novo título">
+        <NewPayableForm suppliers={supplierOptions} categories={categoryOptions} today={today} />
+        <p className="mt-3 text-xs text-[var(--ink-muted)]">
+          O título passa pelo fluxo de entrada de nota (validação de duplicidade, projeção de caixa e
+          impacto orçamentário). Valores em reais são convertidos para centavos.
+        </p>
+      </Card>
+
       <div className="mb-4 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => (
           <Link
@@ -271,14 +279,6 @@ export default async function ContasAPagarPage({
           </Table>
         )}
         <Pager page={page} basePath="/contas-a-pagar" extraQuery={extraQuery} />
-      </Card>
-
-      <Card title="Novo título">
-        <NewPayableForm suppliers={supplierOptions} categories={categoryOptions} today={today} />
-        <p className="mt-3 text-xs text-[var(--ink-muted)]">
-          O título passa pelo fluxo de entrada de nota (validação de duplicidade, projeção de caixa e
-          impacto orçamentário). Valores em reais são convertidos para centavos.
-        </p>
       </Card>
     </div>
   );
