@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/session";
 import { formatBRL, formatDateOrDash, statusLabel } from "@/lib/format";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { createInvoiceAction } from "./actions";
+import { MoneyInput } from "@/components/money-input";
 
 export default async function FaturamentoPage({
   searchParams,
@@ -78,7 +79,7 @@ export default async function FaturamentoPage({
             <input name="description" required className={inputClass} placeholder="Ex.: Pedido 1024 — assinatura anual" />
           </Field>
           <Field label="Total (R$)">
-            <input name="total" required className={inputClass} placeholder="2.500,00" inputMode="decimal" />
+            <MoneyInput name="total" required className={inputClass} placeholder="2.500,00" />
           </Field>
           <Field label="Referência da venda (opcional)">
             <input name="saleRef" className={inputClass} placeholder="Ex.: PED-1024" />

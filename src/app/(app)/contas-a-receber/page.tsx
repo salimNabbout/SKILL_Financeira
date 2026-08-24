@@ -10,6 +10,7 @@ import { receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { createReceivableAction, issueChargeAction, registerReceiptAction } from "./actions";
+import { MoneyInput } from "@/components/money-input";
 
 const STATUS_FILTERS: Array<{ value: ReceivableStatus | "todos"; label: string }> = [
   { value: "todos", label: "Todos" },
@@ -240,10 +241,9 @@ export default async function ContasAReceberPage({
                     {RECEIVABLE_OPEN.includes(r.status) ? (
                       <form action={registerReceiptAction} className="flex flex-wrap items-center gap-1.5">
                         <input type="hidden" name="receivableId" value={r.id} />
-                        <input
+                        <MoneyInput
                           name="amount"
                           required
-                          inputMode="decimal"
                           defaultValue={(remaining / 100).toFixed(2).replace(".", ",")}
                           className={`${inputClass} w-24`}
                           title="Valor recebido (R$)"
@@ -316,7 +316,7 @@ export default async function ContasAReceberPage({
             <input name="description" required className={inputClass} placeholder="Ex.: Venda pedido 987" />
           </Field>
           <Field label="Valor total (R$)">
-            <input name="amount" required className={inputClass} placeholder="1.234,56" inputMode="decimal" />
+            <MoneyInput name="amount" required className={inputClass} placeholder="1.234,56" />
           </Field>
           <Field label="Emissão">
             <input type="date" name="issueDate" required defaultValue={today} className={inputClass} />

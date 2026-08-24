@@ -2,6 +2,7 @@
 
 import { Button, Field, inputClass } from "@/components/ui";
 import { createPayableAction } from "../actions";
+import { MoneyInput } from "@/components/money-input";
 
 /** Fornecedor exibido no select de novo título. */
 export interface SupplierOption {
@@ -39,7 +40,7 @@ export function NewPayableForm({
         <input name="description" required className={inputClass} placeholder="Ex.: NF 1234 — insumos" />
       </Field>
       <Field label="Valor total (R$)">
-        <input name="amount" required className={inputClass} placeholder="1.234,56" inputMode="decimal" />
+        <MoneyInput name="amount" required className={inputClass} placeholder="1.234,56" />
       </Field>
       <Field label="Emissão">
         <input type="date" name="issueDate" required defaultValue={today} className={inputClass} />
