@@ -5,14 +5,16 @@ import { ACTION_LABELS } from "@/lib/format";
 
 /**
  * Guarda contra regressão: toda ação de auditoria registrada no código de
- * PRODUÇÃO (action: "x.y") precisa ter um rótulo em ACTION_LABELS. Uma ação
- * nova sem rótulo quebra este teste — e o CI — antes de chegar à tela.
+ * PRODUÇÃO precisa ter um rótulo em ACTION_LABELS. Uma ação nova sem rótulo
+ * quebra este teste — e o CI — antes de chegar à tela.
  *
- * Varre src/ (exceto __tests__), replicando o grep documentado no prompt:
- *   grep -rhn 'action: "[a-z_]*\.[a-z_]*"' --include=*.ts src
+ * Varre src/ (exceto __tests__) e, em cada LINHA que contém `action:`, extrai
+ * TODOS os literais "x.y". Assim pega também ações em ternários, como
+ *   action: cond ? "user.reactivated" : "user.deactivated"
+ * (o padrão simples "action: \"...\"" perderia o 2º ramo).
  */
 const SRC = join(process.cwd(), "src");
-const ACTION_RE = /action:\s*"([a-z_]+\.[a-z_]+)"/g;
+const LITERAL_RE = /"([a-z_]+\.[a-z_]+)"/g;
 
 function collectActions(dir: string, acc = new Set<string>()): Set<string> {
   for (const entry of readdirSync(dir)) {
@@ -22,8 +24,10 @@ function collectActions(dir: string, acc = new Set<string>()): Set<string> {
     if (st.isDirectory()) {
       collectActions(full, acc);
     } else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
-      const text = readFileSync(full, "utf8");
-      for (const m of text.matchAll(ACTION_RE)) acc.add(m[1]);
+      for (const line of readFileSync(full, "utf8").split("\n")) {
+        if (!line.includes("action:")) continue;
+        for (const m of line.matchAll(LITERAL_RE)) acc.add(m[1]);
+      }
     }
   }
   return acc;
@@ -35,6 +39,9 @@ describe("ACTION_LABELS cobre todas as ações de auditoria em produção", () =
   it("encontra ações no código-fonte (sanidade do varredor)", () => {
     expect(actions.length).toBeGreaterThan(20);
     expect(actions).toContain("payable.settled_via_reconciliation");
+    // Ações em ternário também são capturadas (antes escapavam do varredor).
+    expect(actions).toContain("user.deactivated");
+    expect(actions).toContain("user.reactivated");
   });
 
   it("toda ação de produção tem rótulo em ACTION_LABELS", () => {
