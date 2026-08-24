@@ -75,9 +75,13 @@ export const ROLE_LABELS: Record<string, string> = {
 export const ACTION_LABELS: Record<string, string> = {
   // Acesso e usuários
   "auth.login": "Login realizado",
+  "auth.login_failed": "Tentativa de login sem sucesso",
+  "auth.logout": "Sessão encerrada",
   "auth.switch_company": "Empresa ativa trocada",
   "user.created": "Usuário criado",
   "user.password_changed": "Senha alterada",
+  "user.deactivated": "Usuário desativado",
+  "user.reactivated": "Usuário reativado",
   "user.totp_enabled": "Verificação em duas etapas ativada",
   "user.totp_disabled": "Verificação em duas etapas desativada",
   "membership.created": "Acesso de usuário concedido",
@@ -125,6 +129,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "statement.synced": "Extrato sincronizado",
   "bank_transaction.reconciled": "Transação bancária conciliada",
   "bank_transaction.unreconciled": "Conciliação de transação desfeita",
+  "reconciliation.auto_matched": "Conciliação automática",
+  "reconciliation.suggested": "Conciliação sugerida",
   "reconciliation.confirmed": "Conciliação confirmada",
   "reconciliation.rejected": "Conciliação rejeitada",
 
@@ -141,6 +147,10 @@ export const ACTION_LABELS: Record<string, string> = {
   "alert.created": "Alerta gerado",
   "alert.acknowledged": "Alerta reconhecido",
   "controls.violation_detected": "Violação de controle detectada",
+
+  // Orçamento
+  "budget.created": "Orçamento criado",
+  "budget.updated": "Orçamento alterado",
 
   // Contabilidade
   "accounting.entry_prepared": "Lançamento contábil preparado",

@@ -197,6 +197,32 @@ describe("setUserActive", () => {
     expect(actions.filter((a) => a === "user.reactivated")).toHaveLength(1);
   });
 
+  it("desativação registra before E after e NUNCA vaza credenciais no payload", async () => {
+    await setUserActive(deps, {
+      companyId: env.company.id,
+      actor: env.actorFor("admin"),
+      userId: env.users.viewer.id,
+      active: false,
+    });
+
+    const records = await env.repos.audit.list(env.company.id);
+    const rec = records.find((r) => r.action === "user.deactivated");
+    expect(rec).toBeDefined();
+
+    // before mostra o que ERA (ativo), after o que ficou (inativo) — o auditor
+    // pergunta pelo estado anterior, então ele é obrigatório.
+    expect(rec!.before).toEqual({ active: true });
+    expect(rec!.after).toEqual({ active: false });
+
+    // Nenhum campo de credencial pode aparecer no registro. env.users.viewer
+    // tem passwordHash "x"; garantimos que nem o hash nem chaves de segredo
+    // aparecem no JSON serializado do registro.
+    const serialized = JSON.stringify(rec);
+    expect(serialized).not.toContain("passwordHash");
+    expect(serialized).not.toContain("totpSecret");
+    expect(serialized).not.toContain(env.users.viewer.passwordHash);
+  });
+
   it("bloqueia autodesativação e desativar o último admin ativo", async () => {
     await expect(
       setUserActive(deps, {
