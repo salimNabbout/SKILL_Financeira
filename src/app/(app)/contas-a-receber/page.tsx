@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/session";
 import { formatBR, formatBRL, statusLabel } from "@/lib/format";
 import { endOfMonth, isISODate, startOfMonth, todayInTz, type ISODate } from "@/core/dates";
 import type { ReceivableStatus } from "@/core/entities";
+import { receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { createReceivableAction, issueChargeAction, registerReceiptAction } from "./actions";
@@ -218,7 +219,7 @@ export default async function ContasAReceberPage({
           >
             {rows.map((r) => {
               const overdue = r.dueDate < today && RECEIVABLE_OPEN.includes(r.status);
-              const remaining = r.amountCents - r.receivedCents;
+              const remaining = receivableRemainingCents(r);
               return (
                 <tr key={r.id}>
                   <Td>{customerName.get(r.customerId) ?? r.customerId}</Td>
