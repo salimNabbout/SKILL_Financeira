@@ -6,6 +6,7 @@ import { hasPermission } from "@/core/auth";
 import { formatBR, formatBRL } from "@/lib/format";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { createBankAccountAction } from "./actions";
+import { MoneyInput } from "@/components/money-input";
 
 const TYPE_LABELS: Record<string, string> = {
   checking: "Conta corrente",
@@ -85,7 +86,7 @@ export default async function ContasBancariasPage({
               </select>
             </Field>
             <Field label="Saldo inicial (R$)">
-              <input name="openingBalance" className={inputClass} placeholder="0,00" inputMode="decimal" />
+              <MoneyInput name="openingBalance" className={inputClass} placeholder="0,00" />
             </Field>
             <Field label="Data do saldo inicial">
               <input type="date" name="openingBalanceDate" required className={inputClass} />

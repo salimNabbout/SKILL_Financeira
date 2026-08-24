@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Field, inputClass } from "@/components/ui";
 import { createRecurringAction } from "../actions";
+import { MoneyInput } from "@/components/money-input";
 
 export interface PartyOption {
   id: string;
@@ -62,7 +63,7 @@ export function RecurringForm({
         />
       </Field>
       <Field label="Valor mensal (R$)">
-        <input name="amount" required className={inputClass} placeholder="2.000,00" inputMode="decimal" />
+        <MoneyInput name="amount" required className={inputClass} placeholder="2.000,00" />
       </Field>
       <Field label="Dia do vencimento">
         <input type="number" name="dueDay" min={1} max={31} required className={inputClass} placeholder="5" />
