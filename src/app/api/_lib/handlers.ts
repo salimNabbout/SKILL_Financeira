@@ -476,6 +476,8 @@ export async function createCostCenter(
     code: input.code,
     name: input.name,
     active: true,
+    // A API ainda não expõe destino; "both" mantém o comportamento anterior.
+    scope: "both",
   };
   const created = await deps.repos.costCenters.create(costCenter);
   await auditCreation(deps, session, "CostCenter", created.id, {

@@ -486,6 +486,7 @@ describe("integracao_contabil_fiscal — check_master_data", () => {
       code: "CC-99",
       name: "Desativado",
       active: false,
+      scope: "both",
     });
     const p1 = seedPayable(env, { supplierId: supplierNoDoc.id, categoryId: undefined }); // sem categoria
     const p2 = seedPayable(env, {

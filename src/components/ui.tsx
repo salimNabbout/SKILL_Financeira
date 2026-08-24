@@ -135,13 +135,18 @@ export function Td({
   children,
   right = false,
   className = "",
+  colSpan,
 }: {
   children: ReactNode;
   right?: boolean;
   className?: string;
+  colSpan?: number;
 }) {
   return (
-    <td className={`px-3 py-2 align-middle ${right ? "tabular text-right" : ""} ${className}`}>
+    <td
+      colSpan={colSpan}
+      className={`px-3 py-2 align-middle ${right ? "tabular text-right" : ""} ${className}`}
+    >
       {children}
     </td>
   );
