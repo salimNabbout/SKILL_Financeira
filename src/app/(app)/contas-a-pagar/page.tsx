@@ -236,24 +236,35 @@ export default async function ContasAPagarPage({
               const overdue = p.dueDate < today && p.status !== "paid" && p.status !== "canceled";
               return (
                 <tr key={p.id}>
-                  <Td>{supplierName.get(p.supplierId) ?? p.supplierId}</Td>
-                  <Td>{p.description}</Td>
-                  <Td>{`${p.installmentNumber}/${p.installmentCount}`}</Td>
-                  <Td>
+                  {/* !py-1 vence o py-2 do Td (compacta a altura); truncate + nowrap + title
+                      mantêm o nome completo acessível no tooltip. O "!" é necessário porque as
+                      classes do componente compartilhado, sem ele, ganhariam por ordem no CSS. */}
+                  <Td className="max-w-[220px] truncate whitespace-nowrap !py-1">
+                    <span title={supplierName.get(p.supplierId) ?? p.supplierId}>
+                      {supplierName.get(p.supplierId) ?? p.supplierId}
+                    </span>
+                  </Td>
+                  <Td className="max-w-[180px] truncate whitespace-nowrap !py-1">
+                    <span title={p.description}>{p.description}</span>
+                  </Td>
+                  <Td className="whitespace-nowrap !py-1">{`${p.installmentNumber}/${p.installmentCount}`}</Td>
+                  <Td className="whitespace-nowrap !py-1">
                     <span className={overdue ? "font-semibold text-[var(--crit)]" : ""}>
                       {formatBR(p.dueDate)}
                     </span>
                   </Td>
-                  <Td right>{formatBRL(p.amountCents)}</Td>
-                  <Td right>{formatBRL(p.paidCents)}</Td>
-                  <Td>
+                  <Td right className="whitespace-nowrap !py-1">{formatBRL(p.amountCents)}</Td>
+                  <Td right className="whitespace-nowrap !py-1">{formatBRL(p.paidCents)}</Td>
+                  <Td className="whitespace-nowrap !py-1">
                     <Badge tone={statusTone(p.status)}>{statusLabel(p.status)}</Badge>
                   </Td>
-                  <Td>
+                  <Td className="whitespace-nowrap !py-1">
                     {SCHEDULABLE.includes(p.status) ? (
-                      <form action={schedulePaymentAction} className="flex flex-wrap items-center gap-1.5">
+                      <form action={schedulePaymentAction} className="flex flex-nowrap items-center gap-2">
                         <input type="hidden" name="payableId" value={p.id} />
-                        <select name="bankAccountId" required className={`${inputClass} w-36`}>
+                        {/* !w-28/!w-36 vencem o w-full do inputClass; sem "!" o campo estica e
+                            volta a empurrar o layout. shrink-0 impede o flex de encolhê-los. */}
+                        <select name="bankAccountId" required className={`${inputClass} !w-28 shrink-0`}>
                           {activeAccounts.map((b) => (
                             <option key={b.id} value={b.id}>
                               {b.name}
@@ -265,9 +276,11 @@ export default async function ContasAPagarPage({
                           name="scheduledDate"
                           required
                           defaultValue={p.dueDate >= today ? p.dueDate : today}
-                          className={`${inputClass} w-36`}
+                          className={`${inputClass} !w-36 shrink-0`}
                         />
-                        <Button variant="success">Pagar</Button>
+                        <span className="shrink-0">
+                          <Button variant="success">Pagar</Button>
+                        </span>
                       </form>
                     ) : (
                       <span className="text-xs text-[var(--ink-muted)]">—</span>
