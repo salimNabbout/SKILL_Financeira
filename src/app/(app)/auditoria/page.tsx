@@ -11,14 +11,33 @@ function smallJson(value: unknown): string {
   return json.length > 2000 ? `${json.slice(0, 2000)}\n… (truncado)` : json;
 }
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 export default async function AuditoriaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ entityType?: string; entityId?: string; p?: string }>;
+  searchParams: Promise<{
+    entityType?: string;
+    entityId?: string;
+    p?: string;
+    ator?: string;
+    acao?: string;
+    de?: string;
+    ate?: string;
+  }>;
 }) {
   const params = await searchParams;
   const entityType = params.entityType?.trim() || undefined;
   const entityId = params.entityId?.trim() || undefined;
+  const actorId = params.ator?.trim() || undefined;
+  const action = params.acao?.trim() || undefined;
+  const de = params.de && ISO_DATE_RE.test(params.de) ? params.de : undefined;
+  const ate = params.ate && ISO_DATE_RE.test(params.ate) ? params.ate : undefined;
+  // De > Até: ignora o intervalo e avisa (não quebra).
+  const invalidRange = Boolean(de && ate && de > ate);
+  const from = invalidRange ? undefined : de;
+  const to = invalidRange ? undefined : ate;
+
   const session = await requireSession();
   const { repos } = await getContainer();
   const companyId = session.company.id;
@@ -28,17 +47,38 @@ export default async function AuditoriaPage({
   const allRecords = await repos.audit.list(companyId);
   const chain = verifyChain(allRecords);
 
-  // Tabela paginada no repositório (seq desc).
+  // Tabela paginada no repositório (seq desc). Filtros aplicados no banco —
+  // NUNCA passados a list()/verifyChain acima (isso quebraria o encadeamento).
   const page = await repos.audit.listPage(companyId, {
     offset: pageOffset(params.p),
     limit: PAGE_SIZE,
     entityType,
     entityId,
+    actorId,
+    action,
+    from,
+    to,
   });
   const rows = page.items;
 
   const users = await repos.users.listAll();
   const userName = new Map(users.map((u) => [u.id, u.name]));
+
+  // Atores para o select: reaproveita `users` já carregado (sem 2ª consulta).
+  const actorOptions = [...users].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  // Ações para o select: derivadas das presentes na trilha (allRecords já em mão).
+  const actionOptions = [...new Set(allRecords.map((r) => r.action))].sort();
+
+  const anyFilterActive =
+    Boolean(entityType) || Boolean(entityId) || Boolean(actorId) || Boolean(action) || Boolean(from) || Boolean(to);
+  const extraQuery: Record<string, string | undefined> = {
+    entityType,
+    entityId,
+    ator: actorId,
+    acao: action,
+    de: from,
+    ate: to,
+  };
 
   return (
     <div>
@@ -70,7 +110,33 @@ export default async function AuditoriaPage({
       </div>
 
       <Card className="mb-6" title="Filtros">
-        <form method="get" className="flex flex-wrap items-end gap-3">
+        <form method="get" action="/auditoria" className="flex flex-wrap items-end gap-3">
+          <Field label="De">
+            <input type="date" name="de" defaultValue={de ?? ""} className={`${inputClass} w-40`} />
+          </Field>
+          <Field label="Até">
+            <input type="date" name="ate" defaultValue={ate ?? ""} className={`${inputClass} w-40`} />
+          </Field>
+          <Field label="Ator">
+            <select name="ator" defaultValue={actorId ?? ""} className={`${inputClass} w-56`}>
+              <option value="">Todos os atores</option>
+              {actorOptions.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Ação">
+            <select name="acao" defaultValue={action ?? ""} className={`${inputClass} w-56`}>
+              <option value="">Todas as ações</option>
+              {actionOptions.map((a) => (
+                <option key={a} value={a}>
+                  {ACTION_LABELS[a] ?? a}
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field label="Tipo de entidade">
             <input
               name="entityType"
@@ -88,17 +154,28 @@ export default async function AuditoriaPage({
             />
           </Field>
           <Button variant="secondary">Filtrar</Button>
-          {entityType || entityId ? (
+          {anyFilterActive ? (
             <Link href="/auditoria" className="text-sm text-[var(--brand)] underline">
               Limpar filtros
             </Link>
           ) : null}
         </form>
+        {invalidRange ? (
+          <p className="mt-3 text-xs text-amber-700">
+            “De” é posterior a “Até” — o filtro de período foi ignorado.
+          </p>
+        ) : null}
       </Card>
 
       <Card title={`Registros (${rows.length} de ${page.total} — mais recentes primeiro)`}>
         {rows.length === 0 ? (
-          <EmptyState message="Nenhum registro de auditoria para o filtro informado." />
+          <EmptyState
+            message={
+              anyFilterActive
+                ? "Nenhum registro corresponde aos filtros selecionados."
+                : "Nenhum registro de auditoria."
+            }
+          />
         ) : (
           <Table
             headers={["Seq", "Quando", "Ator", "Ação", "Entidade", "Antes/Depois"]}
@@ -164,7 +241,7 @@ export default async function AuditoriaPage({
             ))}
           </Table>
         )}
-        <Pager page={page} basePath="/auditoria" extraQuery={{ entityType, entityId }} />
+        <Pager page={page} basePath="/auditoria" extraQuery={extraQuery} />
       </Card>
     </div>
   );

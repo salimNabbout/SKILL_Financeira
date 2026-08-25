@@ -1873,10 +1873,23 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       return rows.map(auditToDomain);
     },
     async listPage(companyId, query) {
+      // timestamp é DateTime; from/to vêm como "YYYY-MM-DD" (input date). O
+      // intervalo cobre o DIA INTEIRO: de 00:00:00 de `from` até 23:59:59.999
+      // de `to` (senão "Até" no mesmo dia excluiria tudo daquele dia).
       const where = {
         companyId,
         ...(query.entityType ? { entityType: query.entityType } : {}),
         ...(query.entityId ? { entityId: query.entityId } : {}),
+        ...(query.actorId ? { actorId: query.actorId } : {}),
+        ...(query.action ? { action: query.action } : {}),
+        ...(query.from || query.to
+          ? {
+              timestamp: {
+                ...(query.from ? { gte: new Date(`${query.from}T00:00:00.000Z`) } : {}),
+                ...(query.to ? { lte: new Date(`${query.to}T23:59:59.999Z`) } : {}),
+              },
+            }
+          : {}),
       };
       const { skip, take } = pageArgs(query);
       const [rows, total] = await Promise.all([
