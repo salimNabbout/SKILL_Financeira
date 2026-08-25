@@ -81,7 +81,7 @@ test("máscara monetária: digitação, valor pequeno, colagem e gravação", as
   await page.fill('input[name="dueDate"]', "2026-12-20");
 
   // Selects obrigatórios: primeira opção real de cada um.
-  for (const campo of ["supplierId", "supplierCategory", "costClassification"]) {
+  for (const campo of ["supplierId", "supplierCategory", "costClassification", "costCenterId"]) {
     const valores = await opcoes(page, campo);
     expect(valores.length, `select ${campo} sem opções`).toBeGreaterThan(0);
     await page.locator(`select[name="${campo}"]`).selectOption(valores[0]);

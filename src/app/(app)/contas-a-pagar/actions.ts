@@ -80,6 +80,7 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   if (costRaw !== "fixed" && costRaw !== "variable") {
     failCreate("Selecione a classificação do custo (Fixo ou Variável).");
   }
+  if (!costCenterId) failCreate("Selecione o centro de custo.");
 
   let amountCents = 0;
   let installmentCount = 1;
