@@ -26,6 +26,10 @@ function ok(message: string): never {
   redirect(`${PATH}?ok=${encodeURIComponent(message)}`);
 }
 
+// Descrição pode ser longa; ao PROPAGAR na URL truncamos para não estourar o
+// limite de tamanho. Truncagem só na propagação — nunca no que seria salvo.
+const MAX_URL_DESCRIPTION = 200;
+
 export async function createPayableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
   const { orchestrator } = await getContainer();
@@ -36,42 +40,66 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   const dueDate = fdString(formData, "dueDate");
   const supplierCategory = fdOptional(formData, "supplierCategory");
   const costRaw = fdOptional(formData, "costClassification");
-  // Todos os campos são obrigatórios (validação no servidor, além do required do HTML).
-  if (!supplierId || !description || !issueDate || !dueDate) {
-    fail("Preencha fornecedor, descrição, emissão e vencimento.");
-  }
-  if (!supplierCategory) fail("Selecione a categoria.");
-  if (costRaw !== "fixed" && costRaw !== "variable") {
-    fail("Selecione a classificação do custo (Fixo ou Variável).");
-  }
-
   const tipo = fdOptional(formData, "tipoLancamento") ?? "parcelado";
   const isRecorrente = tipo === "recorrente";
+  const amountRaw = fdString(formData, "amount");
+  const installmentRaw = fdOptional(formData, "installmentCount");
+  const frequencyRaw = fdString(formData, "recurrenceFrequency");
+  const occurrencesRaw = fdString(formData, "recurrenceOccurrences");
+
+  // Falha na CRIAÇÃO: reexibe o Card "Novo título" com TUDO que foi digitado
+  // (searchParams nt_* → defaultValue), inclusive o campo errado. Marca
+  // nt_erro=data quando a validação é de datas, para a page destacar Emissão/
+  // Vencimento e dar autoFocus no Vencimento.
+  function failCreate(message: string): never {
+    const qs = new URLSearchParams({ erro: message });
+    if (/Verificar a Data da Emissão/i.test(message)) qs.set("nt_erro", "data");
+    if (supplierId) qs.set("nt_fornecedor", supplierId);
+    if (description) qs.set("nt_descricao", description.slice(0, MAX_URL_DESCRIPTION));
+    if (amountRaw) qs.set("nt_valor", amountRaw);
+    if (issueDate) qs.set("nt_emissao", issueDate);
+    if (dueDate) qs.set("nt_vencimento", dueDate);
+    if (supplierCategory) qs.set("nt_categoria", supplierCategory);
+    if (costRaw) qs.set("nt_custo", costRaw);
+    qs.set("nt_tipo", isRecorrente ? "recorrente" : "parcelado");
+    if (installmentRaw) qs.set("nt_parcelas", installmentRaw);
+    if (frequencyRaw) qs.set("nt_frequencia", frequencyRaw);
+    if (occurrencesRaw) qs.set("nt_ocorrencias", occurrencesRaw);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  // Todos os campos são obrigatórios (validação no servidor, além do required do HTML).
+  if (!supplierId || !description || !issueDate || !dueDate) {
+    failCreate("Preencha fornecedor, descrição, emissão e vencimento.");
+  }
+  if (!supplierCategory) failCreate("Selecione a categoria.");
+  if (costRaw !== "fixed" && costRaw !== "variable") {
+    failCreate("Selecione a classificação do custo (Fixo ou Variável).");
+  }
 
   let amountCents = 0;
   let installmentCount = 1;
   let recurrence: { frequency: string; occurrences: number } | undefined;
   try {
-    amountCents = parseBRLToCents(fdString(formData, "amount"));
+    amountCents = parseBRLToCents(amountRaw);
     if (isRecorrente) {
-      const frequency = fdString(formData, "recurrenceFrequency");
-      const occurrences = Number(fdString(formData, "recurrenceOccurrences"));
-      if (!["weekly", "monthly", "quarterly", "yearly"].includes(frequency)) {
-        fail("Selecione a frequência da recorrência.");
+      if (!["weekly", "monthly", "quarterly", "yearly"].includes(frequencyRaw)) {
+        failCreate("Selecione a frequência da recorrência.");
       }
+      const occurrences = Number(occurrencesRaw);
       if (!Number.isInteger(occurrences) || occurrences < 2) {
-        fail("Número de ocorrências inválido (mínimo 2).");
+        failCreate("Número de ocorrências inválido (mínimo 2).");
       }
-      recurrence = { frequency, occurrences };
+      recurrence = { frequency: frequencyRaw, occurrences };
     } else {
-      installmentCount = Number(fdOptional(formData, "installmentCount") ?? "1");
+      installmentCount = Number(installmentRaw ?? "1");
     }
   } catch (error) {
-    fail(errorMessage(error));
+    failCreate(errorMessage(error));
   }
-  if (amountCents <= 0) fail("O valor do título deve ser positivo.");
+  if (amountCents <= 0) failCreate("O valor do título deve ser positivo.");
   if (!isRecorrente && (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 120)) {
-    fail("Número de parcelas inválido (1 a 120).");
+    failCreate("Número de parcelas inválido (1 a 120).");
   }
 
   const costClassification: Supplier["costClassification"] = costRaw;
@@ -100,13 +128,13 @@ export async function createPayableAction(formData: FormData): Promise<void> {
       },
     });
   } catch (error) {
-    fail(errorMessage(error));
+    failCreate(errorMessage(error));
   }
 
   const created = response.results.find((r) => r.stepId === "ap_create")?.result;
   const payables = (created?.data as { payables?: Payable[] } | null)?.payables ?? [];
   if (response.status === "failed" && payables.length === 0) {
-    fail(flowErrorMessage(response));
+    failCreate(flowErrorMessage(response));
   }
   const totalCents = payables.reduce((acc, p) => acc + p.amountCents, 0);
   ok(
