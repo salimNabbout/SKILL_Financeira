@@ -229,42 +229,48 @@ export default async function ContasAPagarPage({
           />
         ) : (
           <Table
-            headers={["Fornecedor", "Descrição", "Parcela", "Vencimento", "Valor", "Pago", "Status", "Pagar"]}
+            headers={["Fornecedor", "Descrição", "Parc.", "Vencimento", "Valor", "Pago", "Status", "Pagar"]}
             align={["l", "l", "l", "l", "r", "r", "l", "l"]}
           >
             {rows.map((p) => {
               const overdue = p.dueDate < today && p.status !== "paid" && p.status !== "canceled";
               return (
                 <tr key={p.id}>
-                  {/* !py-1 vence o py-2 do Td (compacta a altura); truncate + nowrap + title
-                      mantêm o nome completo acessível no tooltip. O "!" é necessário porque as
-                      classes do componente compartilhado, sem ele, ganhariam por ordem no CSS. */}
-                  <Td className="max-w-[220px] truncate whitespace-nowrap !py-1">
+                  {/* Densidade: !px-2 (vence px-3 do Td), text-xs e !py-1 compactam a linha.
+                      truncate + nowrap + title mantêm o nome completo acessível no tooltip.
+                      O "!" é necessário porque, sem ele, as classes do componente compartilhado
+                      (px-3/py-2) ganhariam por ordem no CSS (Tailwind v4). */}
+                  <Td className="max-w-[160px] truncate whitespace-nowrap !px-2 !py-1 text-xs">
                     <span title={supplierName.get(p.supplierId) ?? p.supplierId}>
                       {supplierName.get(p.supplierId) ?? p.supplierId}
                     </span>
                   </Td>
-                  <Td className="max-w-[180px] truncate whitespace-nowrap !py-1">
+                  <Td className="max-w-[120px] truncate whitespace-nowrap !px-2 !py-1 text-xs">
                     <span title={p.description}>{p.description}</span>
                   </Td>
-                  <Td className="whitespace-nowrap !py-1">{`${p.installmentNumber}/${p.installmentCount}`}</Td>
-                  <Td className="whitespace-nowrap !py-1">
+                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">{`${p.installmentNumber}/${p.installmentCount}`}</Td>
+                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     <span className={overdue ? "font-semibold text-[var(--crit)]" : ""}>
                       {formatBR(p.dueDate)}
                     </span>
                   </Td>
-                  <Td right className="whitespace-nowrap !py-1">{formatBRL(p.amountCents)}</Td>
-                  <Td right className="whitespace-nowrap !py-1">{formatBRL(p.paidCents)}</Td>
-                  <Td className="whitespace-nowrap !py-1">
+                  <Td right className="whitespace-nowrap !px-2 !py-1 text-xs">{formatBRL(p.amountCents)}</Td>
+                  <Td right className="whitespace-nowrap !px-2 !py-1 text-xs">{formatBRL(p.paidCents)}</Td>
+                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     <Badge tone={statusTone(p.status)}>{statusLabel(p.status)}</Badge>
                   </Td>
-                  <Td className="whitespace-nowrap !py-1">
+                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     {SCHEDULABLE.includes(p.status) ? (
-                      <form action={schedulePaymentAction} className="flex flex-nowrap items-center gap-2">
+                      <form action={schedulePaymentAction} className="flex flex-nowrap items-center gap-1">
                         <input type="hidden" name="payableId" value={p.id} />
-                        {/* !w-28/!w-36 vencem o w-full do inputClass; sem "!" o campo estica e
-                            volta a empurrar o layout. shrink-0 impede o flex de encolhê-los. */}
-                        <select name="bankAccountId" required className={`${inputClass} !w-28 shrink-0`}>
+                        {/* !w-24/!w-32 e !text-xs vencem o w-full/text-sm do inputClass; sem "!"
+                            o campo estica/mantém o corpo maior e empurra o layout. shrink-0 impede
+                            o flex de encolhê-los. O input date tem piso nativo (~140px) no Chrome. */}
+                        <select
+                          name="bankAccountId"
+                          required
+                          className={`${inputClass} !w-24 shrink-0 !px-2 !text-xs`}
+                        >
                           {activeAccounts.map((b) => (
                             <option key={b.id} value={b.id}>
                               {b.name}
@@ -276,9 +282,11 @@ export default async function ContasAPagarPage({
                           name="scheduledDate"
                           required
                           defaultValue={p.dueDate >= today ? p.dueDate : today}
-                          className={`${inputClass} !w-36 shrink-0`}
+                          className={`${inputClass} !w-32 shrink-0 !px-2 !text-xs`}
                         />
-                        <span className="shrink-0">
+                        {/* Button não aceita className; envolvo num span que sobrescreve o
+                            padding/tamanho via seletor de filho (:only-child) sem tocar no componente. */}
+                        <span className="shrink-0 [&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
                           <Button variant="success">Pagar</Button>
                         </span>
                       </form>
