@@ -175,11 +175,16 @@ export function NewPayableForm({
           <option value="variable">Custo Variável</option>
         </select>
       </Field>
-      {/* Centro de custo é OPCIONAL (.optional() na skill) — não pode ser required.
-          value é o id; exibição "CÓDIGO — Nome". Lista só os ativos. */}
-      <Field label="Centro de Custo (opcional)">
-        <select name="costCenterId" className={inputClass} defaultValue={prefill?.costCenterId ?? ""}>
-          <option value="">— sem centro de custo —</option>
+      {/* Centro de custo OBRIGATÓRIO na UI (a skill aceita opcional, mas aqui
+          exigimos). value é o id; exibição "CÓDIGO — Nome". Lista só os ativos. */}
+      <Field label="Centro de Custo">
+        <select
+          name="costCenterId"
+          required
+          className={inputClass}
+          defaultValue={prefill?.costCenterId ?? ""}
+        >
+          <option value="">— selecione —</option>
           {costCenters.map((cc) => (
             <option key={cc.id} value={cc.id}>
               {cc.label}
