@@ -533,14 +533,32 @@ class MemAuditRepo implements AuditRepo {
   }
   async listPage(
     companyId: ID,
-    query: { offset?: number; limit?: number; entityType?: string; entityId?: ID }
+    query: {
+      offset?: number;
+      limit?: number;
+      entityType?: string;
+      entityId?: ID;
+      actorId?: ID;
+      action?: string;
+      from?: string;
+      to?: string;
+    }
   ) {
+    // timestamp é string ISO completa; from/to são "YYYY-MM-DD". Comparação
+    // lexicográfica cobre o DIA INTEIRO (00:00:00 de `from` a 23:59:59.999 de
+    // `to`). Filtros aplicados ANTES do slice para que `total` reflita o filtro.
+    const fromTs = query.from ? `${query.from}T00:00:00.000Z` : undefined;
+    const toTs = query.to ? `${query.to}T23:59:59.999Z` : undefined;
     const filtered = this.items
       .filter(
         (r) =>
           r.companyId === companyId &&
           (!query.entityType || r.entityType === query.entityType) &&
-          (!query.entityId || r.entityId === query.entityId)
+          (!query.entityId || r.entityId === query.entityId) &&
+          (!query.actorId || r.actorId === query.actorId) &&
+          (!query.action || r.action === query.action) &&
+          (fromTs === undefined || r.timestamp >= fromTs) &&
+          (toTs === undefined || r.timestamp <= toTs)
       )
       .sort((a, b) => b.seq - a.seq);
     return paginate(filtered, query);

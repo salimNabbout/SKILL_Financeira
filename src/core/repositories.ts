@@ -260,10 +260,21 @@ export interface AuditRepo {
   append(record: AuditRecord): Promise<void>;
   last(companyId: ID): Promise<AuditRecord | null>;
   list(companyId: ID, filter?: { entityType?: string; entityId?: ID }): Promise<AuditRecord[]>;
-  /** Ordem: seq desc. */
+  /**
+   * Ordem: seq desc. Filtros (entidade, ator, ação, intervalo de timestamp)
+   * aplicados no banco — paginação e `total` refletem o filtro. NÃO afeta a
+   * verificação de integridade (que roda sobre list(), a empresa inteira).
+   */
   listPage(
     companyId: ID,
-    query: PageQuery & { entityType?: string; entityId?: ID }
+    query: PageQuery & {
+      entityType?: string;
+      entityId?: ID;
+      actorId?: ID;
+      action?: string;
+      from?: string;
+      to?: string;
+    }
   ): Promise<Page<AuditRecord>>;
   /**
    * Âncora do head (seq/hash do último registro) guardada à parte da lista de
