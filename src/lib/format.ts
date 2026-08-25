@@ -100,6 +100,21 @@ export const ACTION_LABELS: Record<string, string> = {
   "bank_account.created": "Conta bancária cadastrada",
   "recurring_template.created": "Recorrência criada",
   "recurring_template.updated": "Recorrência alterada",
+  // Rótulos PREPARADOS: a operação de editar/excluir/desativar destes cadastros
+  // ainda não existe (hoje são create-only). Deixados aqui para quando o
+  // audit.record correspondente for adicionado — não quebram o guard (que
+  // exige ação→rótulo, não rótulo→ação).
+  "customer.updated": "Cliente alterado",
+  "customer.deleted": "Cliente excluído",
+  "category.updated": "Categoria alterada",
+  "category.deleted": "Categoria excluída",
+  "cost_center.updated": "Centro de custo alterado",
+  "cost_center.deactivated": "Centro de custo desativado",
+  "chart_account.updated": "Conta contábil alterada",
+  "chart_account.deactivated": "Conta contábil desativada",
+  "bank_account.updated": "Conta bancária alterada",
+  "bank_account.deactivated": "Conta bancária desativada",
+  "supplier_category.deleted": "Categoria de fornecedor excluída",
 
   // Contas a pagar e pagamentos
   "payable.created": "Título a pagar criado",
