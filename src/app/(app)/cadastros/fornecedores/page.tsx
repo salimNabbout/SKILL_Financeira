@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { Badge, Button, Card, EmptyState, PageHeader, Table, Td } from "@/components/ui";
 import { getContainer } from "@/lib/container";
@@ -107,50 +108,78 @@ export default async function FornecedoresPage({
               ...(canManage ? [""] : []),
             ]}
           >
-            {rows.map((s) => (
-              <tr key={s.id}>
-                <Td>{s.name}</Td>
-                <Td>{s.document ?? "—"}</Td>
-                <Td>{s.email ?? "—"}</Td>
-                <Td>{costLabel(s.costClassification)}</Td>
-                <Td>{s.category ?? "—"}</Td>
-                <Td>
-                  <Badge tone={s.active ? "ok" : "neutral"}>{s.active ? "Ativo" : "Inativo"}</Badge>
-                </Td>
-                {canManage ? (
-                  <Td>
-                    <Link
-                      href={`/cadastros/fornecedores?editar=${s.id}`}
-                      className="text-sm text-[var(--brand)] underline"
-                    >
-                      Editar
-                    </Link>
-                  </Td>
-                ) : null}
-              </tr>
-            ))}
+            {rows.map((s) => {
+              const editingThis = editing?.id === s.id;
+              return (
+                <Fragment key={s.id}>
+                  <tr>
+                    <Td>{s.name}</Td>
+                    <Td>{s.document ?? "—"}</Td>
+                    <Td>{s.email ?? "—"}</Td>
+                    <Td>{costLabel(s.costClassification)}</Td>
+                    <Td>{s.category ?? "—"}</Td>
+                    <Td>
+                      <Badge tone={s.active ? "ok" : "neutral"}>{s.active ? "Ativo" : "Inativo"}</Badge>
+                    </Td>
+                    {canManage ? (
+                      <Td className="whitespace-nowrap">
+                        {/* Mesmo padrão de /contas-a-pagar: botão laranja compacto que
+                            abre/fecha o form inline via GET (?editar=<id>), sem client/useState
+                            na página. Alterna para "Fechar" na linha em edição. */}
+                        <form method="get" action="/cadastros/fornecedores" className="inline">
+                          <input
+                            type="hidden"
+                            name="editar"
+                            value={editingThis ? "" : s.id}
+                          />
+                          <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                            <Button variant="warn" type="submit">
+                              {editingThis ? "Fechar" : "✎ Editar"}
+                            </Button>
+                          </span>
+                        </form>
+                      </Td>
+                    ) : null}
+                  </tr>
+                  {editingThis && editing ? (
+                    <tr>
+                      {/* Form de edição inline na própria linha (padrão de /contas-a-pagar).
+                          <td> cru para permitir colSpan — o Td compartilhado não o expõe e
+                          não pode ser alterado. Reaproveita SupplierForm em modo edição
+                          (defaultValues + updateSupplierAction), sem reescrevê-lo. */}
+                      <td className="px-3 py-3 align-top" colSpan={7}>
+                        <div className="rounded-lg border border-[var(--line)] bg-slate-50 p-3">
+                          <div className="mb-3 flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold">Editar: {editing.name}</span>
+                            <Link
+                              href="/cadastros/fornecedores"
+                              className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+                            >
+                              Cancelar
+                            </Link>
+                          </div>
+                          <SupplierForm
+                            key={editing.id}
+                            known={known}
+                            categories={categoryOptions}
+                            editing={editing}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
           </Table>
         )}
       </Card>
 
       {canManage ? (
-        <Card title={editing ? `Editar fornecedor: ${editing.name}` : "Novo fornecedor"}>
-          {editing ? (
-            <p className="mb-3 text-sm">
-              <Link href="/cadastros/fornecedores" className="text-[var(--brand)] underline">
-                ← Cancelar edição (voltar a Novo fornecedor)
-              </Link>
-            </p>
-          ) : null}
-          {/* key força o React a remontar o form ao trocar de alvo (novo ⇄ editar,
-              ou editar A → editar B); sem isso os useState iniciais não recarregam
-              e as caixas ficam em branco ao clicar em "Editar". */}
-          <SupplierForm
-            key={editing?.id ?? "novo"}
-            known={known}
-            categories={categoryOptions}
-            editing={editing}
-          />
+        // A edição agora acontece inline na linha (?editar=<id>); este Card é
+        // sempre o cadastro de NOVO fornecedor.
+        <Card title="Novo fornecedor">
+          <SupplierForm known={known} categories={categoryOptions} />
         </Card>
       ) : (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
