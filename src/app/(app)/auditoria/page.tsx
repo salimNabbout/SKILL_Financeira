@@ -80,11 +80,36 @@ export default async function AuditoriaPage({
     ate: to,
   };
 
+  // Exportação leva os MESMOS filtros ativos (não a paginação).
+  const exportParams = new URLSearchParams();
+  for (const [k, v] of Object.entries(extraQuery)) if (v) exportParams.set(k, v);
+  const exportHref = (format: "csv" | "pdf") => {
+    const p = new URLSearchParams(exportParams);
+    p.set("format", format);
+    return `/api/v1/audit/export?${p.toString()}`;
+  };
+
   return (
     <div>
       <PageHeader
         title="Auditoria"
         subtitle="Trilha imutável de tudo que aconteceu — cada registro encadeia o hash do anterior (adulteração é detectável)."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={exportHref("csv")}
+              className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Exportar CSV
+            </a>
+            <a
+              href={exportHref("pdf")}
+              className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Exportar PDF
+            </a>
+          </div>
+        }
       />
 
       <div className="mb-6">
