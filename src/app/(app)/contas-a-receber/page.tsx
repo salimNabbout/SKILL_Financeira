@@ -40,9 +40,25 @@ export default async function ContasAReceberPage({
     cliente?: string;
     de?: string;
     ate?: string;
+    // Reexibição do formulário "Novo título" após falha de validação (prefixo nt_).
+    nt_erro?: string;
+    nt_cliente?: string;
+    nt_descricao?: string;
+    nt_valor?: string;
+    nt_emissao?: string;
+    nt_vencimento?: string;
+    nt_parcelas?: string;
+    nt_categoria?: string;
+    nt_metodo?: string;
   }>;
 }) {
-  const { status, p, ok, erro, ano, mes, cliente, de, ate } = await searchParams;
+  const sp = await searchParams;
+  const { status, p, ok, erro, ano, mes, cliente, de, ate } = sp;
+  // Erro de datas liga o destaque de Emissão/Vencimento no form de novo título.
+  const ntDateError = sp.nt_erro === "data";
+  const ntDateFieldClass = ntDateError
+    ? `${inputClass} border-[var(--crit)] focus:border-[var(--crit)]`
+    : inputClass;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
@@ -299,9 +315,12 @@ export default async function ContasAReceberPage({
       </Card>
 
       <Card title="Novo título">
+        {/* Em falha de validação, os campos voltam preenchidos (nt_* → defaultValue),
+            inclusive o campo errado; no erro de datas, Emissão/Vencimento ganham
+            borda de atenção e o Vencimento recebe autoFocus. Sucesso não propaga. */}
         <form action={createReceivableAction} className="grid gap-4 md:grid-cols-3">
           <Field label="Cliente">
-            <select name="customerId" required className={inputClass}>
+            <select name="customerId" required className={inputClass} defaultValue={sp.nt_cliente ?? ""}>
               <option value="">Selecione…</option>
               {customers
                 .filter((c) => c.active)
@@ -313,22 +332,48 @@ export default async function ContasAReceberPage({
             </select>
           </Field>
           <Field label="Descrição">
-            <input name="description" required className={inputClass} placeholder="Ex.: Venda pedido 987" />
+            <input
+              name="description"
+              required
+              defaultValue={sp.nt_descricao ?? ""}
+              className={inputClass}
+              placeholder="Ex.: Venda pedido 987"
+            />
           </Field>
           <Field label="Valor total (R$)">
-            <MoneyInput name="amount" required className={inputClass} placeholder="1.234,56" />
+            <MoneyInput name="amount" required defaultValue={sp.nt_valor ?? ""} className={inputClass} placeholder="1.234,56" />
           </Field>
           <Field label="Emissão">
-            <input type="date" name="issueDate" required defaultValue={today} className={inputClass} />
+            <input
+              type="date"
+              name="issueDate"
+              required
+              defaultValue={sp.nt_emissao ?? today}
+              className={ntDateFieldClass}
+            />
           </Field>
           <Field label="Vencimento">
-            <input type="date" name="dueDate" required className={inputClass} />
+            <input
+              type="date"
+              name="dueDate"
+              required
+              defaultValue={sp.nt_vencimento ?? ""}
+              className={ntDateFieldClass}
+              autoFocus={ntDateError}
+            />
           </Field>
           <Field label="Parcelas">
-            <input type="number" name="installmentCount" min={1} max={120} defaultValue={1} className={inputClass} />
+            <input
+              type="number"
+              name="installmentCount"
+              min={1}
+              max={120}
+              defaultValue={sp.nt_parcelas ?? "1"}
+              className={inputClass}
+            />
           </Field>
           <Field label="Categoria (opcional)">
-            <select name="categoryId" className={inputClass}>
+            <select name="categoryId" className={inputClass} defaultValue={sp.nt_categoria ?? ""}>
               <option value="">Sugerir automaticamente</option>
               {incomeCategories.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -338,7 +383,7 @@ export default async function ContasAReceberPage({
             </select>
           </Field>
           <Field label="Método previsto (opcional)">
-            <select name="method" className={inputClass}>
+            <select name="method" className={inputClass} defaultValue={sp.nt_metodo ?? ""}>
               <option value="">Não informado</option>
               <option value="pix">Pix</option>
               <option value="boleto">Boleto</option>
