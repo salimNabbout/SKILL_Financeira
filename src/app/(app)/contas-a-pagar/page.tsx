@@ -1,26 +1,62 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { hasPermission } from "@/core/auth";
-import { formatBR, formatBRL, statusLabel } from "@/lib/format";
-import { endOfMonth, isISODate, startOfMonth, todayInTz, type ISODate } from "@/core/dates";
+import { formatBR, formatBRL } from "@/lib/format";
+import {
+  addDays,
+  endOfMonth,
+  isISODate,
+  maxDate,
+  minDate,
+  startOfMonth,
+  todayInTz,
+  type ISODate,
+} from "@/core/dates";
 import type { PayableStatus } from "@/core/entities";
+import { derivePayableSituation, hasPartialPayment, type PayableSituation } from "@/lib/payable-situation";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { cancelPayableAction, schedulePaymentAction, updatePayableAction } from "./actions";
 import { NewPayableForm, type SupplierOption } from "./_lib/new-payable-form";
 
-const STATUS_FILTERS: Array<{ value: PayableStatus | "todos"; label: string }> = [
+// Situações DERIVADAS usadas como filtro. Cada uma vira um recorte de
+// status + intervalo de vencimento aplicado NO BANCO (listPage) — nunca em
+// memória, para não quebrar o total/Pager. "Pago Atraso" não é filtrável no
+// listPage atual (compara Payment.executedAt com dueDate) — fica só como badge.
+type SituacaoFiltro =
+  | "todos"
+  | "a_vencer"
+  | "hoje"
+  | "atrasado"
+  | "pago"
+  | "cancelado";
+
+const SITUACAO_FILTERS: Array<{ value: SituacaoFiltro; label: string }> = [
   { value: "todos", label: "Todos" },
-  { value: "open", label: "Em aberto" },
-  { value: "scheduled", label: "Agendados" },
-  { value: "partially_paid", label: "Pagos parcial" },
-  { value: "paid", label: "Pagos" },
-  { value: "canceled", label: "Cancelados" },
+  { value: "a_vencer", label: "A Vencer" },
+  { value: "hoje", label: "Hoje" },
+  { value: "atrasado", label: "Atrasado" },
+  { value: "pago", label: "Pago" },
+  { value: "cancelado", label: "Cancelados" },
 ];
+
+// Status "em aberto" (mesma noção da skill, sem alterá-la): as situações por
+// data (A Vencer/Hoje/Atrasado) recaem sobre estes.
+const OPEN_STATUSES: PayableStatus[] = ["open", "scheduled", "partially_paid"];
+
+// Tom do Badge por situação (usa as CSS vars do design system via Badge tone).
+const SITUACAO_TONE: Record<PayableSituation, "neutral" | "ok" | "warn" | "crit"> = {
+  Atrasado: "crit",
+  Hoje: "warn",
+  "A Vencer": "neutral",
+  Pago: "ok",
+  "Pago Atraso": "ok", // ok, mas o texto do badge sinaliza o atraso
+  Cancelado: "neutral", // apagado
+};
 
 const SCHEDULABLE: PayableStatus[] = ["open", "partially_paid"];
 // Status que a skill cancel_payable aceita (index.ts): só open e scheduled.
@@ -82,7 +118,9 @@ export default async function ContasAPagarPage({
   const canCancel = hasPermission(session.membership.role, "payable.cancel");
   const today = todayInTz(clock.now(), session.config.timezone);
 
-  const filter = STATUS_FILTERS.some((f) => f.value === status) ? status : "todos";
+  const filter: SituacaoFiltro = SITUACAO_FILTERS.some((f) => f.value === status)
+    ? (status as SituacaoFiltro)
+    : "todos";
 
   // Precedência: Período (de/ate) tem prioridade sobre Ano/Mês (regra no servidor).
   const deIso = de && isISODate(de) ? de : undefined;
@@ -96,32 +134,74 @@ export default async function ContasAPagarPage({
     ? Number(mes)
     : undefined;
 
-  let dueFrom: ISODate | undefined;
-  let dueTo: ISODate | undefined;
+  // Intervalo de vencimento vindo dos filtros de PERÍODO (de/ate ou ano/mês).
+  let periodoFrom: ISODate | undefined;
+  let periodoTo: ISODate | undefined;
   if (deIso || ateIso) {
-    dueFrom = deIso;
-    dueTo = ateIso;
+    periodoFrom = deIso;
+    periodoTo = ateIso;
   } else if (anoNum) {
     if (mesNum) {
       const monthKey = `${anoNum}-${String(mesNum).padStart(2, "0")}`;
-      dueFrom = startOfMonth(monthKey);
-      dueTo = endOfMonth(monthKey); // último dia correto (fev/30 dias) via helper
+      periodoFrom = startOfMonth(monthKey);
+      periodoTo = endOfMonth(monthKey); // último dia correto (fev/30 dias) via helper
     } else {
-      dueFrom = `${anoNum}-01-01`;
-      dueTo = `${anoNum}-12-31`;
+      periodoFrom = `${anoNum}-01-01`;
+      periodoTo = `${anoNum}-12-31`;
     }
   }
 
+  // Situação → recorte de status + intervalo de vencimento relativo a HOJE.
+  // Tudo no banco (listPage): nunca filtra em memória depois de paginar.
+  const yesterday = addDays(today, -1);
+  const tomorrow = addDays(today, 1);
+  let statusFilter: PayableStatus[] | undefined;
+  let situacaoFrom: ISODate | undefined;
+  let situacaoTo: ISODate | undefined;
+  switch (filter) {
+    case "a_vencer":
+      statusFilter = OPEN_STATUSES;
+      situacaoFrom = tomorrow;
+      break;
+    case "hoje":
+      statusFilter = OPEN_STATUSES;
+      situacaoFrom = today;
+      situacaoTo = today;
+      break;
+    case "atrasado":
+      statusFilter = OPEN_STATUSES;
+      situacaoTo = yesterday;
+      break;
+    case "pago":
+      statusFilter = ["paid"];
+      break;
+    case "cancelado":
+      statusFilter = ["canceled"];
+      break;
+    case "todos":
+      statusFilter = undefined;
+      break;
+  }
+
+  // Combina o intervalo da situação com o do período: INTERSEÇÃO (from = max,
+  // to = min), para os dois filtros valerem juntos sem um sobrescrever o outro.
+  const dueFrom =
+    situacaoFrom && periodoFrom
+      ? maxDate(situacaoFrom, periodoFrom)
+      : (situacaoFrom ?? periodoFrom);
+  const dueTo =
+    situacaoTo && periodoTo ? minDate(situacaoTo, periodoTo) : (situacaoTo ?? periodoTo);
+
   const supplierId = fornecedor || undefined;
 
-  const [page, suppliers, supplierCategories, bankAccounts, allPayables, costCenters] =
+  const [page, suppliers, supplierCategories, bankAccounts, allPayables, costCenters, executedPayments] =
     await Promise.all([
       // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
       // Filtros de status/fornecedor/vencimento aplicados no banco.
       repos.payables.listPage(companyId, {
         offset: pageOffset(p),
         limit: PAGE_SIZE,
-        statuses: filter === "todos" ? undefined : [filter as PayableStatus],
+        statuses: statusFilter,
         supplierId,
         dueFrom,
         dueTo,
@@ -133,10 +213,26 @@ export default async function ContasAPagarPage({
       repos.payables.listAll(companyId),
       // Centros de custo para o select do formulário (carregado uma vez).
       repos.costCenters.listAll(companyId),
+      // Pagamentos executados: para a data de quitação (situação "Pago Atraso").
+      // UMA consulta; monta-se um Map por payableId (sem getById em loop).
+      repos.payments.listByStatus(companyId, ["executed"]),
     ]);
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const activeAccounts = bankAccounts.filter((b) => b.active);
   const rows = page.items;
+
+  // Data de quitação por título = MAIOR executedAt dos pagamentos executados
+  // (o pagamento que completou o valor). executedAt é timestamp UTC → converte
+  // para a data local da empresa antes de comparar com dueDate (mesmo fuso do
+  // "hoje"). Só considera os títulos exibidos na página (não a base toda).
+  const paidAtByPayable = new Map<string, ISODate>();
+  const pageIds = new Set(rows.map((r) => r.id));
+  for (const pay of executedPayments) {
+    if (!pay.executedAt || !pageIds.has(pay.payableId)) continue;
+    const localDate = todayInTz(new Date(pay.executedAt), session.config.timezone);
+    const prev = paidAtByPayable.get(pay.payableId);
+    if (!prev || localDate > prev) paidAtByPayable.set(pay.payableId, localDate);
+  }
 
   const supplierOptions: SupplierOption[] = suppliers
     .filter((s) => s.active)
@@ -254,7 +350,7 @@ export default async function ContasAPagarPage({
       </Card>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {STATUS_FILTERS.map((f) => (
+        {SITUACAO_FILTERS.map((f) => (
           <Link
             key={f.value}
             href={f.value === "todos" ? "/contas-a-pagar" : `/contas-a-pagar?status=${f.value}`}
@@ -341,6 +437,11 @@ export default async function ContasAPagarPage({
           >
             {rows.map((p) => {
               const overdue = p.dueDate < today && p.status !== "paid" && p.status !== "canceled";
+              // Situação DERIVADA (não persistida) para o badge. paidAt vem do
+              // pagamento que quitou o título (Map montado acima).
+              const situacao = derivePayableSituation(p, today, paidAtByPayable.get(p.id));
+              const situacaoLabel =
+                situacao === "Atrasado" && hasPartialPayment(p) ? "Atrasado (parcial)" : situacao;
               const editing = editar === p.id;
               return (
                 <Fragment key={p.id}>
@@ -369,7 +470,7 @@ export default async function ContasAPagarPage({
                   <Td right className="whitespace-nowrap !px-2 !py-1 text-xs">{formatBRL(p.amountCents)}</Td>
                   <Td right className="whitespace-nowrap !px-2 !py-1 text-xs">{formatBRL(p.paidCents)}</Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
-                    <Badge tone={statusTone(p.status)}>{statusLabel(p.status)}</Badge>
+                    <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
                   </Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     {SCHEDULABLE.includes(p.status) ? (
