@@ -239,13 +239,16 @@ export default async function ContasAPagarPage({
                   {/* Densidade: !px-2 (vence px-3 do Td), text-xs e !py-1 compactam a linha.
                       truncate + nowrap + title mantêm o nome completo acessível no tooltip.
                       O "!" é necessário porque, sem ele, as classes do componente compartilhado
-                      (px-3/py-2) ganhariam por ordem no CSS (Tailwind v4). */}
-                  <Td className="max-w-[160px] truncate whitespace-nowrap !px-2 !py-1 text-xs">
+                      (px-3/py-2) ganhariam por ordem no CSS (Tailwind v4).
+                      Fornecedor (w-full max-w-0) absorve a largura livre da página e trunca dentro
+                      dela; Descrição cresce até um teto amplo. Assim a tabela ocupa a largura toda
+                      sem sobrar vazio à direita, mostrando mais do nome antes de reticenciar. */}
+                  <Td className="w-full max-w-0 truncate whitespace-nowrap !px-2 !py-1 text-xs">
                     <span title={supplierName.get(p.supplierId) ?? p.supplierId}>
                       {supplierName.get(p.supplierId) ?? p.supplierId}
                     </span>
                   </Td>
-                  <Td className="max-w-[120px] truncate whitespace-nowrap !px-2 !py-1 text-xs">
+                  <Td className="max-w-[360px] truncate whitespace-nowrap !px-2 !py-1 text-xs">
                     <span title={p.description}>{p.description}</span>
                   </Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">{`${p.installmentNumber}/${p.installmentCount}`}</Td>
