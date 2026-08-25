@@ -40,6 +40,8 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   const dueDate = fdString(formData, "dueDate");
   const supplierCategory = fdOptional(formData, "supplierCategory");
   const costRaw = fdOptional(formData, "costClassification");
+  const costCenterId = fdOptional(formData, "costCenterId");
+  const documentNumber = fdOptional(formData, "documentNumber");
   const tipo = fdOptional(formData, "tipoLancamento") ?? "parcelado";
   const isRecorrente = tipo === "recorrente";
   const amountRaw = fdString(formData, "amount");
@@ -61,6 +63,8 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     if (dueDate) qs.set("nt_vencimento", dueDate);
     if (supplierCategory) qs.set("nt_categoria", supplierCategory);
     if (costRaw) qs.set("nt_custo", costRaw);
+    if (costCenterId) qs.set("nt_centrocusto", costCenterId);
+    if (documentNumber) qs.set("nt_documento", documentNumber);
     qs.set("nt_tipo", isRecorrente ? "recorrente" : "parcelado");
     if (installmentRaw) qs.set("nt_parcelas", installmentRaw);
     if (frequencyRaw) qs.set("nt_frequencia", frequencyRaw);
@@ -104,6 +108,14 @@ export async function createPayableAction(formData: FormData): Promise<void> {
 
   const costClassification: Supplier["costClassification"] = costRaw;
 
+  // Documento fiscal OPCIONAL: montado só quando o Nº do Doc. foi informado.
+  // Preencher o número torna-o a chave de deduplicação (originKey) na skill.
+  // type fixo "other"; issuedAt = Emissão; totalCents = Valor (já validado > 0).
+  // NÃO enviar objeto incompleto: sem número, a chave `document` fica ausente.
+  const document = documentNumber
+    ? { type: "other" as const, number: documentNumber, issuedAt: issueDate, totalCents: amountCents }
+    : undefined;
+
   let response: OrchestratorResponse;
   try {
     response = await orchestrator.execute({
@@ -121,6 +133,11 @@ export async function createPayableAction(formData: FormData): Promise<void> {
         // a ser sempre sugerida automaticamente pelo skill.
         supplierCategory,
         costClassification,
+        // Centro de custo é opcional: só entra no payload quando selecionado
+        // (string vazia vira undefined via fdOptional; não enviar a chave vazia).
+        ...(costCenterId ? { costCenterId } : {}),
+        // Documento é opcional: só entra quando o Nº do Doc. foi informado.
+        ...(document ? { document } : {}),
         // Mutuamente exclusivos: recorrência envia `recurrence`; caso contrário
         // `installmentCount`. NÃO envia a chave de recorrência quando ausente
         // (a skill espera undefined, não objeto vazio).

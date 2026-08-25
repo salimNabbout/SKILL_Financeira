@@ -110,6 +110,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "category.deleted": "Categoria excluída",
   "cost_center.updated": "Centro de custo alterado",
   "cost_center.deactivated": "Centro de custo desativado",
+  "cost_center.reactivated": "Centro de custo reativado",
   "chart_account.updated": "Conta contábil alterada",
   "chart_account.deactivated": "Conta contábil desativada",
   "bank_account.updated": "Conta bancária alterada",
