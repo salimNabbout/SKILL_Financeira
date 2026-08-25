@@ -80,8 +80,16 @@ test("máscara monetária: digitação, valor pequeno, colagem e gravação", as
   await page.fill('input[name="description"]', descricao);
   await page.fill('input[name="dueDate"]', "2026-12-20");
 
+  // Fornecedor é um autocompletar (<input list>): preenche com o nome do
+  // primeiro fornecedor do datalist (a action resolve nome → id).
+  const nomesFornecedor = await page
+    .locator("datalist#fornecedores option")
+    .evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+  expect(nomesFornecedor.length, "datalist de fornecedores sem opções").toBeGreaterThan(0);
+  await page.fill('input[name="supplierName"]', nomesFornecedor[0]);
+
   // Selects obrigatórios: primeira opção real de cada um.
-  for (const campo of ["supplierId", "supplierCategory", "costClassification", "costCenterId"]) {
+  for (const campo of ["supplierCategory", "costClassification", "costCenterId"]) {
     const valores = await opcoes(page, campo);
     expect(valores.length, `select ${campo} sem opções`).toBeGreaterThan(0);
     await page.locator(`select[name="${campo}"]`).selectOption(valores[0]);

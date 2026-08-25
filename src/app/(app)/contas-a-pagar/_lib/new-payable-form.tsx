@@ -27,7 +27,7 @@ export interface CostCenterOption {
  * o formulário volta limpo.
  */
 export interface NewPayablePrefill {
-  supplierId?: string;
+  supplierName?: string;
   description?: string;
   amount?: string;
   issueDate?: string;
@@ -82,14 +82,37 @@ export function NewPayableForm({
   return (
     <form action={createPayableAction} className="grid gap-4 md:grid-cols-4">
       <Field label="Fornecedor">
-        <select name="supplierId" required className={inputClass} defaultValue={prefill?.supplierId ?? ""}>
-          <option value="">Selecione…</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+        {suppliers.length === 0 ? (
+          // Sem fornecedores: em vez de um campo impossível de preencher, aponta
+          // para o cadastro (mesmo tratamento do select de conta bancária vazio).
+          <p className="text-sm text-[var(--ink-muted)]">
+            Nenhum fornecedor ativo.{" "}
+            <a href="/cadastros/fornecedores" className="text-[var(--brand)] underline">
+              Cadastrar fornecedor
+            </a>
+            .
+          </p>
+        ) : (
+          <>
+            {/* Autocompletar nativo: <input list> filtra por digitação (substring,
+                acha o nome mesmo prefixado por CNPJ). Submete o NOME; a action
+                resolve nome → id (nomes são únicos por empresa). */}
+            <input
+              list="fornecedores"
+              name="supplierName"
+              required
+              defaultValue={prefill?.supplierName ?? ""}
+              className={inputClass}
+              placeholder="Digite as primeiras letras..."
+              autoComplete="off"
+            />
+            <datalist id="fornecedores">
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.name} />
+              ))}
+            </datalist>
+          </>
+        )}
       </Field>
       <Field label="Descrição">
         <input

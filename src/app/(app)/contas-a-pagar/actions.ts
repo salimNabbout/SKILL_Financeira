@@ -32,9 +32,11 @@ const MAX_URL_DESCRIPTION = 200;
 
 export async function createPayableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
-  const { orchestrator } = await getContainer();
+  const { orchestrator, repos } = await getContainer();
 
-  const supplierId = fdString(formData, "supplierId");
+  // O campo Fornecedor é um autocompletar nativo (<input list>) que submete o
+  // NOME; resolvemos nome → id abaixo (nomes são únicos por empresa).
+  const supplierName = fdString(formData, "supplierName");
   const description = fdString(formData, "description");
   const issueDate = fdString(formData, "issueDate");
   const dueDate = fdString(formData, "dueDate");
@@ -52,11 +54,12 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   // Falha na CRIAÇÃO: reexibe o Card "Novo título" com TUDO que foi digitado
   // (searchParams nt_* → defaultValue), inclusive o campo errado. Marca
   // nt_erro=data quando a validação é de datas, para a page destacar Emissão/
-  // Vencimento e dar autoFocus no Vencimento.
+  // Vencimento e dar autoFocus no Vencimento. Preserva o NOME digitado do
+  // fornecedor (não o id — pode não ter resolvido).
   function failCreate(message: string): never {
     const qs = new URLSearchParams({ erro: message });
     if (/Verificar a Data da Emissão/i.test(message)) qs.set("nt_erro", "data");
-    if (supplierId) qs.set("nt_fornecedor", supplierId);
+    if (supplierName) qs.set("nt_fornecedor", supplierName);
     if (description) qs.set("nt_descricao", description.slice(0, MAX_URL_DESCRIPTION));
     if (amountRaw) qs.set("nt_valor", amountRaw);
     if (issueDate) qs.set("nt_emissao", issueDate);
@@ -73,7 +76,7 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   }
 
   // Todos os campos são obrigatórios (validação no servidor, além do required do HTML).
-  if (!supplierId || !description || !issueDate || !dueDate) {
+  if (!supplierName || !description || !issueDate || !dueDate) {
     failCreate("Preencha fornecedor, descrição, emissão e vencimento.");
   }
   if (!supplierCategory) failCreate("Selecione a categoria.");
@@ -81,6 +84,22 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     failCreate("Selecione a classificação do custo (Fixo ou Variável).");
   }
   if (!costCenterId) failCreate("Selecione o centro de custo.");
+
+  // Resolve nome → id: comparação case-insensitive, ignorando espaços nas
+  // pontas. NUNCA escolhe o primeiro em caso de ambiguidade.
+  const wanted = supplierName.trim().toLowerCase();
+  const matches = (await repos.suppliers.listAll(session.company.id)).filter(
+    (s) => s.active && s.name.trim().toLowerCase() === wanted
+  );
+  if (matches.length === 0) {
+    failCreate("Fornecedor não encontrado. Selecione um da lista.");
+  }
+  if (matches.length > 1) {
+    failCreate(
+      `Há mais de um fornecedor com o nome "${supplierName.trim()}". Ajuste o cadastro para diferenciá-los antes de lançar o título.`
+    );
+  }
+  const supplierId = matches[0].id;
 
   let amountCents = 0;
   let installmentCount = 1;
