@@ -89,6 +89,24 @@ const cancelPayableSchema = z.object({
   reason: z.string().min(1),
 });
 
+// Edição de título: só campos que NÃO afetam idempotência (originKey) nem
+// segregação. Fornecedor, documento e parcela ficam DE FORA de propósito
+// (mudá-los muda a originKey / é uma nova obrigação — cancele e recrie).
+// O valor é aceito aqui, mas travado no handler conforme a alçada.
+const updatePayableSchema = z.object({
+  action: z.literal("update_payable"),
+  payableId: z.string().min(1),
+  description: z.string().min(1),
+  issueDate: isoDateSchema,
+  dueDate: isoDateSchema,
+  amountCents: z.number().int().positive(),
+  categoryId: z.string().min(1).nullable().optional(),
+  costCenterId: z.string().min(1).nullable().optional(),
+  supplierCategory: z.string().min(1).nullable().optional(),
+  costClassification: z.enum(["fixed", "variable"]).nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
 const generateRecurringSchema = z.object({
   action: z.literal("generate_recurring"),
 });
@@ -100,6 +118,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   forecastDisbursementsSchema,
   detectDuplicatesSchema,
   cancelPayableSchema,
+  updatePayableSchema,
   generateRecurringSchema,
 ]);
 
@@ -109,6 +128,7 @@ export type ListDueInput = z.infer<typeof listDueSchema>;
 export type ForecastDisbursementsInput = z.infer<typeof forecastDisbursementsSchema>;
 export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
+export type UpdatePayableInput = z.infer<typeof updatePayableSchema>;
 export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
 export type ContasAPagarInput = z.infer<typeof contasAPagarInputSchema>;
 
@@ -179,6 +199,10 @@ export interface CancelPayableData {
   reason: string;
 }
 
+export interface UpdatePayableData {
+  payable: Payable;
+}
+
 export interface GenerateRecurringData {
   /** Títulos criados nesta rodada (vazio se nada era devido ou já existia). */
   generated: Array<{ templateId: string; payableId: string; dueDate: string }>;
@@ -191,6 +215,7 @@ export type ContasAPagarData =
   | ForecastDisbursementsData
   | DetectDuplicatesData
   | CancelPayableData
+  | UpdatePayableData
   | GenerateRecurringData;
 
 // ---------------------------------------------------------------------------
@@ -226,6 +251,36 @@ async function resolveCurrency(ctx: SkillContext): Promise<CurrencyCode> {
   return company?.defaultCurrency ?? "BRL";
 }
 
+/**
+ * Regras comuns a criar e editar um título: vencimento não anterior à emissão,
+ * e existência de categoria/centro de custo quando informados. Mensagens e
+ * exceções idênticas às que create_payable já aplicava (extraídas, não
+ * duplicadas), para que a edição valide exatamente o mesmo.
+ */
+async function assertPayableFieldsValid(
+  ctx: SkillContext,
+  fields: {
+    issueDate: ISODate;
+    dueDate: ISODate;
+    categoryId?: string | null;
+    costCenterId?: string | null;
+  }
+): Promise<void> {
+  if (fields.dueDate < fields.issueDate) {
+    throw new ValidationError(
+      `Vencimento (${fields.dueDate}) não pode ser anterior à emissão (${fields.issueDate}).`
+    );
+  }
+  if (fields.categoryId) {
+    const category = await ctx.repos.categories.getById(ctx.companyId, fields.categoryId);
+    if (!category) throw new NotFoundError("Categoria", fields.categoryId);
+  }
+  if (fields.costCenterId) {
+    const costCenter = await ctx.repos.costCenters.getById(ctx.companyId, fields.costCenterId);
+    if (!costCenter) throw new NotFoundError("Centro de custo", fields.costCenterId);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Ações
 // ---------------------------------------------------------------------------
@@ -244,19 +299,12 @@ async function createPayable(
   if (!supplier.active) {
     throw new ValidationError(`Fornecedor inativo: ${supplier.name} (${supplier.id}).`);
   }
-  if (input.dueDate < input.issueDate) {
-    throw new ValidationError(
-      `Vencimento (${input.dueDate}) não pode ser anterior à emissão (${input.issueDate}).`
-    );
-  }
-  if (input.categoryId) {
-    const category = await ctx.repos.categories.getById(ctx.companyId, input.categoryId);
-    if (!category) throw new NotFoundError("Categoria", input.categoryId);
-  }
-  if (input.costCenterId) {
-    const costCenter = await ctx.repos.costCenters.getById(ctx.companyId, input.costCenterId);
-    if (!costCenter) throw new NotFoundError("Centro de custo", input.costCenterId);
-  }
+  await assertPayableFieldsValid(ctx, {
+    issueDate: input.issueDate,
+    dueDate: input.dueDate,
+    categoryId: input.categoryId,
+    costCenterId: input.costCenterId,
+  });
 
   const currency = await resolveCurrency(ctx);
   const nowIso = ctx.clock.now().toISOString();
@@ -1047,6 +1095,123 @@ async function cancelPayable(
 }
 
 /**
+ * Edita um título a pagar. Só campos que não afetam idempotência (originKey) nem
+ * segregação: descrição, datas, categoria, centro de custo, categoria de
+ * fornecedor, classificação de custo e notas — e o valor SOMENTE quando não há
+ * movimento financeiro nem pagamento reservando alçada.
+ *
+ * Regras (ver análise da Etapa 0):
+ *  - Título paid/canceled ou com paidCents > 0: não editável (movimento financeiro).
+ *  - Valor (amountCents): travado se houver Payment pending_approval/approved,
+ *    senão a alçada calculada sobre o valor antigo seria contornada.
+ *  - Reaplica as validações do create (vencimento ≥ emissão, categoria/centro
+ *    existem) via assertPayableFieldsValid.
+ *  - Fornecedor, documento e parcela NÃO entram no schema: a originKey fica
+ *    congelada por construção.
+ */
+async function updatePayable(
+  ctx: SkillContext,
+  input: UpdatePayableInput
+): Promise<SkillResult<UpdatePayableData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payable.create")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode editar títulos a pagar.`
+      );
+    }
+  }
+
+  const payable = await ctx.repos.payables.getById(ctx.companyId, input.payableId);
+  if (!payable) throw new NotFoundError("Título a pagar", input.payableId);
+
+  // Título encerrado ou com movimento financeiro não é editável.
+  if (payable.status === "paid" || payable.status === "canceled") {
+    throw new ValidationError(
+      `Título ${payable.id} está ${payable.status} e não pode ser editado.`
+    );
+  }
+  if (payable.paidCents > 0) {
+    throw new ValidationError(
+      `Título ${payable.id} já possui pagamento realizado (${formatBRL(payable.paidCents)}) e não pode ser editado. Cancele o pagamento para alterá-lo.`
+    );
+  }
+
+  // Regras comuns ao create (vencimento ≥ emissão, categoria/centro existem).
+  await assertPayableFieldsValid(ctx, {
+    issueDate: input.issueDate,
+    dueDate: input.dueDate,
+    categoryId: input.categoryId,
+    costCenterId: input.costCenterId,
+  });
+
+  // Trava do valor: mudar amountCents com pagamento reservando alçada
+  // contornaria a faixa de aprovação (a Approval carimba tierAmountCents =
+  // valor do título no momento do agendamento).
+  const valueChanged = input.amountCents !== payable.amountCents;
+  if (valueChanged) {
+    const payments = await ctx.repos.payments.listByPayable(ctx.companyId, payable.id);
+    const reserving = payments.some(
+      (p) => p.status === "pending_approval" || p.status === "approved"
+    );
+    if (reserving) {
+      throw new ValidationError(
+        `O valor do título ${payable.id} não pode ser alterado enquanto houver pagamento pendente ou aprovado (a alçada de aprovação foi calculada sobre o valor atual). Cancele o agendamento para alterar o valor.`
+      );
+    }
+  }
+
+  const nowIso = ctx.clock.now().toISOString();
+  const before = { ...payable };
+
+  // Aplica apenas os campos editáveis; supplierId/documentId/parcela/originKey
+  // permanecem intactos. Campos opcionais com null limpam; undefined mantém.
+  const applyOptional = <T>(incoming: T | null | undefined, current: T | undefined): T | undefined =>
+    incoming === undefined ? current : incoming ?? undefined;
+
+  payable.description = input.description;
+  payable.issueDate = input.issueDate;
+  payable.dueDate = input.dueDate;
+  payable.amountCents = input.amountCents;
+  payable.categoryId = applyOptional(input.categoryId, payable.categoryId);
+  payable.costCenterId = applyOptional(input.costCenterId, payable.costCenterId);
+  payable.supplierCategory = applyOptional(input.supplierCategory, payable.supplierCategory);
+  payable.costClassification = applyOptional(input.costClassification, payable.costClassification);
+  payable.notes = applyOptional(input.notes, payable.notes);
+  payable.updatedAt = nowIso;
+
+  await ctx.repos.payables.update(payable);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payable.updated",
+    entityType: "payable",
+    entityId: payable.id,
+    before,
+    after: payable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "payable.updated",
+    payload: { id: payable.id, amountCents: payable.amountCents, dueDate: payable.dueDate },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL,
+    ctx,
+    { payable },
+    {
+      assumptions: [
+        "Edição registrada na trilha de auditoria (payable.updated) com estado anterior e novo. Fornecedor, documento e parcela não são editáveis (preservam a chave de idempotência).",
+      ],
+      dataSources: DATA_SOURCES,
+    }
+  );
+}
+
+/**
  * Gera os títulos a pagar recorrentes devidos no mês corrente. Para cada
  * template ativo (kind=payable) cuja janela inclui o mês de hoje, cria o título
  * do mês reaproveitando createPayable — idempotente por originKey (que inclui o
@@ -1123,6 +1288,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return detectDuplicates(ctx);
       case "cancel_payable":
         return cancelPayable(ctx, input);
+      case "update_payable":
+        return updatePayable(ctx, input);
       case "generate_recurring":
         return generateRecurring(ctx);
     }

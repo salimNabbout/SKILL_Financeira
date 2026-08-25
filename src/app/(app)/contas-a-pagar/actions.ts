@@ -95,6 +95,77 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   );
 }
 
+export async function updatePayableAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const payableId = fdString(formData, "payableId");
+  const description = fdString(formData, "description");
+  const issueDate = fdString(formData, "issueDate");
+  const dueDate = fdString(formData, "dueDate");
+  const supplierCategory = fdOptional(formData, "supplierCategory");
+  const costRaw = fdOptional(formData, "costClassification");
+  const notes = fdOptional(formData, "notes");
+  const amountRaw = fdString(formData, "amount");
+
+  // Reabre o formulário inline na MESMA linha, preservando o que foi digitado
+  // (searchParams → defaultValue), no mesmo espírito do formulário de novo título.
+  // Function declaration (não arrow) para que o retorno `never` estreite o
+  // control-flow — o TS só faz isso com declarações de função.
+  function failEdit(message: string): never {
+    const qs = new URLSearchParams({ editar: payableId, erro: message });
+    if (description) qs.set("f_descricao", description);
+    if (issueDate) qs.set("f_emissao", issueDate);
+    if (dueDate) qs.set("f_vencimento", dueDate);
+    if (amountRaw) qs.set("f_valor", amountRaw);
+    if (supplierCategory) qs.set("f_categoria", supplierCategory);
+    if (costRaw) qs.set("f_custo", costRaw);
+    if (notes) qs.set("f_notas", notes);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!payableId) fail("Título não identificado para edição.");
+  if (!description || !issueDate || !dueDate) {
+    failEdit("Preencha descrição, emissão e vencimento.");
+  }
+  if (costRaw !== undefined && costRaw !== "fixed" && costRaw !== "variable") {
+    failEdit("Classificação de custo inválida (Fixo ou Variável).");
+  }
+
+  let amountCents = 0;
+  try {
+    amountCents = parseBRLToCents(amountRaw);
+  } catch (error) {
+    failEdit(errorMessage(error));
+  }
+  if (amountCents <= 0) failEdit("O valor do título deve ser positivo.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "update_payable",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: {
+        payableId,
+        description,
+        issueDate,
+        dueDate,
+        amountCents,
+        supplierCategory,
+        costClassification: costRaw as "fixed" | "variable" | undefined,
+        notes,
+      },
+    });
+  } catch (error) {
+    failEdit(errorMessage(error));
+  }
+
+  if (response.status === "failed") failEdit(flowErrorMessage(response));
+
+  ok("Título atualizado.");
+}
+
 export async function schedulePaymentAction(formData: FormData): Promise<void> {
   const session = await requireSession();
   const { orchestrator, repos } = await getContainer();

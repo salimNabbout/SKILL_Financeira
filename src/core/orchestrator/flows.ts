@@ -451,9 +451,33 @@ const recurringTitlesGenerate: FlowDefinition = {
   ],
 };
 
+/**
+ * Edição de título a pagar. Fluxo de um único passo — a skill valida a regra de
+ * edição (bloqueios por status/pagamento) e registra a trilha. Não dispara as
+ * revalidações a jusante do intake: editar campos que não afetam alçada não
+ * muda projeção/orçamento; o valor só muda quando não há pagamento reservado.
+ * payload: { payableId, description, issueDate, dueDate, amountCents,
+ *            categoryId?, costCenterId?, supplierCategory?, costClassification?, notes? }
+ */
+const updatePayable: FlowDefinition = {
+  name: "update_payable",
+  description:
+    "Edita um título a pagar (campos que não afetam idempotência nem alçada), com bloqueio de valor quando há pagamento pendente/realizado, e registra a alteração na auditoria.",
+  requiredPermission: "payable.create",
+  steps: [
+    {
+      id: "ap_update",
+      skill: "contas_a_pagar",
+      description: "Editar título a pagar (com bloqueios de segurança)",
+      buildInput: (f) => ({ action: "update_payable", ...f.payload }),
+    },
+  ],
+};
+
 export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
+  updatePayable,
   bankStatementImport,
   bankSync,
   customerInvoiceIntake,
