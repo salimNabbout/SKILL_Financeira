@@ -305,11 +305,12 @@ async function createReceivable(
   }
   // Vencimento não pode anteceder a emissão (paridade com contas a pagar).
   if (input.dueDate < input.issueDate) {
+    // Mensagem amigável (datas em pt-BR, nunca ISO); mesmo code invalid_dates.
     return errorResult(
       SKILL_NAME,
       ctx,
       "invalid_dates",
-      `Vencimento (${input.dueDate}) não pode ser anterior à emissão (${input.issueDate}).`
+      `Verificar a Data da Emissão (vencimento ${formatBR(input.dueDate)} é anterior à emissão ${formatBR(input.issueDate)}).`
     );
   }
 

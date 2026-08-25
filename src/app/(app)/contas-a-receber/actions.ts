@@ -27,6 +27,10 @@ function ok(message: string): never {
   redirect(`${PATH}?ok=${encodeURIComponent(message)}`);
 }
 
+// Descrição pode ser longa; ao PROPAGAR na URL truncamos para não estourar o
+// limite de tamanho. Truncagem só na propagação — nunca no que seria salvo.
+const MAX_URL_DESCRIPTION = 200;
+
 export async function createReceivableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
 
@@ -34,22 +38,45 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
   const description = fdString(formData, "description");
   const issueDate = fdString(formData, "issueDate");
   const dueDate = fdString(formData, "dueDate");
+  const amountRaw = fdString(formData, "amount");
+  const installmentRaw = fdOptional(formData, "installmentCount");
+  const categoryId = fdOptional(formData, "categoryId");
+  const method = fdOptional(formData, "method");
+
+  // Falha na CRIAÇÃO: reexibe o Card "Novo título" com TUDO que foi digitado
+  // (searchParams nt_* → defaultValue), inclusive o campo errado. Marca
+  // nt_erro=data quando a validação é de datas, para a page destacar Emissão/
+  // Vencimento e dar autoFocus no Vencimento.
+  function failCreate(message: string): never {
+    const qs = new URLSearchParams({ erro: message });
+    if (/Verificar a Data da Emissão/i.test(message)) qs.set("nt_erro", "data");
+    if (customerId) qs.set("nt_cliente", customerId);
+    if (description) qs.set("nt_descricao", description.slice(0, MAX_URL_DESCRIPTION));
+    if (amountRaw) qs.set("nt_valor", amountRaw);
+    if (issueDate) qs.set("nt_emissao", issueDate);
+    if (dueDate) qs.set("nt_vencimento", dueDate);
+    if (installmentRaw) qs.set("nt_parcelas", installmentRaw);
+    if (categoryId) qs.set("nt_categoria", categoryId);
+    if (method) qs.set("nt_metodo", method);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
   if (!customerId || !description || !issueDate || !dueDate) {
-    fail("Preencha cliente, descrição, emissão e vencimento.");
+    failCreate("Preencha cliente, descrição, emissão e vencimento.");
   }
 
   let amountCents = 0;
   let installmentCount = 1;
   try {
     assertPermission(session.actor, "receivable.create");
-    amountCents = parseBRLToCents(fdString(formData, "amount"));
-    installmentCount = Number(fdOptional(formData, "installmentCount") ?? "1");
+    amountCents = parseBRLToCents(amountRaw);
+    installmentCount = Number(installmentRaw ?? "1");
   } catch (error) {
-    fail(errorMessage(error));
+    failCreate(errorMessage(error));
   }
-  if (amountCents <= 0) fail("O valor do título deve ser positivo.");
+  if (amountCents <= 0) failCreate("O valor do título deve ser positivo.");
   if (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 120) {
-    fail("Número de parcelas inválido (1 a 120).");
+    failCreate("Número de parcelas inválido (1 a 120).");
   }
 
   let result: SkillResult<unknown>;
@@ -61,15 +88,15 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
       issueDate,
       dueDate,
       amountCents,
-      categoryId: fdOptional(formData, "categoryId"),
+      categoryId,
       installmentCount,
-      method: fdOptional(formData, "method"),
+      method,
     });
   } catch (error) {
-    fail(errorMessage(error));
+    failCreate(errorMessage(error));
   }
 
-  if (result.status === "error") fail(skillErrorMessage(result));
+  if (result.status === "error") failCreate(skillErrorMessage(result));
   const receivables = (result.data as { receivables?: Receivable[] } | null)?.receivables ?? [];
   ok(`Título criado: ${receivables.length} parcela(s) somando ${formatBRL(amountCents)}.`);
 }
