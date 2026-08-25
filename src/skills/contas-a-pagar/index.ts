@@ -11,7 +11,7 @@
 
 import { z } from "zod";
 import { assertSegregation, hasPermission } from "@/core/auth";
-import { addDays, addMonths, diffDays, isISODate, minDate, type ISODate } from "@/core/dates";
+import { addDays, addMonths, diffDays, formatBR, isISODate, minDate, type ISODate } from "@/core/dates";
 import type { FinancialDocument, Payable, Payment } from "@/core/entities";
 import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import { NotFoundError, PermissionError, ValidationError } from "@/core/errors";
@@ -295,8 +295,10 @@ async function assertPayableFieldsValid(
   }
 ): Promise<void> {
   if (fields.dueDate < fields.issueDate) {
+    // Mensagem amigável (datas em pt-BR, nunca ISO). Mesma exceção/código de
+    // antes; usada por create e update (função compartilhada).
     throw new ValidationError(
-      `Vencimento (${fields.dueDate}) não pode ser anterior à emissão (${fields.issueDate}).`
+      `Verificar a Data da Emissão (vencimento ${formatBR(fields.dueDate)} é anterior à emissão ${formatBR(fields.issueDate)}).`
     );
   }
   if (fields.categoryId) {

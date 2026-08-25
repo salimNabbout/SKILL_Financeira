@@ -923,7 +923,7 @@ describe("contas_a_pagar — update_payable", () => {
 
     expect(res.status).toBe("error");
     expect(res.alerts[0].code).toBe("validation_error");
-    expect(res.alerts[0].message).toContain("não pode ser anterior à emissão");
+    expect(res.alerts[0].message).toContain("Verificar a Data da Emissão");
   });
 
   it("recusa edição por ator sem permissão (viewer)", async () => {
@@ -1102,6 +1102,6 @@ describe("contas_a_pagar — create_payable (recorrência)", () => {
 
     expect(res.status).toBe("error");
     expect(res.alerts[0].code).toBe("validation_error");
-    expect(res.alerts[0].message).toContain("não pode ser anterior à emissão");
+    expect(res.alerts[0].message).toContain("Verificar a Data da Emissão");
   });
 });

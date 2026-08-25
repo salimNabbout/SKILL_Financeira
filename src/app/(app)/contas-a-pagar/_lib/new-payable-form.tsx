@@ -16,6 +16,25 @@ export interface SupplierOption {
 }
 
 /**
+ * Valores para reidratar o formulário após uma falha de validação (searchParams
+ * → defaultValue). Todos opcionais: em caso de sucesso, `prefill` é undefined e
+ * o formulário volta limpo.
+ */
+export interface NewPayablePrefill {
+  supplierId?: string;
+  description?: string;
+  amount?: string;
+  issueDate?: string;
+  dueDate?: string;
+  supplierCategory?: string;
+  costClassification?: string;
+  tipo?: "parcelado" | "recorrente";
+  installmentCount?: string;
+  recurrenceFrequency?: string;
+  recurrenceOccurrences?: string;
+}
+
+/**
  * Formulário de novo título a pagar. As caixas "Categoria" (Categorias de
  * Fornecedores) e "Classificação do CUSTO" (Custo Fixo/Variável) são
  * selecionáveis — nenhuma deriva do cadastro do fornecedor.
@@ -23,20 +42,37 @@ export interface SupplierOption {
  * O TIPO (Parcelado × Recorrente) é escolhido por radios; a alternância dos
  * blocos de campos é feita 100% por CSS (peer-checked), SEM useState nem estado
  * de React — o form permanece um Client Component apenas por causa do MoneyInput.
+ *
+ * `prefill` reidrata os campos após uma falha de validação (o usuário não perde
+ * o que digitou, inclusive o campo errado). `dateError` destaca Emissão e
+ * Vencimento e dá autoFocus ao Vencimento quando o erro foi de datas.
  */
 export function NewPayableForm({
   suppliers,
   categories,
   today,
+  prefill,
+  dateError = false,
 }: {
   suppliers: SupplierOption[];
   categories: string[];
   today: string;
+  prefill?: NewPayablePrefill;
+  dateError?: boolean;
 }) {
+  // Emissão volta ao default de hoje apenas quando NÃO há reexibição; havendo
+  // erro, mantém o que foi digitado (inclusive vazio, se foi assim).
+  const issueDefault = prefill ? (prefill.issueDate ?? "") : today;
+  const isRecorrentePrefill = prefill?.tipo === "recorrente";
+  // Borda de atenção (usa --crit do design system) nos campos de data no erro.
+  const dateFieldClass = dateError
+    ? `${inputClass} border-[var(--crit)] focus:border-[var(--crit)]`
+    : inputClass;
+
   return (
     <form action={createPayableAction} className="grid gap-4 md:grid-cols-4">
       <Field label="Fornecedor">
-        <select name="supplierId" required className={inputClass} defaultValue="">
+        <select name="supplierId" required className={inputClass} defaultValue={prefill?.supplierId ?? ""}>
           <option value="">Selecione…</option>
           {suppliers.map((s) => (
             <option key={s.id} value={s.id}>
@@ -46,19 +82,50 @@ export function NewPayableForm({
         </select>
       </Field>
       <Field label="Descrição">
-        <input name="description" required className={inputClass} placeholder="Ex.: NF 1234 — insumos" />
+        <input
+          name="description"
+          required
+          defaultValue={prefill?.description ?? ""}
+          className={inputClass}
+          placeholder="Ex.: NF 1234 — insumos"
+        />
       </Field>
       <Field label="Valor (R$)">
-        <MoneyInput name="amount" required className={inputClass} placeholder="1.234,56" />
+        <MoneyInput
+          name="amount"
+          required
+          defaultValue={prefill?.amount ?? ""}
+          className={inputClass}
+          placeholder="1.234,56"
+        />
       </Field>
       <Field label="Emissão">
-        <input type="date" name="issueDate" required defaultValue={today} className={inputClass} />
+        <input
+          type="date"
+          name="issueDate"
+          required
+          defaultValue={issueDefault}
+          className={dateFieldClass}
+        />
       </Field>
       <Field label="Vencimento">
-        <input type="date" name="dueDate" required className={inputClass} />
+        <input
+          type="date"
+          name="dueDate"
+          required
+          defaultValue={prefill?.dueDate ?? ""}
+          className={dateFieldClass}
+          // Foca o Vencimento no erro de datas para o colaborador já corrigir.
+          autoFocus={dateError}
+        />
       </Field>
       <Field label="Categoria">
-        <select name="supplierCategory" required className={inputClass} defaultValue="">
+        <select
+          name="supplierCategory"
+          required
+          className={inputClass}
+          defaultValue={prefill?.supplierCategory ?? ""}
+        >
           <option value="">— selecione —</option>
           {categories.map((c) => (
             <option key={c} value={c}>
@@ -73,7 +140,12 @@ export function NewPayableForm({
         ) : null}
       </Field>
       <Field label="Classificação do CUSTO">
-        <select name="costClassification" required className={inputClass} defaultValue="">
+        <select
+          name="costClassification"
+          required
+          className={inputClass}
+          defaultValue={prefill?.costClassification ?? ""}
+        >
           <option value="">— selecione —</option>
           <option value="fixed">Custo Fixo</option>
           <option value="variable">Custo Variável</option>
@@ -83,7 +155,7 @@ export function NewPayableForm({
       {/* TIPO: Parcelado × Recorrente. Os DOIS radios são irmãos diretos dos
           blocos condicionais (mesmo nível), para que os seletores peer-checked
           (que dependem da relação de irmão ~) funcionem. Sem JS de estado —
-          alternância 100% CSS. */}
+          alternância 100% CSS. defaultChecked reidrata a escolha no erro. */}
       <fieldset className="md:col-span-4 rounded-lg border border-[var(--line)] p-3">
         <legend className="px-1 text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">
           Tipo de lançamento
@@ -95,7 +167,7 @@ export function NewPayableForm({
           id="tipo-parcelado"
           name="tipoLancamento"
           value="parcelado"
-          defaultChecked
+          defaultChecked={!isRecorrentePrefill}
           className="peer/parcelado sr-only"
         />
         <input
@@ -103,6 +175,7 @@ export function NewPayableForm({
           id="tipo-recorrente"
           name="tipoLancamento"
           value="recorrente"
+          defaultChecked={isRecorrentePrefill}
           className="peer/recorrente sr-only"
         />
 
@@ -141,7 +214,7 @@ export function NewPayableForm({
               name="installmentCount"
               min={1}
               max={120}
-              defaultValue={1}
+              defaultValue={prefill?.installmentCount ?? "1"}
               className={`${inputClass} md:w-48`}
             />
           </Field>
@@ -151,7 +224,11 @@ export function NewPayableForm({
         <div className="mt-3 hidden peer-checked/recorrente:block">
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="Frequência">
-              <select name="recurrenceFrequency" className={inputClass} defaultValue="monthly">
+              <select
+                name="recurrenceFrequency"
+                className={inputClass}
+                defaultValue={prefill?.recurrenceFrequency ?? "monthly"}
+              >
                 <option value="weekly">Semanal</option>
                 <option value="monthly">Mensal</option>
                 <option value="quarterly">Trimestral</option>
@@ -164,7 +241,7 @@ export function NewPayableForm({
                 name="recurrenceOccurrences"
                 min={2}
                 max={MAX_RECURRENCE_OCCURRENCES}
-                defaultValue={12}
+                defaultValue={prefill?.recurrenceOccurrences ?? "12"}
                 className={inputClass}
               />
             </Field>

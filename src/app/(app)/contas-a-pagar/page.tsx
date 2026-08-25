@@ -55,6 +55,19 @@ export default async function ContasAPagarPage({
     f_notas?: string;
     excluir?: string;
     f_motivo?: string;
+    // Reexibição do formulário "Novo título" após falha de validação (prefixo nt_).
+    nt_erro?: string;
+    nt_fornecedor?: string;
+    nt_descricao?: string;
+    nt_valor?: string;
+    nt_emissao?: string;
+    nt_vencimento?: string;
+    nt_categoria?: string;
+    nt_custo?: string;
+    nt_tipo?: string;
+    nt_parcelas?: string;
+    nt_frequencia?: string;
+    nt_ocorrencias?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -176,6 +189,32 @@ export default async function ContasAPagarPage({
   const centsToInput = (cents: number): string =>
     (cents / 100).toFixed(2).replace(".", ",");
 
+  // Reexibição do formulário "Novo título" após falha de validação: reidrata os
+  // campos com o que foi digitado (nt_*). Ausente em caso de sucesso (nada é
+  // propagado). `dateError` liga o destaque de Emissão/Vencimento.
+  const hasPrefill =
+    Boolean(sp.nt_fornecedor) ||
+    Boolean(sp.nt_descricao) ||
+    Boolean(sp.nt_valor) ||
+    Boolean(sp.nt_vencimento) ||
+    Boolean(sp.nt_tipo);
+  const newPayablePrefill = hasPrefill
+    ? {
+        supplierId: sp.nt_fornecedor,
+        description: sp.nt_descricao,
+        amount: sp.nt_valor,
+        issueDate: sp.nt_emissao,
+        dueDate: sp.nt_vencimento,
+        supplierCategory: sp.nt_categoria,
+        costClassification: sp.nt_custo,
+        tipo: sp.nt_tipo === "recorrente" ? ("recorrente" as const) : ("parcelado" as const),
+        installmentCount: sp.nt_parcelas,
+        recurrenceFrequency: sp.nt_frequencia,
+        recurrenceOccurrences: sp.nt_ocorrencias,
+      }
+    : undefined;
+  const newPayableDateError = sp.nt_erro === "data";
+
   return (
     <div>
       <PageHeader
@@ -185,7 +224,13 @@ export default async function ContasAPagarPage({
       <Flash ok={ok} erro={erro} />
 
       <Card className="mb-6" title="Novo título">
-        <NewPayableForm suppliers={supplierOptions} categories={categoryOptions} today={today} />
+        <NewPayableForm
+          suppliers={supplierOptions}
+          categories={categoryOptions}
+          today={today}
+          prefill={newPayablePrefill}
+          dateError={newPayableDateError}
+        />
         <p className="mt-3 text-xs text-[var(--ink-muted)]">
           O título passa pelo fluxo de entrada de nota (validação de duplicidade, projeção de caixa e
           impacto orçamentário). Valores em reais são convertidos para centavos.
