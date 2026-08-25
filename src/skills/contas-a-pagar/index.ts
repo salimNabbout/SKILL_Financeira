@@ -45,7 +45,22 @@ const documentSchema = z.object({
   totalCents: z.number().int().positive(),
 });
 
-const createPayableSchema = z.object({
+// Recorrência: teto de ocorrências materializadas na criação (não há agendador,
+// cada ocorrência vira um título real no banco). 60 cobre mensal 5 anos,
+// trimestral 15 anos, anual 60 anos, semanal ~14 meses.
+export const MAX_RECURRENCE_OCCURRENCES = 60;
+export const RECURRENCE_FREQUENCIES = ["weekly", "monthly", "quarterly", "yearly"] as const;
+
+const recurrenceSchema = z.object({
+  frequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]),
+  occurrences: z.number().int().min(2).max(MAX_RECURRENCE_OCCURRENCES),
+});
+
+// Objeto base puro (ZodObject) — exigido pelo z.discriminatedUnion. A regra de
+// exclusão mútua parcelamento×recorrência é aplicada em createPayableSchema
+// (com .refine) e validada no handler; não pode viver no membro da união
+// porque .refine produz ZodEffects, que a discriminatedUnion não aceita.
+const createPayableObject = z.object({
   action: z.literal("create_payable"),
   supplierId: z.string().min(1),
   description: z.string().min(1),
@@ -57,9 +72,22 @@ const createPayableSchema = z.object({
   supplierCategory: z.string().min(1).optional(),
   costClassification: z.enum(["fixed", "variable"]).optional(),
   installmentCount: z.number().int().min(1).max(120).optional(),
+  // PARCELAMENTO (installmentCount) divide o valor total; RECORRÊNCIA repete
+  // o valor cheio a cada período. São mutuamente exclusivos (ver .refine abaixo).
+  recurrence: recurrenceSchema.optional(),
   notes: z.string().optional(),
   document: documentSchema.optional(),
 });
+
+// Schema com a regra de exclusão mútua (usado para validar no handler).
+const createPayableSchema = createPayableObject.refine(
+  (v) => !(v.recurrence && (v.installmentCount ?? 1) > 1),
+  {
+    message:
+      "Parcelamento e recorrência são mutuamente exclusivos: informe apenas um. Parcelamento divide o valor total; recorrência repete o valor cheio a cada período.",
+    path: ["recurrence"],
+  }
+);
 
 const schedulePaymentSchema = z.object({
   action: z.literal("schedule_payment"),
@@ -112,7 +140,7 @@ const generateRecurringSchema = z.object({
 });
 
 export const contasAPagarInputSchema = z.discriminatedUnion("action", [
-  createPayableSchema,
+  createPayableObject,
   schedulePaymentSchema,
   listDueSchema,
   forecastDisbursementsSchema,
@@ -281,6 +309,27 @@ async function assertPayableFieldsValid(
   }
 }
 
+type RecurrenceFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
+
+/**
+ * Vencimento da ocorrência `i` (0-based) de uma recorrência, a partir do
+ * vencimento base. Reaproveita addDays/addMonths de core/dates (addMonths já
+ * faz o clamp de fim de mês: 31/01 → 28/02, preservando o dia nos meses que o
+ * comportam). NÃO usa aritmética ingênua de dias.
+ */
+function recurrenceDueDate(base: ISODate, frequency: RecurrenceFrequency, i: number): ISODate {
+  switch (frequency) {
+    case "weekly":
+      return addDays(base, 7 * i);
+    case "monthly":
+      return addMonths(base, i);
+    case "quarterly":
+      return addMonths(base, 3 * i);
+    case "yearly":
+      return addMonths(base, 12 * i);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Ações
 // ---------------------------------------------------------------------------
@@ -293,6 +342,13 @@ async function createPayable(
   const alerts: SkillAlert[] = [];
   const pendingItems: PendingItem[] = [];
   let confidence = 1.0;
+
+  // Exclusão mútua parcelamento×recorrência (regra do schema; aplicada aqui
+  // porque o membro da discriminatedUnion não pode carregar .refine).
+  const refined = createPayableSchema.safeParse(input);
+  if (!refined.success) {
+    throw new ValidationError(refined.error.issues[0]?.message ?? "Entrada inválida.");
+  }
 
   const supplier = await ctx.repos.suppliers.getById(ctx.companyId, input.supplierId);
   if (!supplier) throw new NotFoundError("Fornecedor", input.supplierId);
@@ -364,8 +420,16 @@ async function createPayable(
     }
   }
 
-  const installmentCount = input.installmentCount ?? 1;
-  const amounts = splitInstallments(input.amountCents, installmentCount);
+  // Dois modos MUTUAMENTE EXCLUSIVOS:
+  //  - recorrência: `count` ocorrências, cada uma com o valor INTEGRAL, vencimento
+  //    avançando pela frequência; originKey marcada com "R-<freq>" p/ não colidir.
+  //  - parcelamento (ou título simples): comportamento original — valor dividido,
+  //    vencimento avançando 1 mês por parcela.
+  const recurrence = input.recurrence;
+  const count = recurrence ? recurrence.occurrences : input.installmentCount ?? 1;
+  const amounts = recurrence
+    ? Array.from({ length: count }, () => input.amountCents) // valor cheio a cada ocorrência
+    : splitInstallments(input.amountCents, count);
   // Sem documento, a chave natural inclui emissão/vencimento para não confundir
   // obrigações recorrentes (ex.: "Aluguel" de agosto vs. de setembro, mesmo
   // valor). O lado de contas a receber já segue essa convenção.
@@ -377,17 +441,21 @@ async function createPayable(
       issueDate: input.issueDate,
       dueDate: input.dueDate,
     }).slice(0, 12);
+  // Marcador de série na originKey: recorrência ganha "R-<freq>" para nunca
+  // colidir com um parcelamento de mesmo fornecedor/documento/total.
+  const seriesTag = recurrence ? `R-${recurrence.frequency}:` : "";
+  const positionLabel = recurrence ? "ocorrência" : "parcela";
 
   const payables: Payable[] = [];
-  for (let i = 0; i < installmentCount; i++) {
+  for (let i = 0; i < count; i++) {
     const n = i + 1;
-    const originKey = `${input.supplierId}:${documentRef}:${n}/${installmentCount}`;
+    const originKey = `${input.supplierId}:${documentRef}:${seriesTag}${n}/${count}`;
     const existing = await ctx.repos.payables.findByOriginKey(ctx.companyId, originKey);
     if (existing) {
       // Idempotência: repetir a mesma entrada não duplica títulos.
       payables.push(existing);
       assumptions.push(
-        `Parcela ${n}/${installmentCount} já cadastrada (originKey "${originKey}"); título existente ${existing.id} reutilizado sem criar duplicata.`
+        `${positionLabel[0].toUpperCase()}${positionLabel.slice(1)} ${n}/${count} já cadastrada (originKey "${originKey}"); título existente ${existing.id} reutilizado sem criar duplicata.`
       );
       // Reuso de um título já quitado/cancelado costuma indicar uma nova
       // obrigação com a mesma chave — sinaliza para revisão humana.
@@ -403,17 +471,20 @@ async function createPayable(
       }
       continue;
     }
+    const multiple = count > 1;
+    const dueDate = recurrence
+      ? recurrenceDueDate(input.dueDate, recurrence.frequency, i)
+      : addMonths(input.dueDate, i);
     const payable: Payable = {
       id: ctx.ids.next("payb"),
       companyId: ctx.companyId,
       supplierId: input.supplierId,
       documentId: document?.id,
-      description:
-        installmentCount > 1
-          ? `${input.description} (parcela ${n}/${installmentCount})`
-          : input.description,
-      issueDate: input.issueDate,
-      dueDate: addMonths(input.dueDate, i),
+      description: multiple
+        ? `${input.description} (${positionLabel} ${n}/${count})`
+        : input.description,
+      issueDate: input.issueDate, // emissão fixa em toda a série (ver análise Q4)
+      dueDate,
       amountCents: amounts[i],
       paidCents: 0,
       currency,
@@ -423,7 +494,7 @@ async function createPayable(
       supplierCategory: input.supplierCategory,
       costClassification: input.costClassification,
       installmentNumber: n,
-      installmentCount,
+      installmentCount: count,
       originKey,
       notes: input.notes,
       createdBy: ctx.actor.id,
@@ -467,7 +538,9 @@ async function createPayable(
     {
       payables,
       document,
-      formula: `parcelas = splitInstallments(${input.amountCents}, ${installmentCount}); vencimento da parcela n = dueDate + (n-1) mês; soma das parcelas = total exato`,
+      formula: recurrence
+        ? `recorrência ${recurrence.frequency}: ${count} ocorrência(s) de ${input.amountCents} (valor cheio); vencimento da ocorrência n = base avançado ${recurrence.frequency}; total comprometido = ${input.amountCents} × ${count}`
+        : `parcelas = splitInstallments(${input.amountCents}, ${count}); vencimento da parcela n = dueDate + (n-1) mês; soma das parcelas = total exato`,
     },
     {
       alerts,

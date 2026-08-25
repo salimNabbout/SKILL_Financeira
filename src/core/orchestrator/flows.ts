@@ -474,10 +474,33 @@ const updatePayable: FlowDefinition = {
   ],
 };
 
+/**
+ * Cancelamento (lógico) de título a pagar. Fluxo de um único passo — a skill
+ * exige permissão payable.cancel, valida o status (open/scheduled), bloqueia
+ * títulos com pagamento executado, cancela pagamentos pendentes vinculados e
+ * registra a trilha. NÃO há exclusão física (a auditoria é preservada).
+ * payload: { payableId, reason }
+ */
+const cancelPayableFlow: FlowDefinition = {
+  name: "cancel_payable",
+  description:
+    "Cancela (logicamente) um título a pagar em aberto/agendado, cancelando junto os pagamentos pendentes vinculados, e mantém o registro no histórico para auditoria.",
+  requiredPermission: "payable.cancel",
+  steps: [
+    {
+      id: "ap_cancel",
+      skill: "contas_a_pagar",
+      description: "Cancelar título a pagar (com bloqueios de segurança)",
+      buildInput: (f) => ({ action: "cancel_payable", ...f.payload }),
+    },
+  ],
+};
+
 export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
   updatePayable,
+  cancelPayableFlow,
   bankStatementImport,
   bankSync,
   customerInvoiceIntake,
