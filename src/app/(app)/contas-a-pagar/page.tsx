@@ -4,12 +4,13 @@ import { redirect } from "next/navigation";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
+import { hasPermission } from "@/core/auth";
 import { formatBR, formatBRL, statusLabel } from "@/lib/format";
 import { endOfMonth, isISODate, startOfMonth, todayInTz, type ISODate } from "@/core/dates";
 import type { PayableStatus } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
-import { schedulePaymentAction, updatePayableAction } from "./actions";
+import { cancelPayableAction, schedulePaymentAction, updatePayableAction } from "./actions";
 import { NewPayableForm, type SupplierOption } from "./_lib/new-payable-form";
 
 const STATUS_FILTERS: Array<{ value: PayableStatus | "todos"; label: string }> = [
@@ -22,6 +23,9 @@ const STATUS_FILTERS: Array<{ value: PayableStatus | "todos"; label: string }> =
 ];
 
 const SCHEDULABLE: PayableStatus[] = ["open", "partially_paid"];
+// Status que a skill cancel_payable aceita (index.ts): só open e scheduled.
+// A UI é conveniência — a validação real continua na skill.
+const CANCELABLE: PayableStatus[] = ["open", "scheduled"];
 
 const MESES = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -49,14 +53,18 @@ export default async function ContasAPagarPage({
     f_categoria?: string;
     f_custo?: string;
     f_notas?: string;
+    excluir?: string;
+    f_motivo?: string;
   }>;
 }) {
   const sp = await searchParams;
   const { status, p, ok, erro, ano, mes, fornecedor, de, ate } = sp;
   const editar = sp.editar?.trim() || undefined;
+  const excluir = sp.excluir?.trim() || undefined;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
+  const canCancel = hasPermission(session.membership.role, "payable.cancel");
   const today = todayInTz(clock.now(), session.config.timezone);
 
   const filter = STATUS_FILTERS.some((f) => f.value === status) ? status : "todos";
@@ -147,6 +155,11 @@ export default async function ContasAPagarPage({
   // decidimos exibir/ocultar o botão e avisar quando o valor não pode mudar.
   const isEditable = (pv: (typeof rows)[number]): boolean =>
     pv.status !== "paid" && pv.status !== "canceled" && pv.paidCents === 0;
+
+  // Cancelável na UI = mesmos status que a skill aceita (open/scheduled) E o
+  // usuário tem a permissão payable.cancel. A validação real continua na skill.
+  const isCancelable = (pv: (typeof rows)[number]): boolean =>
+    canCancel && CANCELABLE.includes(pv.status);
 
   // Link para abrir/fechar o formulário inline de edição, preservando os
   // filtros e a página atuais (searchParam ?editar=<id>).
@@ -262,7 +275,7 @@ export default async function ContasAPagarPage({
           />
         ) : (
           <Table
-            headers={["Fornecedor", "Descrição", "Parc.", "Vencimento", "Valor", "Pago", "Status", "Pagar", "Editar"]}
+            headers={["Fornecedor", "Descrição", "Parc.", "Vencimento", "Valor", "Pago", "Status", "Pagar", "Ações"]}
             align={["l", "l", "l", "l", "r", "r", "l", "l", "l"]}
           >
             {rows.map((p) => {
@@ -332,28 +345,42 @@ export default async function ContasAPagarPage({
                       <span className="text-xs text-[var(--ink-muted)]">—</span>
                     )}
                   </Td>
-                  {/* Editar: ícone compacto (não a palavra "Editar") para não reintroduzir
-                      rolagem horizontal. Só aparece quando o título é editável (3.5); caso
-                      contrário "—", como na coluna Pagar. Abre o form inline via GET (?editar=id),
-                      sem Client Component nem useState. */}
+                  {/* Ações: Editar (✎) e Excluir (🗑) agrupados na MESMA coluna, ícones
+                      compactos para não reintroduzir rolagem horizontal (A.5). Cada botão
+                      abre um form inline via GET (?editar / ?excluir). "—" quando nenhuma
+                      ação é aplicável. */}
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
-                    {isEditable(p) ? (
-                      <form method="get" action="/contas-a-pagar" className="inline">
-                        {Object.entries(extraQuery).map(([k, v]) =>
-                          v ? <input key={k} type="hidden" name={k} value={v} /> : null
-                        )}
-                        {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
-                        <input
-                          type="hidden"
-                          name="editar"
-                          value={editar === p.id ? "" : p.id}
-                        />
-                        <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
-                          <Button variant="warn" type="submit">
-                            {editar === p.id ? "Fechar" : "✎"}
-                          </Button>
-                        </span>
-                      </form>
+                    {isEditable(p) || isCancelable(p) ? (
+                      <div className="flex flex-nowrap items-center gap-1">
+                        {isEditable(p) ? (
+                          <form method="get" action="/contas-a-pagar" className="inline">
+                            {Object.entries(extraQuery).map(([k, v]) =>
+                              v ? <input key={k} type="hidden" name={k} value={v} /> : null
+                            )}
+                            {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
+                            <input type="hidden" name="editar" value={editar === p.id ? "" : p.id} />
+                            <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                              <Button variant="warn" type="submit">
+                                {editar === p.id ? "Fechar" : "✎"}
+                              </Button>
+                            </span>
+                          </form>
+                        ) : null}
+                        {isCancelable(p) ? (
+                          <form method="get" action="/contas-a-pagar" className="inline">
+                            {Object.entries(extraQuery).map(([k, v]) =>
+                              v ? <input key={k} type="hidden" name={k} value={v} /> : null
+                            )}
+                            {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
+                            <input type="hidden" name="excluir" value={excluir === p.id ? "" : p.id} />
+                            <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                              <Button variant="danger" type="submit">
+                                {excluir === p.id ? "Fechar" : "🗑"}
+                              </Button>
+                            </span>
+                          </form>
+                        ) : null}
+                      </div>
                     ) : (
                       <span className="text-xs text-[var(--ink-muted)]">—</span>
                     )}
@@ -456,6 +483,45 @@ export default async function ContasAPagarPage({
                               agendamento ser cancelado.
                             </span>
                           ) : null}
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                ) : null}
+                {excluir === p.id ? (
+                  <tr>
+                    {/* Form de EXCLUSÃO (cancelamento lógico) inline. <td> cru para colSpan,
+                        como no de edição. Motivo obrigatório; em erro, a action reabre com
+                        ?f_motivo preservado. */}
+                    <td className="px-2 py-2 align-middle" colSpan={9}>
+                      <form
+                        action={cancelPayableAction}
+                        className="rounded-lg border border-red-200 bg-red-50 p-3"
+                      >
+                        <input type="hidden" name="payableId" value={p.id} />
+                        <p className="mb-2 text-sm text-[var(--crit)]">
+                          O título será cancelado e permanecerá no histórico para auditoria.
+                          Pagamentos pendentes vinculados também serão cancelados.
+                        </p>
+                        <Field label="Motivo do cancelamento">
+                          <input
+                            name="reason"
+                            required
+                            defaultValue={sp.f_motivo ?? ""}
+                            className={inputClass}
+                            placeholder="Ex.: compra cancelada junto ao fornecedor"
+                          />
+                        </Field>
+                        <div className="mt-3 flex items-center gap-2">
+                          <Button variant="danger" type="submit">
+                            Confirmar cancelamento
+                          </Button>
+                          <Link
+                            href={editHref(null)}
+                            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+                          >
+                            Voltar
+                          </Link>
                         </div>
                       </form>
                     </td>

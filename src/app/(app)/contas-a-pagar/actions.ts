@@ -45,16 +45,32 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     fail("Selecione a classificação do custo (Fixo ou Variável).");
   }
 
+  const tipo = fdOptional(formData, "tipoLancamento") ?? "parcelado";
+  const isRecorrente = tipo === "recorrente";
+
   let amountCents = 0;
   let installmentCount = 1;
+  let recurrence: { frequency: string; occurrences: number } | undefined;
   try {
     amountCents = parseBRLToCents(fdString(formData, "amount"));
-    installmentCount = Number(fdOptional(formData, "installmentCount") ?? "1");
+    if (isRecorrente) {
+      const frequency = fdString(formData, "recurrenceFrequency");
+      const occurrences = Number(fdString(formData, "recurrenceOccurrences"));
+      if (!["weekly", "monthly", "quarterly", "yearly"].includes(frequency)) {
+        fail("Selecione a frequência da recorrência.");
+      }
+      if (!Number.isInteger(occurrences) || occurrences < 2) {
+        fail("Número de ocorrências inválido (mínimo 2).");
+      }
+      recurrence = { frequency, occurrences };
+    } else {
+      installmentCount = Number(fdOptional(formData, "installmentCount") ?? "1");
+    }
   } catch (error) {
     fail(errorMessage(error));
   }
   if (amountCents <= 0) fail("O valor do título deve ser positivo.");
-  if (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 120) {
+  if (!isRecorrente && (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 120)) {
     fail("Número de parcelas inválido (1 a 120).");
   }
 
@@ -77,7 +93,10 @@ export async function createPayableAction(formData: FormData): Promise<void> {
         // a ser sempre sugerida automaticamente pelo skill.
         supplierCategory,
         costClassification,
-        installmentCount,
+        // Mutuamente exclusivos: recorrência envia `recurrence`; caso contrário
+        // `installmentCount`. NÃO envia a chave de recorrência quando ausente
+        // (a skill espera undefined, não objeto vazio).
+        ...(isRecorrente ? { recurrence } : { installmentCount }),
       },
     });
   } catch (error) {
@@ -89,8 +108,11 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   if (response.status === "failed" && payables.length === 0) {
     fail(flowErrorMessage(response));
   }
+  const totalCents = payables.reduce((acc, p) => acc + p.amountCents, 0);
   ok(
-    `Título criado: ${payables.length} parcela(s) somando ${formatBRL(amountCents)}.` +
+    (isRecorrente
+      ? `Recorrência criada: ${payables.length} título(s) de ${formatBRL(amountCents)} — total ${formatBRL(totalCents)}.`
+      : `Título criado: ${payables.length} parcela(s) somando ${formatBRL(amountCents)}.`) +
       (response.idempotent_replay ? " (requisição repetida — nada foi duplicado)" : "")
   );
 }
@@ -164,6 +186,42 @@ export async function updatePayableAction(formData: FormData): Promise<void> {
   if (response.status === "failed") failEdit(flowErrorMessage(response));
 
   ok("Título atualizado.");
+}
+
+export async function cancelPayableAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const payableId = fdString(formData, "payableId");
+  const reason = fdString(formData, "reason");
+
+  // Reabre o form inline de exclusão na mesma linha, preservando o motivo.
+  function failCancel(message: string): never {
+    const qs = new URLSearchParams({ excluir: payableId, erro: message });
+    if (reason) qs.set("f_motivo", reason);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!payableId) fail("Título não identificado para exclusão.");
+  // reason é obrigatório na skill; exigimos aqui para dar mensagem clara e não
+  // inventar texto padrão (que esvaziaria a auditoria).
+  if (!reason) failCancel("Informe o motivo do cancelamento.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "cancel_payable",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: { payableId, reason },
+    });
+  } catch (error) {
+    failCancel(errorMessage(error));
+  }
+
+  if (response.status === "failed") failCancel(flowErrorMessage(response));
+
+  ok("Título cancelado e mantido no histórico para auditoria.");
 }
 
 export async function schedulePaymentAction(formData: FormData): Promise<void> {

@@ -941,3 +941,167 @@ describe("contas_a_pagar — update_payable", () => {
     expect(res.alerts[0].code).toBe("permission_denied");
   });
 });
+
+describe("contas_a_pagar — create_payable (recorrência)", () => {
+  it("12 ocorrências mensais de R$ 2.000 → 12 títulos de R$ 2.000 (valor cheio, não dividido)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        description: "Aluguel",
+        amountCents: 200_000, // R$ 2.000
+        issueDate: "2026-01-05",
+        dueDate: "2026-01-10",
+        categoryId: seedCategory(env).id,
+        recurrence: { frequency: "monthly", occurrences: 12 },
+      })
+    );
+
+    expect(res.status).toBe("success");
+    const data = res.data as CreatePayableData;
+    expect(data.payables).toHaveLength(12);
+    // Cada ocorrência com o valor INTEGRAL — nunca 166,67 (=2000/12).
+    expect(data.payables.every((p) => p.amountCents === 200_000)).toBe(true);
+    expect(data.payables.reduce((acc, p) => acc + p.amountCents, 0)).toBe(2_400_000); // R$ 24.000
+    // Vencimentos mensais consecutivos.
+    expect(data.payables.map((p) => p.dueDate)).toEqual([
+      "2026-01-10", "2026-02-10", "2026-03-10", "2026-04-10",
+      "2026-05-10", "2026-06-10", "2026-07-10", "2026-08-10",
+      "2026-09-10", "2026-10-10", "2026-11-10", "2026-12-10",
+    ]);
+    // Descrição indica a posição.
+    expect(data.payables[2].description).toBe("Aluguel (ocorrência 3/12)");
+    // Emissão fixa em toda a série.
+    expect(data.payables.every((p) => p.issueDate === "2026-01-05")).toBe(true);
+  });
+
+  it("recorrência mensal a partir de 31/01 usa o último dia do mês (28/30/31 e bissexto)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        description: "Assinatura",
+        amountCents: 10_000,
+        issueDate: "2028-01-01",
+        dueDate: "2028-01-31",
+        categoryId: seedCategory(env).id,
+        // 2028 é bissexto → fevereiro tem 29 dias.
+        recurrence: { frequency: "monthly", occurrences: 5 },
+      })
+    );
+
+    expect(res.status).toBe("success");
+    const dueDates = (res.data as CreatePayableData).payables.map((p) => p.dueDate);
+    expect(dueDates).toEqual([
+      "2028-01-31", // jan (31)
+      "2028-02-29", // fev bissexto (29)
+      "2028-03-31", // mar (31) — dia original preservado, não grudou no 29
+      "2028-04-30", // abr (30)
+      "2028-05-31", // mai (31)
+    ]);
+  });
+
+  it("recurrence + installmentCount juntos → erro de validação", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        amountCents: 100_000,
+        installmentCount: 3,
+        recurrence: { frequency: "monthly", occurrences: 12 },
+        categoryId: seedCategory(env).id,
+      })
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("validation_error");
+    expect(env.db.payables).toHaveLength(0);
+  });
+
+  it("recriar a mesma recorrência não duplica títulos (idempotência por originKey)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    const category = seedCategory(env);
+    const input = baseCreateInput({
+      description: "Aluguel",
+      amountCents: 200_000,
+      issueDate: "2026-01-05",
+      dueDate: "2026-01-10",
+      categoryId: category.id,
+      recurrence: { frequency: "monthly", occurrences: 6 },
+    });
+
+    await runSkill(contasAPagarSkill, env.ctx(), input);
+    expect(env.db.payables).toHaveLength(6);
+
+    // Segunda execução idêntica: nenhum título novo.
+    const res2 = await runSkill(contasAPagarSkill, env.ctx(), input);
+    expect(res2.status).toBe("success");
+    expect(env.db.payables).toHaveLength(6);
+    expect((res2.data as CreatePayableData).payables).toHaveLength(6);
+  });
+
+  it("recorrência e parcelamento do mesmo fornecedor/documento NÃO colidem na originKey", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    const category = seedCategory(env);
+
+    // Parcelamento de 6.
+    await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        description: "Compromisso",
+        amountCents: 600_000,
+        installmentCount: 6,
+        categoryId: category.id,
+      })
+    );
+    // Recorrência de 6, mesmo fornecedor/descrição/valor base.
+    await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        description: "Compromisso",
+        amountCents: 600_000,
+        categoryId: category.id,
+        recurrence: { frequency: "monthly", occurrences: 6 },
+      })
+    );
+
+    // 6 (parcelamento) + 6 (recorrência) = 12 títulos distintos.
+    expect(env.db.payables).toHaveLength(12);
+    const keys = env.db.payables.map((p) => p.originKey);
+    expect(new Set(keys).size).toBe(12); // todas as chaves distintas
+    expect(keys.some((k) => k.includes("R-monthly:"))).toBe(true);
+  });
+
+  it("vencimento anterior à emissão continua barrado na recorrência", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({
+        issueDate: "2026-02-01",
+        dueDate: "2026-01-10", // anterior à emissão
+        recurrence: { frequency: "monthly", occurrences: 3 },
+        categoryId: seedCategory(env).id,
+      })
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("validation_error");
+    expect(res.alerts[0].message).toContain("não pode ser anterior à emissão");
+  });
+});
