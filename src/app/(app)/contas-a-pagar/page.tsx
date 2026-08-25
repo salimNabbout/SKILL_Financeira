@@ -140,6 +140,7 @@ export default async function ContasAPagarPage({
 
   const supplierOptions: SupplierOption[] = suppliers
     .filter((s) => s.active)
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
     .map((s) => ({ id: s.id, name: s.name }));
   const categoryOptions = [...supplierCategories]
     .map((c) => c.name)
@@ -212,7 +213,7 @@ export default async function ContasAPagarPage({
     Boolean(sp.nt_tipo);
   const newPayablePrefill = hasPrefill
     ? {
-        supplierId: sp.nt_fornecedor,
+        supplierName: sp.nt_fornecedor,
         description: sp.nt_descricao,
         amount: sp.nt_valor,
         issueDate: sp.nt_emissao,
