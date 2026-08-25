@@ -15,6 +15,12 @@ export interface SupplierOption {
   name: string;
 }
 
+/** Centro de custo para o select ("CÓDIGO — Nome"); value é o id. */
+export interface CostCenterOption {
+  id: string;
+  label: string;
+}
+
 /**
  * Valores para reidratar o formulário após uma falha de validação (searchParams
  * → defaultValue). Todos opcionais: em caso de sucesso, `prefill` é undefined e
@@ -28,6 +34,8 @@ export interface NewPayablePrefill {
   dueDate?: string;
   supplierCategory?: string;
   costClassification?: string;
+  costCenterId?: string;
+  documentNumber?: string;
   tipo?: "parcelado" | "recorrente";
   installmentCount?: string;
   recurrenceFrequency?: string;
@@ -50,12 +58,14 @@ export interface NewPayablePrefill {
 export function NewPayableForm({
   suppliers,
   categories,
+  costCenters,
   today,
   prefill,
   dateError = false,
 }: {
   suppliers: SupplierOption[];
   categories: string[];
+  costCenters: CostCenterOption[];
   today: string;
   prefill?: NewPayablePrefill;
   dateError?: boolean;
@@ -98,6 +108,20 @@ export function NewPayableForm({
           className={inputClass}
           placeholder="1.234,56"
         />
+      </Field>
+      {/* Nº do Doc. OPCIONAL. Quando preenchido, a action monta o objeto document
+          (type "other", issuedAt=Emissão, totalCents=Valor) — isso torna o número
+          da nota a chave de deduplicação (originKey), evitando lançamento duplicado. */}
+      <Field label="Nº do Doc. (opcional)">
+        <input
+          name="documentNumber"
+          defaultValue={prefill?.documentNumber ?? ""}
+          className={inputClass}
+          placeholder="Ex.: NF 1234"
+        />
+        <span className="mt-1 block text-xs text-[var(--ink-muted)]">
+          Informe a nota ou documento para evitar lançamento duplicado.
+        </span>
       </Field>
       <Field label="Emissão">
         <input
@@ -149,6 +173,18 @@ export function NewPayableForm({
           <option value="">— selecione —</option>
           <option value="fixed">Custo Fixo</option>
           <option value="variable">Custo Variável</option>
+        </select>
+      </Field>
+      {/* Centro de custo é OPCIONAL (.optional() na skill) — não pode ser required.
+          value é o id; exibição "CÓDIGO — Nome". Lista só os ativos. */}
+      <Field label="Centro de Custo (opcional)">
+        <select name="costCenterId" className={inputClass} defaultValue={prefill?.costCenterId ?? ""}>
+          <option value="">— sem centro de custo —</option>
+          {costCenters.map((cc) => (
+            <option key={cc.id} value={cc.id}>
+              {cc.label}
+            </option>
+          ))}
         </select>
       </Field>
 

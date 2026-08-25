@@ -64,6 +64,8 @@ export default async function ContasAPagarPage({
     nt_vencimento?: string;
     nt_categoria?: string;
     nt_custo?: string;
+    nt_centrocusto?: string;
+    nt_documento?: string;
     nt_tipo?: string;
     nt_parcelas?: string;
     nt_frequencia?: string;
@@ -112,23 +114,26 @@ export default async function ContasAPagarPage({
 
   const supplierId = fornecedor || undefined;
 
-  const [page, suppliers, supplierCategories, bankAccounts, allPayables] = await Promise.all([
-    // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
-    // Filtros de status/fornecedor/vencimento aplicados no banco.
-    repos.payables.listPage(companyId, {
-      offset: pageOffset(p),
-      limit: PAGE_SIZE,
-      statuses: filter === "todos" ? undefined : [filter as PayableStatus],
-      supplierId,
-      dueFrom,
-      dueTo,
-    }),
-    repos.suppliers.listAll(companyId),
-    repos.supplierCategories.listAll(companyId),
-    repos.bankAccounts.listAll(companyId),
-    // Só para derivar os anos existentes nos títulos (lista de anos é pequena).
-    repos.payables.listAll(companyId),
-  ]);
+  const [page, suppliers, supplierCategories, bankAccounts, allPayables, costCenters] =
+    await Promise.all([
+      // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
+      // Filtros de status/fornecedor/vencimento aplicados no banco.
+      repos.payables.listPage(companyId, {
+        offset: pageOffset(p),
+        limit: PAGE_SIZE,
+        statuses: filter === "todos" ? undefined : [filter as PayableStatus],
+        supplierId,
+        dueFrom,
+        dueTo,
+      }),
+      repos.suppliers.listAll(companyId),
+      repos.supplierCategories.listAll(companyId),
+      repos.bankAccounts.listAll(companyId),
+      // Só para derivar os anos existentes nos títulos (lista de anos é pequena).
+      repos.payables.listAll(companyId),
+      // Centros de custo para o select do formulário (carregado uma vez).
+      repos.costCenters.listAll(companyId),
+    ]);
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const activeAccounts = bankAccounts.filter((b) => b.active);
   const rows = page.items;
@@ -139,6 +144,13 @@ export default async function ContasAPagarPage({
   const categoryOptions = [...supplierCategories]
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  // Centros de custo ATIVOS, ordenados por código (pt-BR). Exibição "CÓDIGO — Nome";
+  // o value é o id (nunca o código). CostCenter não tem `scope` — listamos todos os
+  // ativos (ver relatório).
+  const costCenterOptions = costCenters
+    .filter((c) => c.active)
+    .sort((a, b) => a.code.localeCompare(b.code, "pt-BR"))
+    .map((c) => ({ id: c.id, label: `${c.code} — ${c.name}` }));
 
   // Fornecedores ativos ordenados (pt-BR) para o select do filtro.
   const filterSuppliers = suppliers
@@ -207,6 +219,8 @@ export default async function ContasAPagarPage({
         dueDate: sp.nt_vencimento,
         supplierCategory: sp.nt_categoria,
         costClassification: sp.nt_custo,
+        costCenterId: sp.nt_centrocusto,
+        documentNumber: sp.nt_documento,
         tipo: sp.nt_tipo === "recorrente" ? ("recorrente" as const) : ("parcelado" as const),
         installmentCount: sp.nt_parcelas,
         recurrenceFrequency: sp.nt_frequencia,
@@ -227,6 +241,7 @@ export default async function ContasAPagarPage({
         <NewPayableForm
           suppliers={supplierOptions}
           categories={categoryOptions}
+          costCenters={costCenterOptions}
           today={today}
           prefill={newPayablePrefill}
           dateError={newPayableDateError}
