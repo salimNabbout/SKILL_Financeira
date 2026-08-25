@@ -17,6 +17,7 @@ import {
   type GenerateRecurringData,
   type ListDueData,
   type SchedulePaymentData,
+  type UpdatePayableData,
 } from "..";
 
 // Relógio fixo do createTestEnv: 2026-08-18T15:00:00Z → "hoje" = 2026-08-18 em São Paulo.
@@ -791,5 +792,152 @@ describe("contas_a_pagar — generate_recurring", () => {
     expect(res.status).toBe("success");
     expect((res.data as GenerateRecurringData).generated).toHaveLength(0);
     expect(env.db.payables).toHaveLength(0);
+  });
+});
+
+describe("contas_a_pagar — update_payable", () => {
+  function baseUpdateInput(payableId: string, over: Record<string, unknown> = {}) {
+    return {
+      action: "update_payable" as const,
+      payableId,
+      description: "Descrição editada",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-25",
+      amountCents: 50_000,
+      ...over,
+    };
+  }
+
+  it("edita título em aberto (descrição, vencimento e valor) e registra auditoria com before e after", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    const payable = seedPayable(env, {
+      description: "Original",
+      amountCents: 50_000,
+      dueDate: "2026-08-20",
+    });
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(env.actorFor("analyst")),
+      baseUpdateInput(payable.id, {
+        description: "Aluguel revisado",
+        dueDate: "2026-08-28",
+        amountCents: 62_000,
+      })
+    );
+
+    expect(res.status).toBe("success");
+    const data = res.data as UpdatePayableData;
+    expect(data.payable.description).toBe("Aluguel revisado");
+    expect(data.payable.dueDate).toBe("2026-08-28");
+    expect(data.payable.amountCents).toBe(62_000);
+    // Persistido no repositório.
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.amountCents).toBe(62_000);
+    // originKey preservada (não editável).
+    expect(stored?.originKey).toBe(payable.originKey);
+
+    // Auditoria payable.updated com before E after preenchidos e valores corretos.
+    const audit = env.db.auditRecords.find((a) => a.action === "payable.updated");
+    expect(audit?.before).toBeTruthy();
+    expect(audit?.after).toBeTruthy();
+    expect((audit?.before as Payable).amountCents).toBe(50_000);
+    expect((audit?.before as Payable).description).toBe("Original");
+    expect((audit?.after as Payable).amountCents).toBe(62_000);
+    expect((audit?.after as Payable).description).toBe("Aluguel revisado");
+    expect(env.db.events.some((e) => e.type === "payable.updated")).toBe(true);
+  });
+
+  it("bloqueia edição de título com paidCents > 0 (movimento financeiro)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    const payable = seedPayable(env, {
+      amountCents: 50_000,
+      paidCents: 20_000,
+      status: "partially_paid",
+    });
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(env.actorFor("analyst")),
+      baseUpdateInput(payable.id, { description: "tentativa", amountCents: 40_000 })
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("validation_error");
+    // Nada mudou.
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.description).toBe("Título semeado");
+    expect(stored?.amountCents).toBe(50_000);
+  });
+
+  it("bloqueia alteração de VALOR de título com pagamento pendente de aprovação", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 400_000 });
+    // Agenda (cria Payment pending_approval; título passa a "scheduled").
+    await schedule(env, payable.id);
+
+    // Tenta subir o valor para faixa de alçada maior — deve ser bloqueado.
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(env.actorFor("analyst")),
+      baseUpdateInput(payable.id, { amountCents: 6_000_000 })
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("validation_error");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.amountCents).toBe(400_000);
+  });
+
+  it("permite editar campos que NÃO afetam alçada mesmo com pagamento pendente (valor inalterado)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 400_000, description: "Antes" });
+    await schedule(env, payable.id);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(env.actorFor("analyst")),
+      // Mantém o mesmo amountCents; só muda a descrição.
+      baseUpdateInput(payable.id, { amountCents: 400_000, description: "Depois" })
+    );
+
+    expect(res.status).toBe("success");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.description).toBe("Depois");
+  });
+
+  it("recusa edição com vencimento anterior à emissão (mesma mensagem do create)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    const payable = seedPayable(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(env.actorFor("analyst")),
+      baseUpdateInput(payable.id, { issueDate: "2026-08-20", dueDate: "2026-08-01" })
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("validation_error");
+    expect(res.alerts[0].message).toContain("não pode ser anterior à emissão");
+  });
+
+  it("recusa edição por ator sem permissão (viewer)", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    const payable = seedPayable(env);
+
+    const res = await runSkill(
+      contasAPagarSkill,
+      env.ctx(env.actorFor("viewer")),
+      baseUpdateInput(payable.id)
+    );
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("permission_denied");
   });
 });

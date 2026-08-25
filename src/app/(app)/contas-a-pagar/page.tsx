@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
@@ -8,7 +9,7 @@ import { endOfMonth, isISODate, startOfMonth, todayInTz, type ISODate } from "@/
 import type { PayableStatus } from "@/core/entities";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
-import { schedulePaymentAction } from "./actions";
+import { schedulePaymentAction, updatePayableAction } from "./actions";
 import { NewPayableForm, type SupplierOption } from "./_lib/new-payable-form";
 
 const STATUS_FILTERS: Array<{ value: PayableStatus | "todos"; label: string }> = [
@@ -40,9 +41,19 @@ export default async function ContasAPagarPage({
     fornecedor?: string;
     de?: string;
     ate?: string;
+    editar?: string;
+    f_descricao?: string;
+    f_emissao?: string;
+    f_vencimento?: string;
+    f_valor?: string;
+    f_categoria?: string;
+    f_custo?: string;
+    f_notas?: string;
   }>;
 }) {
-  const { status, p, ok, erro, ano, mes, fornecedor, de, ate } = await searchParams;
+  const sp = await searchParams;
+  const { status, p, ok, erro, ano, mes, fornecedor, de, ate } = sp;
+  const editar = sp.editar?.trim() || undefined;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
@@ -129,6 +140,28 @@ export default async function ContasAPagarPage({
     de: deIso,
     ate: ateIso,
   };
+
+  // Editável = título com potencial de edição pela regra da Etapa 0: não
+  // encerrado (paid/canceled) e sem movimento financeiro (paidCents > 0).
+  // A trava fina do VALOR (pagamento pendente) é validada na skill; aqui só
+  // decidimos exibir/ocultar o botão e avisar quando o valor não pode mudar.
+  const isEditable = (pv: (typeof rows)[number]): boolean =>
+    pv.status !== "paid" && pv.status !== "canceled" && pv.paidCents === 0;
+
+  // Link para abrir/fechar o formulário inline de edição, preservando os
+  // filtros e a página atuais (searchParam ?editar=<id>).
+  const editHref = (id: string | null): string => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(extraQuery)) if (v) qs.set(k, v);
+    if (p) qs.set("p", p);
+    if (id) qs.set("editar", id);
+    const s = qs.toString();
+    return s ? `/contas-a-pagar?${s}` : "/contas-a-pagar";
+  };
+
+  // amountCents → "1234,56" (sem símbolo) para o defaultValue do input de valor.
+  const centsToInput = (cents: number): string =>
+    (cents / 100).toFixed(2).replace(".", ",");
 
   return (
     <div>
@@ -229,13 +262,15 @@ export default async function ContasAPagarPage({
           />
         ) : (
           <Table
-            headers={["Fornecedor", "Descrição", "Parc.", "Vencimento", "Valor", "Pago", "Status", "Pagar"]}
-            align={["l", "l", "l", "l", "r", "r", "l", "l"]}
+            headers={["Fornecedor", "Descrição", "Parc.", "Vencimento", "Valor", "Pago", "Status", "Pagar", "Editar"]}
+            align={["l", "l", "l", "l", "r", "r", "l", "l", "l"]}
           >
             {rows.map((p) => {
               const overdue = p.dueDate < today && p.status !== "paid" && p.status !== "canceled";
+              const editing = editar === p.id;
               return (
-                <tr key={p.id}>
+                <Fragment key={p.id}>
+                <tr>
                   {/* Densidade: !px-2 (vence px-3 do Td), text-xs e !py-1 compactam a linha.
                       truncate + nowrap + title mantêm o nome completo acessível no tooltip.
                       O "!" é necessário porque, sem ele, as classes do componente compartilhado
@@ -297,7 +332,136 @@ export default async function ContasAPagarPage({
                       <span className="text-xs text-[var(--ink-muted)]">—</span>
                     )}
                   </Td>
+                  {/* Editar: ícone compacto (não a palavra "Editar") para não reintroduzir
+                      rolagem horizontal. Só aparece quando o título é editável (3.5); caso
+                      contrário "—", como na coluna Pagar. Abre o form inline via GET (?editar=id),
+                      sem Client Component nem useState. */}
+                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
+                    {isEditable(p) ? (
+                      <form method="get" action="/contas-a-pagar" className="inline">
+                        {Object.entries(extraQuery).map(([k, v]) =>
+                          v ? <input key={k} type="hidden" name={k} value={v} /> : null
+                        )}
+                        {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
+                        <input
+                          type="hidden"
+                          name="editar"
+                          value={editar === p.id ? "" : p.id}
+                        />
+                        <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                          <Button variant="warn" type="submit">
+                            {editar === p.id ? "Fechar" : "✎"}
+                          </Button>
+                        </span>
+                      </form>
+                    ) : (
+                      <span className="text-xs text-[var(--ink-muted)]">—</span>
+                    )}
+                  </Td>
                 </tr>
+                {editing ? (
+                  <tr>
+                    {/* Célula que ocupa a largura toda da tabela para o form inline.
+                        Usa <td> cru (não o Td compartilhado) porque precisa de colSpan,
+                        que o Td não expõe — o componente compartilhado não é alterado. */}
+                    <td className="px-2 py-2 align-middle" colSpan={9}>
+                      {/* Formulário de edição inline (Server Component; sem client/useState).
+                          Em erro de validação, a action reabre esta linha com os campos
+                          preenchidos via ?f_*= (defaultValue abaixo). */}
+                      <form
+                        action={updatePayableAction}
+                        className="grid gap-3 rounded-lg border border-[var(--line)] bg-slate-50 p-3 md:grid-cols-3"
+                      >
+                        <input type="hidden" name="payableId" value={p.id} />
+                        <Field label="Descrição">
+                          <input
+                            name="description"
+                            required
+                            defaultValue={sp.f_descricao ?? p.description}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <Field label="Valor (R$)">
+                          <input
+                            name="amount"
+                            required
+                            defaultValue={sp.f_valor ?? centsToInput(p.amountCents)}
+                            className={inputClass}
+                            placeholder="1.234,56"
+                          />
+                        </Field>
+                        <Field label="Categoria">
+                          <select
+                            name="supplierCategory"
+                            defaultValue={sp.f_categoria ?? p.supplierCategory ?? ""}
+                            className={inputClass}
+                          >
+                            <option value="">— sem categoria —</option>
+                            {categoryOptions.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label="Emissão">
+                          <input
+                            type="date"
+                            name="issueDate"
+                            required
+                            defaultValue={sp.f_emissao ?? p.issueDate}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <Field label="Vencimento">
+                          <input
+                            type="date"
+                            name="dueDate"
+                            required
+                            defaultValue={sp.f_vencimento ?? p.dueDate}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <Field label="Classificação do CUSTO">
+                          <select
+                            name="costClassification"
+                            defaultValue={sp.f_custo ?? p.costClassification ?? ""}
+                            className={inputClass}
+                          >
+                            <option value="">— sem classificação —</option>
+                            <option value="fixed">Custo Fixo</option>
+                            <option value="variable">Custo Variável</option>
+                          </select>
+                        </Field>
+                        <Field label="Observações">
+                          <input
+                            name="notes"
+                            defaultValue={sp.f_notas ?? p.notes ?? ""}
+                            className={inputClass}
+                          />
+                        </Field>
+                        <div className="flex items-end gap-2 md:col-span-3">
+                          <Button variant="warn" type="submit">
+                            Salvar alterações
+                          </Button>
+                          <Link
+                            href={editHref(null)}
+                            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+                          >
+                            Cancelar
+                          </Link>
+                          {p.status === "scheduled" ? (
+                            <span className="text-xs text-amber-700">
+                              Este título tem pagamento agendado: o valor não pode ser alterado até o
+                              agendamento ser cancelado.
+                            </span>
+                          ) : null}
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </Table>
