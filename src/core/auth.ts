@@ -15,6 +15,7 @@ export type Permission =
   | "payable.cancel"
   | "receivable.create"
   | "receivable.settle"
+  | "receivable.cancel"
   | "payment.request"
   | "payment.approve"
   | "payment.execute"
@@ -39,6 +40,7 @@ const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     "payable.cancel",
     "receivable.create",
     "receivable.settle",
+    "receivable.cancel",
     "payment.request",
     "payment.approve",
     "payment.execute",
@@ -59,6 +61,7 @@ const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     "payable.cancel",
     "receivable.create",
     "receivable.settle",
+    "receivable.cancel",
     "payment.request",
     "payment.approve",
     "payment.execute",

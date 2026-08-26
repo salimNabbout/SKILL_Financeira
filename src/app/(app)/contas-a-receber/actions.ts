@@ -2,15 +2,18 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatBRL } from "@/lib/format";
 import { assertPermission } from "@/core/auth";
 import type { Receivable } from "@/core/entities";
+import type { OrchestratorResponse } from "@/core/orchestrator/orchestrator";
 import type { SkillResult } from "@/core/types";
 import {
   errorMessage,
   fdOptional,
   fdString,
+  flowErrorMessage,
   parseBRLToCents,
   skillErrorMessage,
 } from "@/app/(app)/cadastros/_lib/form-utils";
@@ -33,37 +36,57 @@ const MAX_URL_DESCRIPTION = 200;
 
 export async function createReceivableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
+  const { repos } = await getContainer();
 
-  const customerId = fdString(formData, "customerId");
+  // O campo Cliente é um autocompletar nativo (<input list>) que submete o
+  // NOME; resolvemos nome → id abaixo (nomes são únicos por empresa).
+  const customerName = fdString(formData, "customerName");
   const description = fdString(formData, "description");
   const issueDate = fdString(formData, "issueDate");
   const dueDate = fdString(formData, "dueDate");
   const amountRaw = fdString(formData, "amount");
   const installmentRaw = fdOptional(formData, "installmentCount");
   const categoryId = fdOptional(formData, "categoryId");
+  const costCenterId = fdOptional(formData, "costCenterId");
   const method = fdOptional(formData, "method");
 
   // Falha na CRIAÇÃO: reexibe o Card "Novo título" com TUDO que foi digitado
-  // (searchParams nt_* → defaultValue), inclusive o campo errado. Marca
-  // nt_erro=data quando a validação é de datas, para a page destacar Emissão/
-  // Vencimento e dar autoFocus no Vencimento.
+  // (searchParams nt_* → defaultValue), inclusive o campo errado. Preserva o
+  // NOME digitado do cliente (não o id — pode não ter resolvido).
   function failCreate(message: string): never {
     const qs = new URLSearchParams({ erro: message });
     if (/Verificar a Data da Emissão/i.test(message)) qs.set("nt_erro", "data");
-    if (customerId) qs.set("nt_cliente", customerId);
+    if (customerName) qs.set("nt_cliente", customerName);
     if (description) qs.set("nt_descricao", description.slice(0, MAX_URL_DESCRIPTION));
     if (amountRaw) qs.set("nt_valor", amountRaw);
     if (issueDate) qs.set("nt_emissao", issueDate);
     if (dueDate) qs.set("nt_vencimento", dueDate);
     if (installmentRaw) qs.set("nt_parcelas", installmentRaw);
     if (categoryId) qs.set("nt_categoria", categoryId);
+    if (costCenterId) qs.set("nt_centrocusto", costCenterId);
     if (method) qs.set("nt_metodo", method);
     redirect(`${PATH}?${qs.toString()}`);
   }
 
-  if (!customerId || !description || !issueDate || !dueDate) {
+  if (!customerName || !description || !issueDate || !dueDate) {
     failCreate("Preencha cliente, descrição, emissão e vencimento.");
   }
+
+  // Resolve nome → id: case-insensitive, ignorando espaços nas pontas. NUNCA
+  // escolhe o primeiro em caso de ambiguidade.
+  const wanted = customerName.trim().toLowerCase();
+  const matches = (await repos.customers.listAll(session.company.id)).filter(
+    (c) => c.active && c.name.trim().toLowerCase() === wanted
+  );
+  if (matches.length === 0) {
+    failCreate("Cliente não encontrado. Selecione um da lista.");
+  }
+  if (matches.length > 1) {
+    failCreate(
+      `Há mais de um cliente com o nome "${customerName.trim()}". Ajuste o cadastro para diferenciá-los antes de lançar o título.`
+    );
+  }
+  const customerId = matches[0].id;
 
   let amountCents = 0;
   let installmentCount = 1;
@@ -89,6 +112,9 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
       dueDate,
       amountCents,
       categoryId,
+      // Centro de custo é opcional: só entra quando selecionado (fdOptional já
+      // devolve undefined se vazio; não enviar a chave vazia).
+      ...(costCenterId ? { costCenterId } : {}),
       installmentCount,
       method,
     });
@@ -140,18 +166,33 @@ export async function registerReceiptAction(formData: FormData): Promise<void> {
   const receivableId = fdString(formData, "receivableId");
   const receivedDate = fdString(formData, "receivedDate");
   const method = fdString(formData, "method");
-  if (!receivableId || !receivedDate || !method) {
-    fail("Preencha valor, data e método do recebimento.");
+  const amountRaw = fdString(formData, "amount");
+  const bankAccountId = fdOptional(formData, "bankAccountId");
+
+  // Falha no RECEBIMENTO: reabre o form inline na MESMA linha (rc_id) preservando
+  // o que foi digitado (rc_* → defaultValue). Sucesso não propaga.
+  function failReceipt(message: string): never {
+    const qs = new URLSearchParams({ erro: message, rc_id: receivableId });
+    if (amountRaw) qs.set("rc_valor", amountRaw);
+    if (receivedDate) qs.set("rc_data", receivedDate);
+    if (method) qs.set("rc_metodo", method);
+    if (bankAccountId) qs.set("rc_conta", bankAccountId);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!receivableId) fail("Título não identificado para recebimento.");
+  if (!receivedDate || !method) {
+    failReceipt("Preencha valor, data e método do recebimento.");
   }
 
   let amountCents = 0;
   try {
     assertPermission(session.actor, "receivable.settle");
-    amountCents = parseBRLToCents(fdString(formData, "amount"));
+    amountCents = parseBRLToCents(amountRaw);
   } catch (error) {
-    fail(errorMessage(error));
+    failReceipt(errorMessage(error));
   }
-  if (amountCents <= 0) fail("O valor recebido deve ser positivo.");
+  if (amountCents <= 0) failReceipt("O valor recebido deve ser positivo.");
 
   let result: SkillResult<unknown>;
   try {
@@ -161,16 +202,52 @@ export async function registerReceiptAction(formData: FormData): Promise<void> {
       amountCents,
       receivedDate,
       method,
-      bankAccountId: fdOptional(formData, "bankAccountId"),
+      bankAccountId,
     });
   } catch (error) {
-    fail(errorMessage(error));
+    failReceipt(errorMessage(error));
   }
 
-  if (result.status === "error") fail(skillErrorMessage(result));
+  if (result.status === "error") failReceipt(skillErrorMessage(result));
   const remaining = (result.data as { remainingCents?: number } | null)?.remainingCents;
   ok(
     `Recebimento de ${formatBRL(amountCents)} registrado.` +
       (remaining !== undefined ? ` Saldo restante: ${formatBRL(remaining)}.` : "")
   );
+}
+
+export async function cancelReceivableAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const receivableId = fdString(formData, "receivableId");
+  const reason = fdString(formData, "reason");
+
+  // Reabre o form inline de exclusão na mesma linha, preservando o motivo.
+  function failCancel(message: string): never {
+    const qs = new URLSearchParams({ excluir: receivableId, erro: message });
+    if (reason) qs.set("f_motivo", reason);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!receivableId) fail("Título não identificado para cancelamento.");
+  // reason é obrigatório na skill; exigimos aqui para dar mensagem clara e não
+  // inventar texto padrão (que esvaziaria a auditoria).
+  if (!reason) failCancel("Informe o motivo do cancelamento.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "cancel_receivable",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: { receivableId, reason },
+    });
+  } catch (error) {
+    failCancel(errorMessage(error));
+  }
+
+  if (response.status === "failed") failCancel(flowErrorMessage(response));
+
+  ok("Título cancelado e mantido no histórico para auditoria.");
 }

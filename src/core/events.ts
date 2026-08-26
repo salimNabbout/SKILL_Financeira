@@ -21,6 +21,7 @@ export type EventType =
   | "receivable.created"
   | "receivable.updated"
   | "receivable.received"
+  | "receivable.canceled"
   | "receivable.overdue_detected"
   | "invoice.created"
   | "invoice.issued"
