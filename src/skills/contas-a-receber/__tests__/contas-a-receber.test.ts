@@ -10,6 +10,7 @@ import type {
 import { runSkill } from "@/core/skill";
 import {
   contasAReceberSkill,
+  type CancelReceivableData,
   type CreateReceivableData,
   type GenerateRecurringData,
   type IssueChargeData,
@@ -881,5 +882,118 @@ describe("contas_a_receber — generate_recurring", () => {
 
     expect((res.data as GenerateRecurringData).generated).toHaveLength(0);
     expect(env.db.receivables).toHaveLength(0);
+  });
+});
+
+describe("contas_a_receber / cancel_receivable", () => {
+  it("cancela título em aberto e registra auditoria com before, after e motivo", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const r = seedReceivable(env, { status: "open", receivedCents: 0 });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "cancel_receivable",
+      receivableId: r.id,
+      reason: "Venda cancelada pelo cliente",
+    });
+
+    expect(res.status).toBe("success");
+    const data = res.data as CancelReceivableData;
+    expect(data.receivable.status).toBe("canceled");
+    expect(data.receivable.canceledAt).toBe(env.clock.now().toISOString());
+    expect(env.db.receivables.find((x) => x.id === r.id)?.status).toBe("canceled");
+    expect(env.db.events.some((e) => e.type === "receivable.canceled")).toBe(true);
+    const audit = env.db.auditRecords.find(
+      (a) => a.action === "receivable.canceled" && a.entityId === r.id
+    );
+    expect(audit?.before).toBeTruthy();
+    expect(audit?.after).toBeTruthy();
+    expect((audit?.after as { cancelReason?: string }).cancelReason).toBe(
+      "Venda cancelada pelo cliente"
+    );
+  });
+
+  it("bloqueia cancelamento com recebimento parcial (receivedCents > 0)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const r = seedReceivable(env, { status: "partially_received", receivedCents: 40_000 });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "cancel_receivable",
+      receivableId: r.id,
+      reason: "tentativa",
+    });
+
+    expect(res.status).toBe("error");
+    expect(env.db.receivables.find((x) => x.id === r.id)?.status).toBe("partially_received");
+  });
+
+  it("bloqueia título originado de nota fiscal (cancele pela fatura)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const r = seedReceivable(env, { status: "open", receivedCents: 0, invoiceId: "inv_1" });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "cancel_receivable",
+      receivableId: r.id,
+      reason: "tentativa",
+    });
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toMatch(/nota fiscal|fatura/i);
+    expect(env.db.receivables.find((x) => x.id === r.id)?.status).toBe("open");
+  });
+
+  it("é idempotente ao cancelar duas vezes (sem erro)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const r = seedReceivable(env, { status: "open", receivedCents: 0 });
+
+    const first = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "cancel_receivable",
+      receivableId: r.id,
+      reason: "primeira",
+    });
+    expect(first.status).toBe("success");
+
+    const second = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "cancel_receivable",
+      receivableId: r.id,
+      reason: "segunda",
+    });
+    expect(second.status).toBe("success");
+    // Uma única auditoria de cancelamento (a 2ª execução não regrava).
+    expect(
+      env.db.auditRecords.filter((a) => a.action === "receivable.canceled" && a.entityId === r.id)
+    ).toHaveLength(1);
+  });
+
+  it("rejeita motivo vazio (schema)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const r = seedReceivable(env, { status: "open" });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "cancel_receivable",
+      receivableId: r.id,
+      reason: "",
+    });
+    expect(res.status).toBe("error");
+    expect(env.db.receivables.find((x) => x.id === r.id)?.status).toBe("open");
+  });
+
+  it("recusa cancelamento por ator sem permissão (analista)", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const r = seedReceivable(env, { status: "open" });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("analyst")), {
+      action: "cancel_receivable",
+      receivableId: r.id,
+      reason: "sem permissão",
+    });
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("permission_denied");
+    expect(env.db.receivables.find((x) => x.id === r.id)?.status).toBe("open");
   });
 });

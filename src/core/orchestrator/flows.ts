@@ -496,11 +496,34 @@ const cancelPayableFlow: FlowDefinition = {
   ],
 };
 
+/**
+ * Cancelamento (lógico) de título a receber. Fluxo de um único passo — a skill
+ * exige permissão receivable.cancel, valida o status (só open, sem recebimento),
+ * bloqueia títulos de nota fiscal (cancele pela fatura), cancela as mensagens de
+ * cobrança pendentes vinculadas e registra a trilha. NÃO há exclusão física.
+ * payload: { receivableId, reason }
+ */
+const cancelReceivableFlow: FlowDefinition = {
+  name: "cancel_receivable",
+  description:
+    "Cancela (logicamente) um título a receber em aberto e sem recebimento, cancelando junto as mensagens de cobrança pendentes, e mantém o registro no histórico para auditoria.",
+  requiredPermission: "receivable.cancel",
+  steps: [
+    {
+      id: "ar_cancel",
+      skill: "contas_a_receber",
+      description: "Cancelar título a receber (com bloqueios de segurança)",
+      buildInput: (f) => ({ action: "cancel_receivable", ...f.payload }),
+    },
+  ],
+};
+
 export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
   updatePayable,
   cancelPayableFlow,
+  cancelReceivableFlow,
   bankStatementImport,
   bankSync,
   customerInvoiceIntake,

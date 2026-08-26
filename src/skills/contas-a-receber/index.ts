@@ -17,6 +17,7 @@ import {
   receivableRemainingCents,
   splitInstallments,
 } from "@/core/money";
+import { hasPermission } from "@/core/auth";
 import type { Receipt, Receivable } from "@/core/entities";
 import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import type { ChargeResult } from "@/core/integrations";
@@ -87,6 +88,12 @@ const issueChargeSchema = z.object({
   kind: z.enum(["pix", "boleto"]),
 });
 
+const cancelReceivableSchema = z.object({
+  action: z.literal("cancel_receivable"),
+  receivableId: z.string().min(1),
+  reason: z.string().min(1),
+});
+
 const generateRecurringSchema = z.object({
   action: z.literal("generate_recurring"),
 });
@@ -98,6 +105,7 @@ export const contasAReceberInputSchema = z.discriminatedUnion("action", [
   registerReceiptSchema,
   projectionSchema,
   issueChargeSchema,
+  cancelReceivableSchema,
   generateRecurringSchema,
 ]);
 
@@ -108,6 +116,7 @@ export type CreateFromInvoiceInput = z.infer<typeof createFromInvoiceSchema>;
 export type ListOverdueInput = z.infer<typeof listOverdueSchema>;
 export type RegisterReceiptInput = z.infer<typeof registerReceiptSchema>;
 export type ProjectionInput = z.infer<typeof projectionSchema>;
+export type CancelReceivableInput = z.infer<typeof cancelReceivableSchema>;
 
 // ---------------------------------------------------------------------------
 // Saída
@@ -175,12 +184,18 @@ export interface GenerateRecurringData {
   generated: Array<{ templateId: string; receivableId: string; dueDate: string }>;
 }
 
+export interface CancelReceivableData {
+  receivable: Receivable;
+  reason: string;
+}
+
 export type ContasAReceberData =
   | CreateReceivableData
   | ListOverdueData
   | RegisterReceiptData
   | ProjectionData
   | IssueChargeData
+  | CancelReceivableData
   | GenerateRecurringData
   | null;
 
@@ -781,7 +796,12 @@ export const contasAReceberSkill: SkillDefinition<ContasAReceberInput, ContasARe
     "Garantir visibilidade e controle das entradas: criar títulos idempotentes (inclusive a partir de faturas), detectar atrasos com encargos calculados, registrar baixas e projetar recebimentos.",
   inputSchema: contasAReceberInputSchema,
   consumes: ["invoice.issued"],
-  publishes: ["receivable.created", "receivable.received", "receivable.overdue_detected"],
+  publishes: [
+    "receivable.created",
+    "receivable.received",
+    "receivable.canceled",
+    "receivable.overdue_detected",
+  ],
   dataSources: ["receivables", "customers", "invoices", "receipts"],
   async execute(ctx, input) {
     switch (input.action) {
@@ -797,6 +817,8 @@ export const contasAReceberSkill: SkillDefinition<ContasAReceberInput, ContasARe
         return projection(ctx, input);
       case "issue_charge":
         return issueCharge(ctx, input);
+      case "cancel_receivable":
+        return cancelReceivable(ctx, input);
       case "generate_recurring":
         return generateRecurring(ctx);
     }
@@ -926,5 +948,130 @@ async function issueCharge(
       confidence: 1.0,
       dataSources: ["receivables", "customers", "integration:charges"],
     }
+  );
+}
+
+/**
+ * Cancela (logicamente) um título a receber. NÃO há exclusão física — o
+ * registro permanece no histórico para auditoria. Só cancela em `open` e sem
+ * recebimento (receivedCents === 0). Título originado de nota fiscal
+ * (invoiceId) é BLOQUEADO: o cancelamento deve passar pela fatura
+ * (faturamento.cancel_invoice cancela a fatura E os títulos, mantendo a
+ * consistência fiscal). Mensagens de cobrança ainda não enviadas
+ * (awaiting_approval/approved) são canceladas junto. A cobrança emitida por
+ * issue_charge é mock (sem PSP/banco) — nada real a revogar.
+ */
+async function cancelReceivable(
+  ctx: SkillContext,
+  input: CancelReceivableInput
+): Promise<SkillResult<ContasAReceberData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "receivable.cancel")) {
+      return errorResult(
+        SKILL_NAME,
+        ctx,
+        "permission_denied",
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode cancelar títulos a receber.`
+      );
+    }
+  }
+
+  const receivable = await ctx.repos.receivables.getById(ctx.companyId, input.receivableId);
+  if (!receivable) {
+    return errorResult(
+      SKILL_NAME,
+      ctx,
+      "not_found",
+      `Título a receber não encontrado: ${input.receivableId}.`
+    );
+  }
+
+  // Idempotência: já cancelado não gera erro nem novo efeito.
+  if (receivable.status === "canceled") {
+    return makeResult(
+      SKILL_NAME,
+      ctx,
+      { receivable, reason: input.reason },
+      {
+        assumptions: ["Título já estava cancelado; nenhuma alteração adicional foi feita."],
+        dataSources: ["receivables"],
+      }
+    );
+  }
+
+  // Só cancela em aberto e sem recebimento (partially_received tem receivedCents > 0).
+  if (receivable.status !== "open" || receivable.receivedCents > 0) {
+    return errorResult(
+      SKILL_NAME,
+      ctx,
+      "invalid_state",
+      `Título ${receivable.id} não pode ser cancelado (status: ${receivable.status}, recebido: ${formatBRL(receivable.receivedCents)}). Estorne o recebimento antes, se houver.`
+    );
+  }
+
+  // Origem em nota fiscal: cancelar isolado divergiria da fatura emitida.
+  if (receivable.invoiceId) {
+    return errorResult(
+      SKILL_NAME,
+      ctx,
+      "invoice_linked",
+      `Título ${receivable.id} origina-se de uma nota fiscal emitida (fatura ${receivable.invoiceId}). Cancele pela fatura — o cancelamento da fatura cancela os títulos vinculados e mantém a consistência fiscal.`
+    );
+  }
+
+  const nowIso = ctx.clock.now().toISOString();
+  const assumptions: string[] = [];
+
+  // Mensagens de cobrança ainda NÃO enviadas são canceladas junto (as enviadas
+  // — "sent" — permanecem, pois já saíram). Não altera a skill de cobrança:
+  // apenas muda o status via repositório, com auditoria.
+  const pendingMessages = (
+    await ctx.repos.collectionMessages.listByStatus(ctx.companyId, ["awaiting_approval", "approved"])
+  ).filter((m) => m.receivableId === receivable.id);
+  for (const message of pendingMessages) {
+    const before = { ...message };
+    message.status = "canceled";
+    message.updatedAt = nowIso;
+    await ctx.repos.collectionMessages.update(message);
+    await ctx.audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "collection.message_canceled",
+      entityType: "collection_message",
+      entityId: message.id,
+      before,
+      after: message,
+      correlationId: ctx.correlationId,
+    });
+    assumptions.push(`Mensagem de cobrança pendente ${message.id} cancelada junto com o título.`);
+  }
+
+  const before = { ...receivable };
+  receivable.status = "canceled";
+  receivable.canceledAt = nowIso;
+  receivable.updatedAt = nowIso;
+  await ctx.repos.receivables.update(receivable);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receivable.canceled",
+    entityType: "receivable",
+    entityId: receivable.id,
+    before,
+    after: { ...receivable, cancelReason: input.reason },
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "receivable.canceled",
+    payload: { receivableId: receivable.id, reason: input.reason },
+    source: SKILL_NAME,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL_NAME,
+    ctx,
+    { receivable, reason: input.reason },
+    { assumptions, confidence: 1.0, dataSources: ["receivables", "collection_messages"] }
   );
 }
