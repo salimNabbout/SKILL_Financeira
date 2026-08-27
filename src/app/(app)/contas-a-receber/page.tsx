@@ -32,6 +32,9 @@ import {
   registerReceiptAction,
 } from "./actions";
 import { MoneyInput } from "@/components/money-input";
+import { filtersToQuery } from "./_lib/filters";
+// Mesmos três ícones da barra de Contas a Pagar — um arquivo só para os dois.
+import { IconeExportar, IconeImportar, IconeImprimir } from "@/app/(app)/contas-a-pagar/_lib/icons";
 
 // Situações DERIVADAS usadas como filtro (mesmo desenho de /contas-a-pagar).
 // Cada uma vira um recorte de status + intervalo de vencimento aplicado NO BANCO
@@ -105,6 +108,7 @@ export default async function ContasAReceberPage({
 }) {
   const sp = await searchParams;
   const { status, p, ok, erro, ano, mes, cliente, de, ate } = sp;
+  const queryFiltros = filtersToQuery(sp);
   const rcErroId = sp.rc_id?.trim() || undefined; // linha cujo recebimento falhou
   const excluir = sp.excluir?.trim() || undefined; // linha em confirmação de cancelamento
   // Erro de datas liga o destaque de Emissão/Vencimento no form de novo título.
@@ -274,6 +278,54 @@ export default async function ContasAReceberPage({
         subtitle="Títulos de clientes, vencimentos, atrasos e registro de recebimentos."
       />
       <Flash ok={ok} erro={erro} />
+
+      {/* Barra de ações da listagem. Os links levam os filtros ativos na URL,
+          então o arquivo gerado corresponde ao recorte que está na tela. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Link
+          href="/contas-a-receber/importar"
+          title="Importar títulos a partir de um arquivo CSV"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--surface-2)]"
+        >
+          <IconeImportar />
+          Importar
+        </Link>
+
+        {/* <details> em vez de menu com JavaScript: a página segue Server
+            Component e o dropdown funciona sem hidratação. */}
+        <details className="relative">
+          <summary
+            title="Exportar todos os títulos filtrados (todas as páginas)"
+            className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--surface-2)]"
+          >
+            <IconeExportar />
+            Exportar
+          </summary>
+          <div className="absolute left-0 z-10 mt-1 min-w-44 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1 shadow-lg">
+            <a
+              href={`/contas-a-receber/export?format=csv${queryFiltros}`}
+              className="block rounded px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+            >
+              CSV (Excel)
+            </a>
+            <a
+              href={`/contas-a-receber/export?format=pdf${queryFiltros}`}
+              className="block rounded px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+            >
+              PDF (paisagem)
+            </a>
+          </div>
+        </details>
+
+        <Link
+          href={`/contas-a-receber/imprimir?x=1${queryFiltros}`}
+          title="Abrir a visão de impressão dos títulos filtrados"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--surface-2)]"
+        >
+          <IconeImprimir />
+          Imprimir
+        </Link>
+      </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
         {SITUACAO_FILTERS.map((f) => (
