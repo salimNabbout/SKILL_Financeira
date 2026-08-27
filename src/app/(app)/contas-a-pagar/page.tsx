@@ -10,6 +10,8 @@ import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { MoneyInput } from "@/components/money-input";
 import { costCentersForScope } from "@/app/(app)/cadastros/_lib/cost-centers";
+import { filtersToQuery } from "./_lib/filters";
+import { IconeExportar, IconeImportar, IconeImprimir } from "./_lib/icons";
 import { schedulePaymentAction, updatePayableAction } from "./actions";
 import { NewPayableForm, type SupplierOption } from "./_lib/new-payable-form";
 
@@ -131,6 +133,7 @@ export default async function ContasAPagarPage({
   // Um listAll + Map: getById dentro do laço da tabela faria N consultas.
   const costCenterCode = new Map(costCenters.map((c) => [c.id, c.code]));
   const rows = page.items;
+  const queryFiltros = filtersToQuery(sp);
 
   const supplierOptions: SupplierOption[] = suppliers
     .filter((s) => s.active)
@@ -168,6 +171,54 @@ export default async function ContasAPagarPage({
         subtitle="Títulos de fornecedores, vencimentos e agendamento de pagamentos (sempre com aprovação humana)."
       />
       <Flash ok={ok} erro={erro} />
+
+      {/* Barra de ações da listagem. Os links levam os filtros ativos na URL,
+          então o arquivo gerado corresponde exatamente ao que está na tela. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Link
+          href={`/contas-a-pagar/importar`}
+          title="Importar títulos a partir de um arquivo CSV"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--surface-2)]"
+        >
+          <IconeImportar />
+          Importar
+        </Link>
+
+        {/* <details> em vez de menu com JavaScript: a página segue Server
+            Component e o dropdown funciona sem hidratação. */}
+        <details className="relative">
+          <summary
+            title="Exportar todos os títulos filtrados (todas as páginas)"
+            className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--surface-2)]"
+          >
+            <IconeExportar />
+            Exportar
+          </summary>
+          <div className="absolute left-0 z-10 mt-1 min-w-44 rounded-lg border border-[var(--line)] bg-[var(--surface)] p-1 shadow-lg">
+            <a
+              href={`/contas-a-pagar/export?format=csv${queryFiltros}`}
+              className="block rounded px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+            >
+              CSV (Excel)
+            </a>
+            <a
+              href={`/contas-a-pagar/export?format=pdf${queryFiltros}`}
+              className="block rounded px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+            >
+              PDF (paisagem)
+            </a>
+          </div>
+        </details>
+
+        <Link
+          href={`/contas-a-pagar/imprimir?x=1${queryFiltros}`}
+          title="Abrir a visão de impressão dos títulos filtrados"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm text-[var(--ink)] hover:bg-[var(--surface-2)]"
+        >
+          <IconeImprimir />
+          Imprimir
+        </Link>
+      </div>
 
       <Card
         // Com erro, o card ganha contorno de atenção: o usuário precisa ver de
