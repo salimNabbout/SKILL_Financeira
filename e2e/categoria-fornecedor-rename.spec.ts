@@ -46,9 +46,12 @@ test("renomear categoria de fornecedor propaga para quem a usava", async ({ page
   await page.fill(`input[aria-label="Novo nome da categoria ${nomeOriginal}"]`, nomeNovo);
   await page.getByRole("button", { name: "Salvar" }).click();
 
-  // A contagem de propagados vai na mensagem de sucesso e e coberta pelo teste
-  // unitario; aqui o que interessa e o efeito observavel: a lista ja mostra o
-  // nome novo.
+  // A mensagem de SUCESSO precisa aparecer (e nao "NEXT_REDIRECT"): ok() chama
+  // redirect(), que lanca NEXT_REDIRECT; se o ok() ficar dentro do try, o catch
+  // o captura e exibe a excecao interna do Next como se fosse erro do usuario.
+  await expect(page.locator("p.border-emerald-200")).toContainText(
+    "cadastro(s) atualizado(s)"
+  );
   await expect(page.getByRole("cell", { name: nomeNovo })).toBeVisible();
 
   // 4. O fornecedor acompanhou o novo nome — não ficou órfão.
