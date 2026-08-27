@@ -12,7 +12,14 @@ import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib";
 export interface PdfReportSection {
   heading: string;
   lines?: string[];
-  table?: { headers: string[]; rows: string[][] };
+  table?: {
+    headers: string[];
+    rows: string[][];
+    /** Índice da coluna de status, para colorir o texto conforme a situação. */
+    statusColumnIndex?: number;
+    /** Linha final destacada (totais), fora da zebra. */
+    totalsRow?: string[];
+  };
 }
 
 export interface PdfReportOptions {
@@ -21,11 +28,19 @@ export interface PdfReportOptions {
   sections: PdfReportSection[];
   /** Data/hora de geração exibida no cabeçalho; default: instante atual. */
   generatedAtLabel?: string;
+  /** Retrato por padrão — os relatórios existentes seguem inalterados. */
+  orientation?: "portrait" | "landscape";
+  /** Filtros aplicados, exibidos no cabeçalho: sem isso o relatório impresso
+   *  não diz a que recorte se refere. */
+  filtersLabel?: string;
 }
 
 // A4 em pontos
-const PAGE_WIDTH = 595.28;
-const PAGE_HEIGHT = 841.89;
+// A4 em pontos (retrato). Paisagem é a mesma folha com os lados trocados.
+const A4_SHORT = 595.28;
+const A4_LONG = 841.89;
+const PAGE_WIDTH = A4_SHORT;
+const PAGE_HEIGHT = A4_LONG;
 const MARGIN = 50;
 const USABLE_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
@@ -42,6 +57,23 @@ const GRAY = rgb(0.45, 0.45, 0.45);
 const BLACK = rgb(0.1, 0.1, 0.1);
 const ZEBRA = rgb(0.94, 0.94, 0.94);
 const RULE = rgb(0.6, 0.6, 0.6);
+// Semânticas do design system (--crit, --ok, --brand) convertidas para RGB.
+const CRIT = rgb(0.70, 0.15, 0.12);
+const OK = rgb(0.10, 0.50, 0.31);
+const BRAND = rgb(0.06, 0.30, 0.51);
+
+/**
+ * Cor do texto de status. Atrasado/cancelado em vermelho, pago em verde, o
+ * que ainda vai vencer em azul — a mesma leitura da tela, para quem recebe o
+ * PDF impresso não precisar decorar rótulo.
+ */
+function statusColor(label: string): ReturnType<typeof rgb> {
+  const t = label.toLowerCase();
+  if (t.includes("atras") || t.includes("vencid") || t.includes("cancel")) return CRIT;
+  if (t.includes("pago") || t.includes("recebid") || t.includes("execut")) return OK;
+  if (t.includes("aberto") || t.includes("agendad") || t.includes("vencer")) return BRAND;
+  return BLACK;
+}
 
 // Codepoints extras do WinAnsi fora de Latin-1 (faixa 0x80–0x9F remapeada).
 const WINANSI_EXTRAS = new Set<number>([
@@ -127,11 +159,15 @@ interface Cursor {
   y: number;
   regular: PDFFont;
   bold: PDFFont;
+  /** Dimensões da página em uso — mudam com a orientação. */
+  pageWidth: number;
+  pageHeight: number;
+  usableWidth: number;
 }
 
 function newPage(c: Cursor): void {
-  c.page = c.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  c.y = PAGE_HEIGHT - MARGIN;
+  c.page = c.doc.addPage([c.pageWidth, c.pageHeight]);
+  c.y = c.pageHeight - MARGIN;
 }
 
 /** Garante espaço vertical; ao quebrar página, repete o heading com "(continuação)". */
@@ -153,10 +189,15 @@ function drawHeading(c: Cursor, heading: string): void {
 function drawTable(
   c: Cursor,
   heading: string,
-  table: { headers: string[]; rows: string[][] }
+  table: {
+    headers: string[];
+    rows: string[][];
+    statusColumnIndex?: number;
+    totalsRow?: string[];
+  }
 ): void {
   const colCount = Math.max(1, table.headers.length);
-  const colWidth = USABLE_WIDTH / colCount;
+  const colWidth = c.usableWidth / colCount;
   const cellMaxWidth = colWidth - 2 * CELL_PADDING;
   const rowHeight = TABLE_SIZE + 2 * CELL_PADDING;
 
@@ -177,7 +218,7 @@ function drawTable(
     // Linha separadora sob o cabeçalho
     c.page.drawLine({
       start: { x: MARGIN, y: c.y },
-      end: { x: MARGIN + USABLE_WIDTH, y: c.y },
+      end: { x: MARGIN + c.usableWidth, y: c.y },
       thickness: 0.8,
       color: RULE,
     });
@@ -197,7 +238,7 @@ function drawTable(
       c.page.drawRectangle({
         x: MARGIN,
         y: top - rowHeight,
-        width: USABLE_WIDTH,
+        width: c.usableWidth,
         height: rowHeight,
         color: ZEBRA,
       });
@@ -210,26 +251,80 @@ function drawTable(
         y: top - CELL_PADDING - TABLE_SIZE,
         size: TABLE_SIZE,
         font: c.regular,
-        color: BLACK,
+        color: i === table.statusColumnIndex ? statusColor(raw) : BLACK,
       });
     }
     c.y = top - rowHeight;
   });
+
+  if (table.totalsRow) {
+    if (c.y - rowHeight < MARGIN) {
+      newPage(c);
+      drawHeaderRow();
+    }
+    const top = c.y;
+    c.page.drawLine({
+      start: { x: MARGIN, y: top },
+      end: { x: MARGIN + c.usableWidth, y: top },
+      thickness: 0.8,
+      color: RULE,
+    });
+    for (let i = 0; i < colCount; i++) {
+      const raw = table.totalsRow[i] ?? "";
+      if (!raw) continue;
+      const text = truncateToWidth(sanitizeWinAnsi(raw), c.bold, TABLE_SIZE, cellMaxWidth);
+      c.page.drawText(text, {
+        x: MARGIN + i * colWidth + CELL_PADDING,
+        y: top - CELL_PADDING - TABLE_SIZE,
+        size: TABLE_SIZE,
+        font: c.bold,
+        color: BLACK,
+      });
+    }
+    c.y = top - rowHeight;
+  }
+
   c.y -= 8;
 }
 
+/** Rodapé "Página X de Y" em todas as páginas, escrito no fim, quando o total
+ *  já é conhecido. */
+function drawPageFooters(doc: PDFDocument, font: PDFFont): void {
+  const pages = doc.getPages();
+  pages.forEach((page, i) => {
+    const texto = `Página ${i + 1} de ${pages.length}`;
+    const largura = font.widthOfTextAtSize(texto, META_SIZE);
+    page.drawText(texto, {
+      x: page.getWidth() - MARGIN - largura,
+      y: MARGIN / 2,
+      size: META_SIZE,
+      font,
+      color: GRAY,
+    });
+  });
+}
+
 /** Monta um relatório PDF A4 com título, seções de texto e tabelas simples. */
-export async function buildPdfReport(opts: {
-  title: string;
-  subtitle?: string;
-  sections: Array<{ heading: string; lines?: string[]; table?: { headers: string[]; rows: string[][] } }>;
-  generatedAtLabel?: string;
-}): Promise<Uint8Array> {
+export async function buildPdfReport(opts: PdfReportOptions): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
 
-  const c: Cursor = { doc, page: doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]), y: PAGE_HEIGHT - MARGIN, regular, bold };
+  const paisagem = opts.orientation === "landscape";
+  const pageWidth = paisagem ? A4_LONG : A4_SHORT;
+  const pageHeight = paisagem ? A4_SHORT : A4_LONG;
+  const usableWidth = pageWidth - 2 * MARGIN;
+
+  const c: Cursor = {
+    doc,
+    page: doc.addPage([pageWidth, pageHeight]),
+    y: pageHeight - MARGIN,
+    regular,
+    bold,
+    pageWidth,
+    pageHeight,
+    usableWidth,
+  };
 
   // Cabeçalho: título grande, subtítulo cinza, data de geração
   c.y -= TITLE_SIZE;
@@ -267,10 +362,20 @@ export async function buildPdfReport(opts: {
     font: regular,
     color: GRAY,
   });
+  if (opts.filtersLabel) {
+    c.y -= META_SIZE + 2;
+    c.page.drawText(sanitizeWinAnsi(opts.filtersLabel), {
+      x: MARGIN,
+      y: c.y,
+      size: META_SIZE,
+      font: regular,
+      color: GRAY,
+    });
+  }
   c.y -= 6;
   c.page.drawLine({
     start: { x: MARGIN, y: c.y },
-    end: { x: MARGIN + USABLE_WIDTH, y: c.y },
+    end: { x: MARGIN + c.usableWidth, y: c.y },
     thickness: 1,
     color: RULE,
   });
@@ -281,7 +386,7 @@ export async function buildPdfReport(opts: {
     drawHeading(c, section.heading);
 
     for (const line of section.lines ?? []) {
-      const wrapped = wrapText(sanitizeWinAnsi(line), regular, BODY_SIZE, USABLE_WIDTH);
+      const wrapped = wrapText(sanitizeWinAnsi(line), regular, BODY_SIZE, c.usableWidth);
       for (const piece of wrapped) {
         ensureSpace(c, BODY_SIZE + LINE_GAP, section.heading);
         c.y -= BODY_SIZE;
@@ -297,5 +402,6 @@ export async function buildPdfReport(opts: {
     c.y -= 8;
   }
 
+  drawPageFooters(doc, regular);
   return doc.save();
 }
