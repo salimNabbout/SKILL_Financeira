@@ -242,10 +242,11 @@ export default async function ContasAPagarPage({
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
   // Centros de custo ATIVOS, ordenados por código (pt-BR). Exibição "CÓDIGO — Nome";
-  // o value é o id (nunca o código). CostCenter não tem `scope` — listamos todos os
-  // ativos (ver relatório).
+  // Centros ATIVOS cujo destino serve a este lado. "both" atende os dois — é
+  // o valor de quem foi cadastrado antes do campo existir, então nada some
+  // sem alguém ter escolhido.
   const costCenterOptions = costCenters
-    .filter((c) => c.active)
+    .filter((c) => c.active && (c.scope === "payable" || c.scope === "both"))
     .sort((a, b) => a.code.localeCompare(b.code, "pt-BR"))
     .map((c) => ({ id: c.id, label: `${c.code} — ${c.name}` }));
 

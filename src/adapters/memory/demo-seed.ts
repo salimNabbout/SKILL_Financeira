@@ -145,7 +145,14 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
     ["cc_adm", "CC-03", "Administrativo"],
   ];
   for (const [id, code, name] of costCenters) {
-    await repos.costCenters.create({ id, companyId: DEMO_COMPANY_ID, code, name, active: true });
+    await repos.costCenters.create({
+      id,
+      companyId: DEMO_COMPANY_ID,
+      code,
+      name,
+      active: true,
+      scope: "both",
+    });
   }
 
   const chart: Array<[string, string, string, string | undefined]> = [

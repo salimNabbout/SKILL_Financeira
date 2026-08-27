@@ -621,6 +621,9 @@ const costCenterToDomain = (r: DbCostCenter): CostCenter => ({
   code: r.code,
   name: r.name,
   active: r.active,
+  // Coluna criada com default "both" (migração 0015): linhas anteriores já vêm
+  // preenchidas, e o fallback cobre bancos ainda não migrados.
+  scope: (r.scope as CostCenter["scope"]) ?? "both",
 });
 const costCenterToDb = (e: CostCenter): Prisma.CostCenterUncheckedCreateInput => ({
   id: e.id,
@@ -628,6 +631,7 @@ const costCenterToDb = (e: CostCenter): Prisma.CostCenterUncheckedCreateInput =>
   code: e.code,
   name: e.name,
   active: e.active,
+  scope: e.scope,
 });
 
 const chartAccountToDomain = (r: DbChartAccount): ChartAccount => ({

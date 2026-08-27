@@ -6,6 +6,7 @@ import {
   countCostCenterLinks,
   setCostCenterActive,
   updateCostCenterFields,
+  countLinkedAgainstScope,
 } from "../_lib/update";
 
 function seedCostCenter(
@@ -18,6 +19,7 @@ function seedCostCenter(
     code: "ADM",
     name: "Administrativo",
     active: true,
+    scope: "both",
     ...over,
   };
   env.db.costCenters.push(cc);
@@ -171,5 +173,64 @@ describe("permissão do cadastro de centros de custo", () => {
     // A action exige master_data.manage; garante a regra usada para ocultar botões.
     expect(hasPermission("viewer", "master_data.manage")).toBe(false);
     expect(hasPermission("finance_analyst", "master_data.manage")).toBe(true);
+  });
+});
+
+describe("destino do centro de custo (scope)", () => {
+  it("mantém o destino atual quando o campo não é enviado", async () => {
+    const env = createTestEnv();
+    seedCostCenter(env, { scope: "receivable" });
+    const { after } = await updateCostCenterFields(env, env.company.id, "cc_1", {
+      code: "ADM",
+      name: "Administrativo",
+    });
+    expect(after.scope).toBe("receivable");
+  });
+
+  it("altera o destino quando enviado", async () => {
+    const env = createTestEnv();
+    seedCostCenter(env, { scope: "both" });
+    const { before, after } = await updateCostCenterFields(env, env.company.id, "cc_1", {
+      code: "ADM",
+      name: "Administrativo",
+      scope: "payable",
+    });
+    expect(before.scope).toBe("both");
+    expect(after.scope).toBe("payable");
+  });
+
+  it("conta os lançamentos do lado oposto sem desvinculá-los", async () => {
+    const env = createTestEnv();
+    seedCostCenter(env, { scope: "both" });
+    env.db.receivables.push({
+      id: "rec_1",
+      companyId: env.company.id,
+      customerId: "cus_1",
+      description: "Venda",
+      issueDate: "2026-06-01",
+      dueDate: "2026-07-01",
+      amountCents: 1000,
+      receivedCents: 0,
+      currency: "BRL",
+      status: "open",
+      costCenterId: "cc_1",
+      installmentNumber: 1,
+      installmentCount: 1,
+      originKey: "k1",
+      createdBy: "usr",
+      createdAt: "",
+      updatedAt: "",
+    });
+
+    const n = await countLinkedAgainstScope(env, env.company.id, "cc_1", "payable");
+    expect(n).toBe(1);
+    // O título continua vinculado: o destino filtra só lançamentos novos.
+    expect(env.db.receivables[0].costCenterId).toBe("cc_1");
+  });
+
+  it('destino "both" não gera aviso', async () => {
+    const env = createTestEnv();
+    seedCostCenter(env);
+    expect(await countLinkedAgainstScope(env, env.company.id, "cc_1", "both")).toBe(0);
   });
 });

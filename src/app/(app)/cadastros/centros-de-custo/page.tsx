@@ -1,6 +1,24 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
+
+/** Rótulo do destino do centro de custo (campo `scope`). */
+const DESTINO: Record<string, string> = {
+  payable: "Contas a pagar",
+  receivable: "Contas a receber",
+  both: "Ambos",
+};
+
+/** Opções do seletor de destino, na mesma ordem nos dois formulários. */
+function OpcoesDestino() {
+  return (
+    <>
+      <option value="payable">Contas a pagar</option>
+      <option value="receivable">Contas a receber</option>
+      <option value="both">Ambos</option>
+    </>
+  );
+}
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { hasPermission } from "@/core/auth";
@@ -49,7 +67,7 @@ export default async function CentrosDeCustoPage({
         {rows.length === 0 ? (
           <EmptyState message="Nenhum centro de custo cadastrado." />
         ) : (
-          <Table headers={["Código", "Nome", "Situação", ...(canManage ? ["Ações"] : [])]}>
+          <Table headers={["Código", "Nome", "Destino", "Situação", ...(canManage ? ["Ações"] : [])]}>
             {rows.map((c) => {
               const editing = editar === c.id;
               const excluding = excluir === c.id;
@@ -60,6 +78,11 @@ export default async function CentrosDeCustoPage({
                       <span className="tabular">{c.code}</span>
                     </Td>
                     <Td>{c.name}</Td>
+                    <Td>
+                      <Badge tone={c.scope === "both" ? "brand" : "neutral"}>
+                        {DESTINO[c.scope] ?? c.scope}
+                      </Badge>
+                    </Td>
                     <Td>
                       <Badge tone={c.active ? "ok" : "neutral"}>{c.active ? "Ativo" : "Inativo"}</Badge>
                     </Td>
@@ -116,6 +139,11 @@ export default async function CentrosDeCustoPage({
                           </Field>
                           <Field label="Nome">
                             <input name="name" required defaultValue={c.name} className={inputClass} />
+                          </Field>
+                          <Field label="Destino">
+                            <select name="scope" defaultValue={c.scope} className={inputClass}>
+                              <OpcoesDestino />
+                            </select>
                           </Field>
                           <div className="flex items-end gap-2">
                             <Button variant="warn" type="submit">
@@ -177,6 +205,11 @@ export default async function CentrosDeCustoPage({
             </Field>
             <Field label="Nome">
               <input name="name" required className={inputClass} placeholder="Ex.: Comercial" />
+            </Field>
+            <Field label="Destino">
+              <select name="scope" defaultValue="both" className={inputClass}>
+                <OpcoesDestino />
+              </select>
             </Field>
             <div className="flex items-end">
               <Button>Cadastrar</Button>

@@ -42,6 +42,7 @@ function seedCostCenter(env: TestEnv, over: Partial<CostCenter> = {}): CostCente
     code: `CC-${seq}`,
     name: `Centro ${seq}`,
     active: true,
+    scope: "both",
     ...over,
   };
   env.db.costCenters.push(costCenter);

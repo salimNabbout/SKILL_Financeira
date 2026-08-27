@@ -5,14 +5,23 @@ import { redirect } from "next/navigation";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { hasPermission } from "@/core/auth";
-import type { CostCenter } from "@/core/entities";
+import type { CostCenter, CostCenterScope } from "@/core/entities";
 import { errorMessage, fdString } from "@/app/(app)/cadastros/_lib/form-utils";
 import {
   setCostCenterActive,
   updateCostCenterFields,
+  countLinkedAgainstScope,
 } from "./_lib/update";
 
 const PATH = "/cadastros/centros-de-custo";
+
+const SCOPES: CostCenterScope[] = ["payable", "receivable", "both"];
+
+/** Lê o destino do formulário; valor fora da lista vira "both". */
+function lerScope(formData: FormData): CostCenterScope {
+  const bruto = fdString(formData, "scope");
+  return SCOPES.includes(bruto as CostCenterScope) ? (bruto as CostCenterScope) : "both";
+}
 
 function fail(message: string): never {
   redirect(`${PATH}?erro=${encodeURIComponent(message)}`);
@@ -34,6 +43,7 @@ export async function createCostCenterAction(formData: FormData): Promise<void> 
   const code = fdString(formData, "code");
   const name = fdString(formData, "name");
   if (!code || !name) fail("Informe código e nome do centro de custo.");
+  const scope = lerScope(formData);
 
   let existing: CostCenter | undefined;
   try {
@@ -54,6 +64,7 @@ export async function createCostCenterAction(formData: FormData): Promise<void> 
       code,
       name,
       active: true,
+      scope,
     };
     await container.repos.costCenters.create(costCenter);
     await container.audit.record(companyId, {
@@ -82,10 +93,18 @@ export async function updateCostCenterAction(formData: FormData): Promise<void> 
   const code = fdString(formData, "code");
   const name = fdString(formData, "name");
 
+  const scope = lerScope(formData);
+
   let after;
+  let vinculadosContrarios = 0;
   try {
-    const result = await updateCostCenterFields(container, companyId, id, { code, name });
+    const result = await updateCostCenterFields(container, companyId, id, { code, name, scope });
     after = result.after;
+    // Mudar o destino NÃO desvincula nada: avisa quantos lançamentos do lado
+    // oposto continuam apontando para este centro.
+    if (result.before.scope !== after.scope) {
+      vinculadosContrarios = await countLinkedAgainstScope(container, companyId, id, after.scope);
+    }
     await container.audit.record(companyId, {
       actor: session.actor,
       action: "cost_center.updated",
@@ -99,7 +118,11 @@ export async function updateCostCenterAction(formData: FormData): Promise<void> 
   }
   // ok() lança NEXT_REDIRECT — precisa ficar FORA do try, senão o catch o
   // captura e o exibe como erro.
-  ok(`Centro de custo "${after.code} — ${after.name}" atualizado.`);
+  ok(
+    vinculadosContrarios > 0
+      ? `Centro de custo "${after.code} — ${after.name}" atualizado. ${vinculadosContrarios} lançamento(s) existentes continuam vinculados: o destino vale só para lançamentos novos.`
+      : `Centro de custo "${after.code} — ${after.name}" atualizado.`
+  );
 }
 
 export async function deactivateCostCenterAction(formData: FormData): Promise<void> {
