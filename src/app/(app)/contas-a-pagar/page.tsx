@@ -335,14 +335,37 @@ export default async function ContasAPagarPage({
       <Flash ok={ok} erro={erro} />
 
       <Card className="mb-6" title="Novo título">
-        <NewPayableForm
-          suppliers={supplierOptions}
-          categories={categoryOptions}
-          costCenters={costCenterOptions}
-          today={today}
-          prefill={newPayablePrefill}
-          dateError={newPayableDateError}
-        />
+        {supplierOptions.length === 0 || categoryOptions.length === 0 ? (
+          // Fornecedor e Categoria são `required`: sem cadastro, os selects
+          // nascem vazios e o navegador barra o submit sem explicar o motivo.
+          <p className="text-sm text-[var(--ink-muted)]">
+            Antes de lançar títulos, cadastre{" "}
+            {supplierOptions.length === 0 ? (
+              <Link href="/cadastros/fornecedores" className="text-[var(--brand)] underline">
+                um fornecedor
+              </Link>
+            ) : null}
+            {supplierOptions.length === 0 && categoryOptions.length === 0 ? " e " : null}
+            {categoryOptions.length === 0 ? (
+              <Link
+                href="/cadastros/categorias-fornecedores"
+                className="text-[var(--brand)] underline"
+              >
+                uma categoria de fornecedores
+              </Link>
+            ) : null}
+            .
+          </p>
+        ) : (
+          <NewPayableForm
+            suppliers={supplierOptions}
+            categories={categoryOptions}
+            costCenters={costCenterOptions}
+            today={today}
+            prefill={newPayablePrefill}
+            dateError={newPayableDateError}
+          />
+        )}
         <p className="mt-3 text-xs text-[var(--ink-muted)]">
           O título passa pelo fluxo de entrada de nota (validação de duplicidade, projeção de caixa e
           impacto orçamentário). Valores em reais são convertidos para centavos.
@@ -473,7 +496,17 @@ export default async function ContasAPagarPage({
                     <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
                   </Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
-                    {SCHEDULABLE.includes(p.status) ? (
+                    {SCHEDULABLE.includes(p.status) && activeAccounts.length === 0 ? (
+                      // Sem conta ativa o select nasceria vazio e, sendo
+                      // `required`, o navegador barraria o submit com o tooltip
+                      // "Selecione um item da lista" — que não diz o que fazer.
+                      <Link
+                        href="/cadastros/contas-bancarias"
+                        className="text-xs text-[var(--brand)] underline"
+                      >
+                        Cadastre uma conta bancária →
+                      </Link>
+                    ) : SCHEDULABLE.includes(p.status) ? (
                       <form action={schedulePaymentAction} className="flex flex-nowrap items-center gap-1">
                         <input type="hidden" name="payableId" value={p.id} />
                         {/* !w-24/!w-32 e !text-xs vencem o w-full/text-sm do inputClass; sem "!"
