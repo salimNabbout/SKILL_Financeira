@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
@@ -46,6 +47,10 @@ export default async function ConciliacaoPage({
     ]);
 
   const accountName = new Map(bankAccounts.map((b) => [b.id, b.name]));
+  // Sem conta ativa não há o que conciliar: os selects abaixo são `required` e
+  // ficariam só com a opção vazia, fazendo o navegador barrar o submit com o
+  // tooltip "Selecione um item da lista" — que não diz o que fazer.
+  const contasAtivas = bankAccounts.filter((b) => b.active);
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const userName = new Map(users.map((u) => [u.id, u.name]));
@@ -125,6 +130,15 @@ export default async function ConciliacaoPage({
       <Flash ok={ok} erro={erro} />
 
       <Card className="mb-6" title="1 — Importar extrato">
+        {contasAtivas.length === 0 ? (
+          <p className="text-sm text-[var(--ink-muted)]">
+            Nenhuma conta bancária ativa.{" "}
+            <Link href="/cadastros/contas-bancarias" className="text-[var(--brand)] underline">
+              Cadastrar conta bancária
+            </Link>{" "}
+            antes de importar extratos.
+          </p>
+        ) : (
         <form action={importStatementAction} className="grid gap-4 md:grid-cols-3">
           <Field label="Conta bancária">
             <select name="bankAccountId" required className={inputClass}>
@@ -177,9 +191,19 @@ export default async function ConciliacaoPage({
             </p>
           </div>
         </form>
+        )}
       </Card>
 
       <Card className="mb-6" title="1b — Sincronizar com o banco (mock)">
+        {contasAtivas.length === 0 ? (
+          <p className="text-sm text-[var(--ink-muted)]">
+            Nenhuma conta bancária ativa.{" "}
+            <Link href="/cadastros/contas-bancarias" className="text-[var(--brand)] underline">
+              Cadastrar conta bancária
+            </Link>{" "}
+            antes de sincronizar.
+          </p>
+        ) : (
         <form action={syncBankAction} className="grid gap-4 md:grid-cols-3">
           <Field label="Conta bancária">
             <select name="bankAccountId" required className={inputClass}>
@@ -213,6 +237,7 @@ export default async function ConciliacaoPage({
             transações.
           </p>
         </form>
+        )}
       </Card>
 
       <Card className="mb-6" title={`2 — Sugestões pendentes de revisão (${suggested.length})`}>
