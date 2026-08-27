@@ -4,7 +4,7 @@
  * física de dado referenciado: "excluir" é DESATIVAR (active = false).
  */
 
-import type { CostCenter, ID } from "@/core/entities";
+import type { CostCenter, CostCenterScope, ID } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
 import type { Repositories } from "@/core/repositories";
 
@@ -15,6 +15,8 @@ export interface CostCenterDeps {
 export interface CostCenterFields {
   code: string;
   name: string;
+  /** Destino do lançamento; ausente mantém o valor atual. */
+  scope?: CostCenterScope;
 }
 
 /** Compara códigos de forma case-insensitive — mesma regra da criação. */
@@ -51,8 +53,39 @@ export async function updateCostCenterFields(
   }
 
   const before = { ...current };
-  const after = await deps.repos.costCenters.update({ ...current, code, name });
+  const after = await deps.repos.costCenters.update({
+    ...current,
+    code,
+    name,
+    scope: fields.scope ?? current.scope,
+  });
   return { before, after };
+}
+
+/**
+ * Quantos lançamentos do lado OPOSTO ao novo destino continuam vinculados.
+ *
+ * Mudar o destino não desvincula nada: o filtro vale só para lançamentos
+ * novos. Desvincular apagaria a classificação de contas já lançadas — ninguém
+ * pede isso ao trocar um filtro de cadastro. Este número existe para avisar,
+ * não para bloquear.
+ */
+export async function countLinkedAgainstScope(
+  deps: CostCenterDeps,
+  companyId: ID,
+  costCenterId: ID,
+  scope: CostCenterScope
+): Promise<number> {
+  if (scope === "both") return 0;
+  const [payables, receivables] = await Promise.all([
+    deps.repos.payables.listAll(companyId),
+    deps.repos.receivables.listAll(companyId),
+  ]);
+  const contrarios =
+    scope === "payable"
+      ? receivables.filter((r) => r.costCenterId === costCenterId)
+      : payables.filter((p) => p.costCenterId === costCenterId);
+  return contrarios.length;
 }
 
 /**

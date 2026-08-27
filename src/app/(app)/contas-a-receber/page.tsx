@@ -224,10 +224,11 @@ export default async function ContasAReceberPage({
   // Código do centro de custo por id (para a coluna da listagem — todos, não só ativos,
   // pois um título antigo pode apontar para um centro já desativado).
   const costCenterCode = new Map(costCenters.map((c) => [c.id, c.code]));
-  // Centros ATIVOS, "CÓDIGO — Nome", ordenados por código (pt-BR); value = id.
-  // CostCenter não tem `scope` — listamos todos os ativos (ver relatório).
+  // Centros ATIVOS cujo destino serve a este lado. "both" atende os dois — é
+  // o valor de quem foi cadastrado antes do campo existir, então nada some
+  // sem alguém ter escolhido.
   const costCenterOptions = costCenters
-    .filter((c) => c.active)
+    .filter((c) => c.active && (c.scope === "receivable" || c.scope === "both"))
     .sort((a, b) => a.code.localeCompare(b.code, "pt-BR"))
     .map((c) => ({ id: c.id, label: `${c.code} — ${c.name}` }));
 

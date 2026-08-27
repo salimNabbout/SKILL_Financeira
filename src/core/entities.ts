@@ -328,12 +328,17 @@ export interface Category {
   active: boolean;
 }
 
+/** Onde o centro de custo pode ser usado ao lançar. */
+export type CostCenterScope = "payable" | "receivable" | "both";
+
 export interface CostCenter {
   id: ID;
   companyId: ID;
   code: string;
   name: string;
   active: boolean;
+  /** Filtra apenas lançamentos NOVOS; títulos já vinculados não são afetados. */
+  scope: CostCenterScope;
 }
 
 export type ChartAccountType = "asset" | "liability" | "equity" | "revenue" | "expense";

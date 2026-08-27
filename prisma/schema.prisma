@@ -391,6 +391,9 @@ model CostCenter {
   code      String
   name      String
   active    Boolean @default(true)
+  /// Destino do centro de custo: "payable" | "receivable" | "both".
+  /// Default "both" preserva os cadastros anteriores, que não tinham destino.
+  scope     String  @default("both")
 
   company     Company      @relation(fields: [companyId], references: [id])
   payables    Payable[]
