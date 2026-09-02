@@ -8,7 +8,15 @@ import type { ReconciliationMatch } from "@/core/entities";
 import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
-import { confirmMatchAction, importStatementAction, rejectMatchAction, syncBankAction } from "./actions";
+import {
+  confirmMatchAction,
+  importStatementAction,
+  reconcilePaymentAction,
+  rejectMatchAction,
+  syncBankAction,
+} from "./actions";
+import { hasPermission } from "@/core/auth";
+import { todayInTz } from "@/core/dates";
 
 interface TargetInfo {
   label: string;
@@ -24,7 +32,7 @@ export default async function ConciliacaoPage({
 }) {
   const { ok, erro, pt } = await searchParams;
   const session = await requireSession();
-  const { repos } = await getContainer();
+  const { repos, clock } = await getContainer();
   const companyId = session.company.id;
 
   const [bankAccounts, suggested, decided, unreconciledPage, payables, receivables, payments, suppliers, customers, users] =
@@ -121,6 +129,19 @@ export default async function ConciliacaoPage({
     a.date === b.date ? a.id.localeCompare(b.id) : b.date.localeCompare(a.date)
   );
 
+  // --- Pagamentos aprovados aguardando conciliação -------------------------
+  // A aprovação autoriza mas não baixa: o título só é quitado aqui, com a data
+  // real em que o dinheiro saiu. Ordena pelo vencimento (o mais urgente antes).
+  const today = todayInTz(clock.now(), session.config.timezone);
+  const podeConciliar = hasPermission(session.membership.role, "payment.execute");
+  const aprovados = payments
+    .filter((pay) => pay.status === "approved")
+    .map((pay) => ({ pay, payable: payableById.get(pay.payableId) }))
+    .filter((r): r is { pay: (typeof payments)[number]; payable: NonNullable<typeof r.payable> } =>
+      Boolean(r.payable)
+    )
+    .sort((a, b) => a.payable.dueDate.localeCompare(b.payable.dueDate));
+
   return (
     <div>
       <PageHeader
@@ -128,6 +149,79 @@ export default async function ConciliacaoPage({
         subtitle="Importação de extratos (OFX/CSV), conciliação automática com grau de confiança e revisão humana das sugestões."
       />
       <Flash ok={ok} erro={erro} />
+
+      {/* Pagamentos APROVADOS aguardando conciliação. A aprovação autoriza a
+          saída; a baixa só acontece aqui, com a data real do pagamento — é ela
+          que decide "Pago" (até o vencimento) ou "Pago Atrasado" (depois dele).
+          Cada linha tem a caixa de data (com o calendário nativo, em tempo
+          real), a caixa de confirmação — que fica VERDE quando marcada — e o
+          botão que registra a conciliação. */}
+      <Card
+        className="mb-6"
+        title={`Pagamentos aprovados aguardando conciliação (${aprovados.length})`}
+      >
+        {aprovados.length === 0 ? (
+          <EmptyState message="Nenhum pagamento aprovado aguardando conciliação." />
+        ) : !podeConciliar ? (
+          <p className="text-sm text-[var(--ink-muted)]">
+            {aprovados.length} pagamento(s) aguardando conciliação. Seu papel não permite
+            conciliar pagamentos.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {aprovados.map(({ pay, payable }) => (
+              <div
+                key={pay.id}
+                className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-[var(--line)] p-3"
+              >
+                <div className="min-w-56">
+                  <p className="text-sm font-medium">
+                    {supplierName.get(payable.supplierId) ?? payable.supplierId} —{" "}
+                    {payable.description}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--ink-muted)]">
+                    Vencimento {formatBR(payable.dueDate)} · Valor{" "}
+                    <strong className="tabular">{formatBRL(pay.amountCents)}</strong> ·{" "}
+                    {accountName.get(pay.bankAccountId) ?? pay.bankAccountId} · Aprovado
+                  </p>
+                </div>
+                <form
+                  action={reconcilePaymentAction}
+                  className="flex flex-wrap items-end gap-2"
+                >
+                  <input type="hidden" name="paymentId" value={pay.id} />
+                  <Field label="Data do pagamento">
+                    {/* input[type=date]: calendário nativo do navegador, aberto
+                        no ícone ao lado do campo. `max` barra data futura já na
+                        tela (a skill valida de novo no servidor). */}
+                    <input
+                      type="date"
+                      name="paymentDate"
+                      required
+                      defaultValue={today}
+                      max={today}
+                      className={`${inputClass} md:w-44`}
+                    />
+                  </Field>
+                  {/* Caixa de confirmação: marcada, fica verde — o registro
+                      visual de que a conciliação foi confirmada. `required`
+                      impede conciliar sem confirmar (revalidado no servidor). */}
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-[var(--line)] px-3 py-2 text-sm has-[:checked]:border-[var(--ok)] has-[:checked]:bg-emerald-50 has-[:checked]:font-medium has-[:checked]:text-[var(--ok)]">
+                    <input
+                      type="checkbox"
+                      name="confirmado"
+                      required
+                      className="h-4 w-4 accent-[var(--ok)]"
+                    />
+                    Conciliado
+                  </label>
+                  <Button type="submit">Registrar conciliação</Button>
+                </form>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       <Card className="mb-6" title="1 — Importar extrato">
         {contasAtivas.length === 0 ? (

@@ -38,7 +38,7 @@ export default async function AprovacoesPage({
     repos.users.listAll(),
     // Só os EXECUTADOS: são os únicos estornáveis, e é por eles que o histórico
     // decide quais aprovações ainda podem voltar atrás.
-    repos.payments.listByStatus(companyId, ["executed"]),
+    repos.payments.listByStatus(companyId, ["executed", "approved"]),
   ]);
   const userName = new Map(users.map((u) => [u.id, u.name]));
   const pendingRows = [...pending].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -50,7 +50,14 @@ export default async function AprovacoesPage({
   // Estorno: desfazer uma execução pesa como executá-la, então usa a mesma
   // permissão (payment.execute) — admin e gerente financeiro.
   const canReverse = hasPermission(session.membership.role, "payment.execute");
-  const executedById = new Map(executedPayments.map((pay) => [pay.id, pay]));
+  const paymentById = new Map(executedPayments.map((pay) => [pay.id, pay]));
+  const executedById = new Map(
+    executedPayments.filter((pay) => pay.status === "executed").map((pay) => [pay.id, pay])
+  );
+  // Aprovado mas ainda não conciliado: a decisão fica no histórico (é trilha de
+  // auditoria) e a AÇÃO pendente passa a viver na tela de Conciliação.
+  const aguardandoConciliacao = (targetType: string, targetId: string): boolean =>
+    targetType === "payment" && paymentById.get(targetId)?.status === "approved";
   // Estornável = aprovação de PAGAMENTO, aprovada, cujo pagamento ainda está
   // executado. Já estornado sai do mapa (vira "canceled") e o botão some.
   const isReversible = (targetType: string, status: string, targetId: string): boolean =>
@@ -155,6 +162,15 @@ export default async function AprovacoesPage({
                 <Td>{userName.get(a.requestedBy) ?? a.requestedBy}</Td>
                 <Td>
                   <Badge tone={statusTone(a.status)}>{statusLabel(a.status)}</Badge>
+                  {/* Aprovar não paga: quem baixa o título é a conciliação. */}
+                  {aguardandoConciliacao(a.targetType, a.targetId) ? (
+                    <Link
+                      href="/conciliacao"
+                      className="mt-1 block text-xs text-[var(--brand)] underline"
+                    >
+                      Aguardando conciliação
+                    </Link>
+                  ) : null}
                 </Td>
                 <Td>{a.decidedBy ? (userName.get(a.decidedBy) ?? a.decidedBy) : "—"}</Td>
                 <Td>{a.decidedAt ? formatDateTime(a.decidedAt) : "—"}</Td>

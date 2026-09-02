@@ -11,7 +11,16 @@
 
 import { z } from "zod";
 import { assertSegregation, hasPermission } from "@/core/auth";
-import { addDays, addMonths, diffDays, formatBR, isISODate, minDate, type ISODate } from "@/core/dates";
+import {
+  addDays,
+  addMonths,
+  diffDays,
+  formatBR,
+  isISODate,
+  minDate,
+  toUtcNoon,
+  type ISODate,
+} from "@/core/dates";
 import type { FinancialDocument, Payable, Payment } from "@/core/entities";
 import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import { NotFoundError, PermissionError, ValidationError } from "@/core/errors";
@@ -135,6 +144,15 @@ const updatePayableSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+// Conciliação do pagamento aprovado: informa a data em que o dinheiro saiu de
+// fato e baixa o título. É esta data — não a da aprovação — que decide se o
+// título fica "Pago" ou "Pago Atrasado".
+const reconcilePaymentSchema = z.object({
+  action: z.literal("reconcile_payment"),
+  paymentId: z.string().min(1),
+  paymentDate: isoDateSchema,
+});
+
 // Estorno de pagamento JÁ EXECUTADO: desfaz a baixa e devolve o título para
 // Contas a pagar. Nada é apagado — o pagamento fica "canceled" e a trilha de
 // auditoria guarda o antes/depois com o motivo informado.
@@ -156,6 +174,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   detectDuplicatesSchema,
   cancelPayableSchema,
   updatePayableSchema,
+  reconcilePaymentSchema,
   reversePaymentSchema,
   generateRecurringSchema,
 ]);
@@ -167,6 +186,7 @@ export type ForecastDisbursementsInput = z.infer<typeof forecastDisbursementsSch
 export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
 export type UpdatePayableInput = z.infer<typeof updatePayableSchema>;
+export type ReconcilePaymentInput = z.infer<typeof reconcilePaymentSchema>;
 export type ReversePaymentInput = z.infer<typeof reversePaymentSchema>;
 export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
 export type ContasAPagarInput = z.infer<typeof contasAPagarInputSchema>;
@@ -242,6 +262,11 @@ export interface UpdatePayableData {
   payable: Payable;
 }
 
+export interface ReconcilePaymentData {
+  payment: Payment;
+  payable: Payable;
+}
+
 export interface ReversePaymentData {
   payment: Payment;
   payable: Payable;
@@ -261,6 +286,7 @@ export type ContasAPagarData =
   | DetectDuplicatesData
   | CancelPayableData
   | UpdatePayableData
+  | ReconcilePaymentData
   | ReversePaymentData
   | GenerateRecurringData;
 
@@ -712,14 +738,23 @@ async function resumePaymentDecision(ctx: SkillContext): Promise<SkillResult<Sch
   const payment = await ctx.repos.payments.getById(ctx.companyId, approvalRecord.targetId);
   if (!payment) throw new NotFoundError("Pagamento", approvalRecord.targetId);
 
-  // Idempotência da retomada: decisão já aplicada não gera novo efeito.
-  if (decision.status === "approved" && payment.status === "executed") {
+  // Idempotência da retomada: decisão já aplicada não gera novo efeito. Depois
+  // da aprovação o pagamento fica "approved" (aguardando conciliação) e, uma
+  // vez conciliado, "executed" — nenhum dos dois volta a ser decidido.
+  if (
+    decision.status === "approved" &&
+    (payment.status === "approved" || payment.status === "executed")
+  ) {
     return makeResult(
       SKILL,
       ctx,
       { payment },
       {
-        assumptions: ["Pagamento já havia sido executado; retomada idempotente sem novo efeito."],
+        assumptions: [
+          payment.status === "executed"
+            ? "Pagamento já havia sido conciliado e executado; retomada idempotente sem novo efeito."
+            : "Pagamento já havia sido aprovado e aguarda conciliação; retomada idempotente sem novo efeito.",
+        ],
         dataSources: DATA_SOURCES,
       }
     );
@@ -752,66 +787,42 @@ async function resumePaymentDecision(ctx: SkillContext): Promise<SkillResult<Sch
     // Segregação de funções também na skill (defesa em profundidade).
     assertSegregation(payment.requestedBy, decision.decidedBy);
 
-    // Revalida o saldo no momento da execução: se outro pagamento foi executado
-    // entre o agendamento e esta aprovação, este pagamento não pode sobre-baixar.
+    // Revalida o saldo já na aprovação: aprovar um valor que não cabe mais no
+    // título só adiaria o erro para a conciliação (que revalida de novo).
     if (payment.amountCents > payableRemainingCents(payable)) {
       throw new ValidationError(
         `Pagamento ${payment.id} (${formatBRL(payment.amountCents)}) excede o saldo restante ` +
-          `do título ${payable.id} (${formatBRL(payableRemainingCents(payable))}) no momento da execução.`
+          `do título ${payable.id} (${formatBRL(payableRemainingCents(payable))}) no momento da aprovação.`
       );
     }
 
-    payment.status = "executed";
-    payment.executedAt = nowIso;
-    payment.executedBy = decision.decidedBy;
+    // A aprovação NÃO baixa mais o título: ela autoriza o pagamento, que fica
+    // "approved" aguardando a CONCILIAÇÃO. Quem baixa é reconcilePayment, com a
+    // data real em que o dinheiro saiu — é essa data que decide "Pago" ou
+    // "Pago Atrasado". O título continua "scheduled" (segue em Contas a pagar).
+    payment.status = "approved";
     payment.approvalId = decision.id;
     payment.updatedAt = nowIso;
-
-    payable.paidCents += payment.amountCents;
-    payable.status = payable.paidCents >= payable.amountCents ? "paid" : "partially_paid";
-    payable.updatedAt = nowIso;
-
-    // Atômico: pagamento executado e título baixado commitam juntos — um crash
-    // entre os dois não deixa mais o pagamento "executed" com o título em aberto.
-    await ctx.repos.withTransaction(async (tx) => {
-      await tx.payments.update(payment);
-      await tx.payables.update(payable);
-    });
+    await ctx.repos.payments.update(payment);
 
     await ctx.audit.record(ctx.companyId, {
       actor: ctx.actor,
-      action: "payment.executed",
+      action: "payment.approved",
       entityType: "payment",
       entityId: payment.id,
       before: paymentBefore,
       after: payment,
       correlationId: ctx.correlationId,
     });
-    await ctx.audit.record(ctx.companyId, {
-      actor: ctx.actor,
-      action: "payable.updated",
-      entityType: "payable",
-      entityId: payable.id,
-      before: payableBefore,
-      after: payable,
-      correlationId: ctx.correlationId,
-    });
     await ctx.events.publish({
       companyId: ctx.companyId,
-      type: "payment.executed",
+      type: "payment.approved",
       payload: {
         id: payment.id,
         payableId: payable.id,
         amountCents: payment.amountCents,
-        executedBy: payment.executedBy,
+        approvedBy: decision.decidedBy,
       },
-      source: SKILL,
-      correlationId: ctx.correlationId,
-    });
-    await ctx.events.publish({
-      companyId: ctx.companyId,
-      type: "payable.updated",
-      payload: { id: payable.id, status: payable.status, paidCents: payable.paidCents },
       source: SKILL,
       correlationId: ctx.correlationId,
     });
@@ -822,7 +833,7 @@ async function resumePaymentDecision(ctx: SkillContext): Promise<SkillResult<Sch
       { payment },
       {
         assumptions: [
-          `Pagamento aprovado por ${decision.decidedBy} e executado em ambiente MOCK: nenhuma ordem bancária real foi emitida.`,
+          `Pagamento aprovado por ${decision.decidedBy}. Nenhuma baixa foi feita: o título só é quitado na CONCILIAÇÃO, com a data real do pagamento.`,
         ],
         dataSources: DATA_SOURCES,
       }
@@ -1305,6 +1316,155 @@ async function updatePayable(
 }
 
 /**
+ * CONCILIAÇÃO de um pagamento aprovado: registra a data em que o dinheiro saiu
+ * do banco e baixa o título, que volta para Contas a pagar já quitado.
+ *
+ * É o passo que a aprovação deixou de fazer. A `paymentDate` informada vira o
+ * `executedAt` do pagamento — e é ela, comparada ao vencimento, que faz a tela
+ * de Contas a pagar mostrar "Pago" (em dia) ou "Pago Atrasado". Por isso a data
+ * é gravada ao MEIO-DIA UTC (`toUtcNoon`): assim a conversão para o fuso da
+ * empresa nunca cai no dia anterior nem no seguinte.
+ *
+ * Só pagamento `approved` é conciliável — pendente ainda não foi decidido,
+ * executado já foi conciliado, e rejeitado/cancelado não tem o que baixar.
+ */
+async function reconcilePayment(
+  ctx: SkillContext,
+  input: ReconcilePaymentInput
+): Promise<SkillResult<ReconcilePaymentData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payment.execute")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode conciliar pagamentos.`
+      );
+    }
+  }
+
+  const payment = await ctx.repos.payments.getById(ctx.companyId, input.paymentId);
+  if (!payment) throw new NotFoundError("Pagamento", input.paymentId);
+  const payable = await ctx.repos.payables.getById(ctx.companyId, payment.payableId);
+  if (!payable) throw new NotFoundError("Título a pagar", payment.payableId);
+
+  // Idempotência: reenviar o formulário não baixa o título duas vezes.
+  if (payment.status === "executed") {
+    return makeResult(
+      SKILL,
+      ctx,
+      { payment, payable },
+      {
+        assumptions: ["Pagamento já estava conciliado; nenhuma alteração adicional foi feita."],
+        dataSources: DATA_SOURCES,
+      }
+    );
+  }
+  if (payment.status !== "approved") {
+    throw new ValidationError(
+      `Pagamento ${payment.id} não está aprovado (status atual: ${payment.status}) e não pode ser conciliado.`
+    );
+  }
+
+  // Data futura não concilia: conciliar é confirmar um fato já ocorrido.
+  const today = ctx.today();
+  if (input.paymentDate > today) {
+    throw new ValidationError(
+      `Data do pagamento (${formatBR(input.paymentDate)}) está no futuro; informe a data em que o pagamento realmente saiu.`
+    );
+  }
+  if (input.paymentDate < payable.issueDate) {
+    throw new ValidationError(
+      `Data do pagamento (${formatBR(input.paymentDate)}) é anterior à emissão do título (${formatBR(payable.issueDate)}).`
+    );
+  }
+
+  // Revalida o saldo no momento da baixa: outro pagamento pode ter sido
+  // conciliado entre a aprovação e agora.
+  if (payment.amountCents > payableRemainingCents(payable)) {
+    throw new ValidationError(
+      `Pagamento ${payment.id} (${formatBRL(payment.amountCents)}) excede o saldo restante ` +
+        `do título ${payable.id} (${formatBRL(payableRemainingCents(payable))}) no momento da conciliação.`
+    );
+  }
+
+  const nowIso = ctx.clock.now().toISOString();
+  const paymentBefore = { ...payment };
+  const payableBefore = { ...payable };
+
+  payment.status = "executed";
+  payment.executedAt = toUtcNoon(input.paymentDate).toISOString();
+  payment.executedBy = ctx.actor.id;
+  payment.updatedAt = nowIso;
+
+  payable.paidCents += payment.amountCents;
+  payable.status = payable.paidCents >= payable.amountCents ? "paid" : "partially_paid";
+  payable.updatedAt = nowIso;
+
+  // Atômico: baixa do pagamento e do título commitam juntos — um crash entre os
+  // dois não deixa pagamento executado com título em aberto.
+  await ctx.repos.withTransaction(async (tx) => {
+    await tx.payments.update(payment);
+    await tx.payables.update(payable);
+  });
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payment.executed",
+    entityType: "payment",
+    entityId: payment.id,
+    before: paymentBefore,
+    after: payment,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payable.updated",
+    entityType: "payable",
+    entityId: payable.id,
+    before: payableBefore,
+    after: payable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "payment.executed",
+    payload: {
+      id: payment.id,
+      payableId: payable.id,
+      amountCents: payment.amountCents,
+      executedBy: payment.executedBy,
+      paymentDate: input.paymentDate,
+    },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "payable.updated",
+    payload: { id: payable.id, status: payable.status, paidCents: payable.paidCents },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  const emAtraso = input.paymentDate > payable.dueDate;
+  return makeResult(
+    SKILL,
+    ctx,
+    { payment, payable },
+    {
+      assumptions: [
+        `Pagamento conciliado em ${formatBR(input.paymentDate)} (execução em ambiente MOCK: nenhuma ordem bancária real foi emitida).`,
+        `Título ${payable.id} devolvido para Contas a pagar como "${payable.status}"` +
+          (payable.status === "paid"
+            ? emAtraso
+              ? ` — pago APÓS o vencimento (${formatBR(payable.dueDate)}): situação "Pago Atrasado".`
+              : ` — pago até o vencimento (${formatBR(payable.dueDate)}): situação "Pago".`
+            : " (baixa parcial; saldo continua em aberto)."),
+      ],
+      dataSources: DATA_SOURCES,
+    }
+  );
+}
+
+/**
  * ESTORNO de pagamento executado. Desfaz a baixa e devolve o título para Contas
  * a pagar — é a volta atrás de uma aprovação que já produziu efeito.
  *
@@ -1498,6 +1658,7 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
     "payable.updated",
     "payable.canceled",
     "payment.scheduled",
+    "payment.approved",
     "payment.executed",
     "payment.reversed",
   ],
@@ -1518,6 +1679,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return cancelPayable(ctx, input);
       case "update_payable":
         return updatePayable(ctx, input);
+      case "reconcile_payment":
+        return reconcilePayment(ctx, input);
       case "reverse_payment":
         return reversePayment(ctx, input);
       case "generate_recurring":

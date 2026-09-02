@@ -128,7 +128,7 @@ const supplierInvoiceIntake: FlowDefinition = {
 const schedulePayment: FlowDefinition = {
   name: "schedule_payment",
   description:
-    "Agenda pagamento de título, exige aprovação por alçada e, após aprovado, executa (mock), verifica controles, atualiza caixa e prepara lançamento contábil.",
+    "Agenda pagamento de título e exige aprovação por alçada. A aprovação NÃO baixa o título: o pagamento fica aprovado aguardando a conciliação, que é quem executa (mock) e quita.",
   requiredPermission: "payment.request",
   steps: [
     {
@@ -519,6 +519,62 @@ const cancelReceivableFlow: FlowDefinition = {
 };
 
 /**
+ * Conciliação de pagamento aprovado. Fluxo de um único passo — a skill exige
+ * payment.execute, aceita só pagamento aprovado, grava a data real do pagamento
+ * como executedAt e baixa o título, que volta para Contas a pagar como pago
+ * (em dia ou em atraso, conforme a data informada).
+ * payload: { paymentId, paymentDate }
+ */
+const reconcilePaymentFlow: FlowDefinition = {
+  name: "reconcile_payment",
+  description:
+    "Concilia um pagamento aprovado: registra a data real da saída do dinheiro, baixa o título e o devolve para Contas a pagar como pago (em dia ou em atraso, conforme a data).",
+  requiredPermission: "payment.execute",
+  steps: [
+    {
+      id: "ap_reconcile",
+      skill: "contas_a_pagar",
+      description: "Conciliar pagamento aprovado (com bloqueios de segurança)",
+      buildInput: (f) => ({ action: "reconcile_payment", ...f.payload }),
+    },
+    // Os três passos abaixo eram do schedule_payment, disparados quando a
+    // aprovação executava o pagamento. Como quem executa agora é a conciliação,
+    // eles vieram junto — sem isso, nenhum pagamento geraria verificação de
+    // controles nem lançamento contábil.
+    {
+      id: "controls_post",
+      skill: "controles_internos_auditoria",
+      description: "Verificação pós-pagamento",
+      buildInput: (f) => ({
+        action: "post_payment_check",
+        paymentId: f.results.ap_reconcile?.data?.payment?.id,
+      }),
+      when: (f) => f.results.ap_reconcile?.data?.payment?.status === "executed",
+      continueOnError: true,
+    },
+    {
+      id: "treasury_refresh",
+      skill: "tesouraria_fluxo_caixa",
+      description: "Atualizar posição e projeção de caixa",
+      buildInput: () => ({ action: "refresh_projection", horizonDays: 90 }),
+      continueOnError: true,
+    },
+    {
+      id: "accounting_prepare",
+      skill: "integracao_contabil_fiscal",
+      description: "Preparar lançamento contábil do pagamento",
+      buildInput: (f) => ({
+        action: "prepare_entries",
+        sourceType: "payment",
+        sourceId: f.results.ap_reconcile?.data?.payment?.id,
+      }),
+      when: (f) => f.results.ap_reconcile?.data?.payment?.status === "executed",
+      continueOnError: true,
+    },
+  ],
+};
+
+/**
  * Estorno de pagamento executado. Fluxo de um único passo — a skill exige
  * payment.execute, valida que o pagamento está executado, devolve o valor ao
  * saldo do título (que volta para Contas a pagar) e registra a trilha. O
@@ -546,6 +602,7 @@ export const BUILTIN_FLOWS: FlowDefinition[] = [
   updatePayable,
   cancelPayableFlow,
   cancelReceivableFlow,
+  reconcilePaymentFlow,
   reversePaymentFlow,
   bankStatementImport,
   bankSync,

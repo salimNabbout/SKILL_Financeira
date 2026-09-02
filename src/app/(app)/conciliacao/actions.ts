@@ -153,3 +153,41 @@ export async function rejectMatchAction(formData: FormData): Promise<void> {
   if (result.status === "error") fail(skillErrorMessage(result));
   ok("Sugestão rejeitada — a transação volta a ficar disponível para novas rodadas.");
 }
+
+/**
+ * CONCILIA um pagamento aprovado: grava a data real da saída do dinheiro e
+ * devolve o título para Contas a pagar já quitado ("Pago" até o vencimento,
+ * "Pago Atrasado" depois dele). As regras ficam na skill contas_a_pagar; aqui
+ * só validamos a entrada e traduzimos o erro.
+ *
+ * A caixa de confirmação é `required` no HTML, mas a conferimos também no
+ * servidor: sem ela, um POST direto passaria por cima da confirmação humana.
+ */
+export async function reconcilePaymentAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const paymentId = fdString(formData, "paymentId");
+  const paymentDate = fdString(formData, "paymentDate");
+  const confirmado = fdOptional(formData, "confirmado") === "on";
+
+  if (!paymentId) fail("Pagamento não identificado para conciliação.");
+  if (!paymentDate) fail("Informe a data do pagamento.");
+  if (!confirmado) fail("Marque a caixa de confirmação para registrar a conciliação.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "reconcile_payment",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: { paymentId, paymentDate },
+    });
+  } catch (error) {
+    fail(errorMessage(error));
+  }
+
+  if (response.status === "failed") fail(flowErrorMessage(response));
+
+  ok("Conciliação registrada. O título voltou para Contas a pagar já quitado.");
+}

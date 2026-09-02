@@ -43,10 +43,10 @@ describe("derivePayableSituation", () => {
     ).toBe("Pago");
   });
 
-  it("pago um dia após o vencimento → Pago Atraso", () => {
+  it("pago um dia após o vencimento → Pago Atrasado", () => {
     expect(
       derivePayableSituation(payable({ status: "paid", dueDate: "2026-08-24" }), TODAY, "2026-08-25")
-    ).toBe("Pago Atraso");
+    ).toBe("Pago Atrasado");
   });
 
   it("pago sem data de pagamento conhecida → Pago (sem afirmar atraso)", () => {
