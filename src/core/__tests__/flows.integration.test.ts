@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createTestEnv, type TestEnv } from "@/adapters/memory/test-env";
 import { buildRegistry } from "@/skills";
 import { verifyChain } from "../audit";
+import { hashPayload } from "../ids";
 import type { Orchestrator, OrchestratorResponse } from "../orchestrator/orchestrator";
 
 let env: TestEnv;
@@ -359,6 +360,43 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect((decidida as OrchestratorResponse).status).toBe("completed");
     const aprovados = await env.repos.payments.listByStatus(env.company.id, ["approved"]);
     expect(aprovados).toHaveLength(1);
+  });
+
+  it("cache de rejeição gravado por versão anterior não trava o reenvio", async () => {
+    const payableId = await createPayable();
+    const payload = {
+      payableId,
+      bankAccountId: "ba_1",
+      scheduledDate: "2026-08-20",
+      method: "pix",
+    };
+
+    // Simula o registro que a versão ANTIGA deixava no banco ao rejeitar: a
+    // chave de idempotência do fluxo com a resposta final "rejected". É o que
+    // existe hoje em produção para todo título já rejeitado uma vez.
+    const key = hashPayload({ flow: "schedule_payment", payload });
+    await env.repos.idempotency.save({
+      id: "idem_legado",
+      companyId: env.company.id,
+      key,
+      requestHash: hashPayload(payload),
+      result: { flowRunId: "flow_velho", flow: "schedule_payment", status: "rejected" },
+      createdAt: env.clock.now().toISOString(),
+    });
+
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+
+    // Descarta o cache velho e executa de verdade: aprovação nova e pendente.
+    expect(res.idempotent_replay).toBeFalsy();
+    expect(res.status).toBe("awaiting_approval");
+    expect(res.approval).toBeTruthy();
+    const pendentes = await env.repos.approvals.listByStatus(env.company.id, ["pending"]);
+    expect(pendentes).toHaveLength(1);
   });
 
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {

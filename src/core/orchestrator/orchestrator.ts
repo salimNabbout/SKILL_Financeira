@@ -95,7 +95,15 @@ export class Orchestrator {
   // Execução de fluxo
   // -------------------------------------------------------------------------
 
-  async execute(request: OrchestratorRequest): Promise<OrchestratorResponse> {
+  /**
+   * @param staleRejectRetry uso INTERNO: marca a única reexecução permitida
+   * depois de descartar um cache de idempotência de fluxo rejeitado (registro
+   * legado). Evita recursão infinita se algo regravar a chave no meio.
+   */
+  async execute(
+    request: OrchestratorRequest,
+    staleRejectRetry = false
+  ): Promise<OrchestratorResponse> {
     const flowDef = this.flows.get(request.flow);
     if (!flowDef) throw new ValidationError(`Fluxo desconhecido: ${request.flow}`);
 
@@ -173,6 +181,19 @@ export class Orchestrator {
           idempotent_replay: true,
         };
       }
+
+      // Cache de uma REJEIÇÃO. Não é gerado mais (a rejeição passou a liberar a
+      // chave), mas os registros gravados ANTES desta correção continuam no
+      // banco — e são justamente os dos títulos que já foram rejeitados alguma
+      // vez. Devolver esse cache é o bug: nenhum pagamento é criado, nenhuma
+      // aprovação aparece, e a tela ainda diz "enviado para aprovação".
+      // Descarta o registro velho e reexecuta de verdade, uma única vez.
+      const cachedResponse = cached as OrchestratorResponse | undefined;
+      if (cachedResponse?.status === "rejected" && !staleRejectRetry) {
+        await this.env.repos.idempotency.remove(request.companyId, idempotencyKey);
+        return this.execute(request, true);
+      }
+
       return { ...(cached as OrchestratorResponse), idempotent_replay: true };
     }
 
