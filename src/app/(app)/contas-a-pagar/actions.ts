@@ -192,6 +192,7 @@ export async function updatePayableAction(formData: FormData): Promise<void> {
   const dueDate = fdString(formData, "dueDate");
   const supplierCategory = fdOptional(formData, "supplierCategory");
   const costRaw = fdOptional(formData, "costClassification");
+  const costCenterId = fdOptional(formData, "costCenterId");
   const notes = fdOptional(formData, "notes");
   const amountRaw = fdString(formData, "amount");
 
@@ -207,6 +208,7 @@ export async function updatePayableAction(formData: FormData): Promise<void> {
     if (amountRaw) qs.set("f_valor", amountRaw);
     if (supplierCategory) qs.set("f_categoria", supplierCategory);
     if (costRaw) qs.set("f_custo", costRaw);
+    if (costCenterId) qs.set("f_centrocusto", costCenterId);
     if (notes) qs.set("f_notas", notes);
     redirect(`${PATH}?${qs.toString()}`);
   }
@@ -241,6 +243,9 @@ export async function updatePayableAction(formData: FormData): Promise<void> {
         amountCents,
         supplierCategory,
         costClassification: costRaw as "fixed" | "variable" | undefined,
+        // Centro de custo agora é editável (a skill já aceitava no update):
+        // vazio vira undefined e MANTÉM o atual — a skill só limpa com null.
+        costCenterId,
         notes,
       },
     });
