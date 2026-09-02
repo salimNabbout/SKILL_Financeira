@@ -163,6 +163,32 @@ export class Orchestrator {
         );
       }
       const cached = existing?.result as OrchestratorResponse | { __inProgressFlowRunId: ID } | undefined;
+
+      // O registro guarda uma FOTO do que aconteceu; o que vale é o estado ATUAL
+      // do fluxo por trás dele. A chave só deve bloquear enquanto existir um
+      // fluxo VIVO (em execução ou aguardando aprovação) ou CONCLUÍDO — nesses
+      // casos reexecutar duplicaria algo real. Rejeitado, falho ou inexistente
+      // não tem nada a preservar: descarta o registro e executa de verdade.
+      //
+      // Sem isto, um título REJEITADO nunca mais volta para a aprovação: a
+      // requisição idêntica (mesmo título, conta e data) baterá para sempre no
+      // registro velho, sem criar pagamento nem aprovação, enquanto a tela diz
+      // que enviou. Vale tanto para os registros que versões anteriores
+      // gravavam na rejeição quanto para fluxos que morreram no meio.
+      const previousRunId =
+        cached && typeof cached === "object" && "__inProgressFlowRunId" in cached
+          ? cached.__inProgressFlowRunId
+          : (cached as OrchestratorResponse | undefined)?.flowRunId;
+      const previousRun = previousRunId
+        ? await this.env.repos.flowRuns.getById(request.companyId, previousRunId)
+        : null;
+      const staleKey =
+        !previousRun || previousRun.status === "rejected" || previousRun.status === "failed";
+      if (staleKey && !staleRejectRetry) {
+        await this.env.repos.idempotency.remove(request.companyId, idempotencyKey);
+        return this.execute(request, true);
+      }
+
       // Execução concorrente ainda em andamento: devolve uma resposta "running"
       // sem reprocessar (o cliente pode consultar o flowRun depois).
       if (cached && typeof cached === "object" && "__inProgressFlowRunId" in cached) {
@@ -180,18 +206,6 @@ export class Orchestrator {
           },
           idempotent_replay: true,
         };
-      }
-
-      // Cache de uma REJEIÇÃO. Não é gerado mais (a rejeição passou a liberar a
-      // chave), mas os registros gravados ANTES desta correção continuam no
-      // banco — e são justamente os dos títulos que já foram rejeitados alguma
-      // vez. Devolver esse cache é o bug: nenhum pagamento é criado, nenhuma
-      // aprovação aparece, e a tela ainda diz "enviado para aprovação".
-      // Descarta o registro velho e reexecuta de verdade, uma única vez.
-      const cachedResponse = cached as OrchestratorResponse | undefined;
-      if (cachedResponse?.status === "rejected" && !staleRejectRetry) {
-        await this.env.repos.idempotency.remove(request.companyId, idempotencyKey);
-        return this.execute(request, true);
       }
 
       return { ...(cached as OrchestratorResponse), idempotent_replay: true };
