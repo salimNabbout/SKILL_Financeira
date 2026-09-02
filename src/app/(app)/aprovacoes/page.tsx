@@ -1,9 +1,11 @@
-import { Badge, Button, Card, EmptyState, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
+import Link from "next/link";
+import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
-import { ROLE_LABELS, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
+import { hasPermission } from "@/core/auth";
+import { ROLE_LABELS, formatBR, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
-import { decideApprovalAction } from "./actions";
+import { decideApprovalAction, reversePaymentAction } from "./actions";
 
 const TARGET_LABELS: Record<string, string> = {
   payment: "Pagamento",
@@ -16,17 +18,27 @@ const TARGET_LABELS: Record<string, string> = {
 export default async function AprovacoesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; erro?: string }>;
+  searchParams: Promise<{
+    ok?: string;
+    erro?: string;
+    /** Pagamento cujo pop-up de confirmação de estorno está aberto. */
+    estornar?: string;
+    f_motivo?: string;
+  }>;
 }) {
-  const { ok, erro } = await searchParams;
+  const sp = await searchParams;
+  const { ok, erro } = sp;
   const session = await requireSession();
   const { repos } = await getContainer();
   const companyId = session.company.id;
 
-  const [pending, all, users] = await Promise.all([
+  const [pending, all, users, executedPayments] = await Promise.all([
     repos.approvals.listByStatus(companyId, ["pending"]),
     repos.approvals.listAll(companyId),
     repos.users.listAll(),
+    // Só os EXECUTADOS: são os únicos estornáveis, e é por eles que o histórico
+    // decide quais aprovações ainda podem voltar atrás.
+    repos.payments.listByStatus(companyId, ["executed"]),
   ]);
   const userName = new Map(users.map((u) => [u.id, u.name]));
   const pendingRows = [...pending].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -34,6 +46,26 @@ export default async function AprovacoesPage({
     .filter((a) => a.status !== "pending")
     .sort((a, b) => (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt))
     .slice(0, 30);
+
+  // Estorno: desfazer uma execução pesa como executá-la, então usa a mesma
+  // permissão (payment.execute) — admin e gerente financeiro.
+  const canReverse = hasPermission(session.membership.role, "payment.execute");
+  const executedById = new Map(executedPayments.map((pay) => [pay.id, pay]));
+  // Estornável = aprovação de PAGAMENTO, aprovada, cujo pagamento ainda está
+  // executado. Já estornado sai do mapa (vira "canceled") e o botão some.
+  const isReversible = (targetType: string, status: string, targetId: string): boolean =>
+    canReverse && targetType === "payment" && status === "approved" && executedById.has(targetId);
+
+  // Pop-up de confirmação: só abre para um pagamento realmente estornável.
+  const estornarId = sp.estornar?.trim() || undefined;
+  const estornoPayment = estornarId ? executedById.get(estornarId) : undefined;
+  const estornoPayable =
+    canReverse && estornoPayment
+      ? await repos.payables.getById(companyId, estornoPayment.payableId)
+      : null;
+  const estornoSupplier = estornoPayable
+    ? await repos.suppliers.getById(companyId, estornoPayable.supplierId)
+    : null;
 
   return (
     <div>
@@ -104,8 +136,17 @@ export default async function AprovacoesPage({
           <EmptyState message="Nenhuma decisão registrada ainda." />
         ) : (
           <Table
-            headers={["Resumo", "Valor", "Solicitante", "Decisão", "Decidida por", "Quando", "Justificativa"]}
-            align={["l", "r", "l", "l", "l", "l", "l"]}
+            headers={[
+              "Resumo",
+              "Valor",
+              "Solicitante",
+              "Decisão",
+              "Decidida por",
+              "Quando",
+              "Justificativa",
+              "Estorno",
+            ]}
+            align={["l", "r", "l", "l", "l", "l", "l", "l"]}
           >
             {history.map((a) => (
               <tr key={a.id}>
@@ -118,11 +159,76 @@ export default async function AprovacoesPage({
                 <Td>{a.decidedBy ? (userName.get(a.decidedBy) ?? a.decidedBy) : "—"}</Td>
                 <Td>{a.decidedAt ? formatDateTime(a.decidedAt) : "—"}</Td>
                 <Td>{a.justification ?? "—"}</Td>
+                {/* Estorno: só para pagamento aprovado e ainda executado. O
+                    botão não estorna — abre o pop-up de confirmação (?estornar). */}
+                <Td className="whitespace-nowrap">
+                  {isReversible(a.targetType, a.status, a.targetId) ? (
+                    <form method="get" action="/aprovacoes" className="inline">
+                      <input type="hidden" name="estornar" value={a.targetId} />
+                      <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                        <Button variant="danger" type="submit">
+                          Estornar
+                        </Button>
+                      </span>
+                    </form>
+                  ) : (
+                    <span className="text-xs text-[var(--ink-muted)]">—</span>
+                  )}
+                </Td>
               </tr>
             ))}
           </Table>
         )}
       </Card>
+
+      {/* POP-UP de confirmação do estorno. Sobreposição renderizada no servidor
+          (sem estado de cliente): abre por ?estornar=<paymentId> e fecha
+          voltando para /aprovacoes. Confirmar exige o motivo, que vai para a
+          trilha de auditoria. */}
+      {estornoPayment && estornoPayable ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card w-full max-w-lg p-4 shadow-xl">
+            <h2 className="text-base font-semibold text-[var(--crit)]">Confirmar estorno</h2>
+            <p className="mt-2 text-sm">
+              O pagamento de{" "}
+              <strong className="tabular">{formatBRL(estornoPayment.amountCents)}</strong>
+              {estornoSupplier ? ` a ${estornoSupplier.name}` : ""} será estornado.
+            </p>
+            <p className="mt-1 text-sm text-[var(--ink-muted)]">
+              {estornoPayable.description} · vencimento {formatBR(estornoPayable.dueDate)}
+            </p>
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+              A baixa será desfeita e o título <strong>volta para Contas a pagar</strong>. O
+              pagamento não é apagado: fica como cancelado e o estorno é registrado na
+              auditoria com o motivo informado.
+            </p>
+            <form action={reversePaymentAction} className="mt-3">
+              <input type="hidden" name="paymentId" value={estornoPayment.id} />
+              <Field label="Motivo do estorno">
+                <input
+                  name="reason"
+                  required
+                  autoFocus
+                  defaultValue={sp.f_motivo ?? ""}
+                  className={inputClass}
+                  placeholder="Ex.: pagamento em duplicidade"
+                />
+              </Field>
+              <div className="mt-3 flex items-center gap-2">
+                <Button variant="danger" type="submit">
+                  Confirmar estorno
+                </Button>
+                <Link
+                  href="/aprovacoes"
+                  className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+                >
+                  Voltar
+                </Link>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

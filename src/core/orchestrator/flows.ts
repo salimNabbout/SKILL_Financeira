@@ -518,12 +518,35 @@ const cancelReceivableFlow: FlowDefinition = {
   ],
 };
 
+/**
+ * Estorno de pagamento executado. Fluxo de um único passo — a skill exige
+ * payment.execute, valida que o pagamento está executado, devolve o valor ao
+ * saldo do título (que volta para Contas a pagar) e registra a trilha. O
+ * pagamento NÃO é apagado: fica cancelado, com o motivo na auditoria.
+ * payload: { paymentId, reason }
+ */
+const reversePaymentFlow: FlowDefinition = {
+  name: "reverse_payment",
+  description:
+    "Estorna um pagamento já executado: desfaz a baixa, devolve o título para Contas a pagar e mantém o pagamento no histórico como cancelado, com o motivo registrado na auditoria.",
+  requiredPermission: "payment.execute",
+  steps: [
+    {
+      id: "ap_reverse",
+      skill: "contas_a_pagar",
+      description: "Estornar pagamento executado (com bloqueios de segurança)",
+      buildInput: (f) => ({ action: "reverse_payment", ...f.payload }),
+    },
+  ],
+};
+
 export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
   updatePayable,
   cancelPayableFlow,
   cancelReceivableFlow,
+  reversePaymentFlow,
   bankStatementImport,
   bankSync,
   customerInvoiceIntake,

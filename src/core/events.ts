@@ -18,6 +18,7 @@ export type EventType =
   | "payment.approved"
   | "payment.rejected"
   | "payment.executed"
+  | "payment.reversed"
   | "receivable.created"
   | "receivable.updated"
   | "receivable.received"
