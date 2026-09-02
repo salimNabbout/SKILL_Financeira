@@ -16,6 +16,7 @@ import {
   type ForecastDisbursementsData,
   type GenerateRecurringData,
   type ListDueData,
+  type ReversePaymentData,
   type SchedulePaymentData,
   type UpdatePayableData,
 } from "..";
@@ -1103,5 +1104,105 @@ describe("contas_a_pagar — create_payable (recorrência)", () => {
     expect(res.status).toBe("error");
     expect(res.alerts[0].code).toBe("validation_error");
     expect(res.alerts[0].message).toContain("Verificar a Data da Emissão");
+  });
+});
+
+
+describe("contas_a_pagar — estorno de pagamento executado", () => {
+  /** Executa o estorno com um papel que tem payment.execute (gerente financeiro). */
+  async function reverse(env: TestEnv, paymentId: string, role: "manager" | "analyst" = "manager") {
+    return runSkill(contasAPagarSkill, env.ctx(env.actorFor(role)), {
+      action: "reverse_payment",
+      paymentId,
+      reason: "pagamento em duplicidade",
+    });
+  }
+
+  it("desfaz a baixa e devolve o título para Contas a pagar", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+    const { data: scheduled } = await schedule(env, payable.id);
+    await decide(env, scheduled.payment.id, "approved");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
+
+    const res = await reverse(env, scheduled.payment.id);
+    const data = res.data as ReversePaymentData;
+
+    expect(res.status).toBe("success");
+    expect(data.payment.status).toBe("canceled");
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.paidCents).toBe(0);
+    expect(stored?.status).toBe("open"); // de volta em Contas a pagar
+    expect(env.db.events.some((e) => e.type === "payment.reversed")).toBe(true);
+    expect(env.db.auditRecords.some((a) => a.action === "payment.reversed")).toBe(true);
+  });
+
+  it("estorno de um pagamento parcial deixa o título partially_paid", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+
+    const primeiro = await schedule(env, payable.id, 20_000);
+    await decide(env, primeiro.data.payment.id, "approved");
+    const segundo = await schedule(env, payable.id, 30_000);
+    await decide(env, segundo.data.payment.id, "approved");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
+
+    const res = await reverse(env, segundo.data.payment.id);
+
+    expect(res.status).toBe("success");
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.paidCents).toBe(20_000); // só o estornado voltou
+    expect(stored?.status).toBe("partially_paid");
+  });
+
+  it("estorno repetido é idempotente — o valor não volta duas vezes", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+    const { data: scheduled } = await schedule(env, payable.id);
+    await decide(env, scheduled.payment.id, "approved");
+
+    await reverse(env, scheduled.payment.id);
+    const segunda = await reverse(env, scheduled.payment.id);
+
+    expect(segunda.status).toBe("success");
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.paidCents).toBe(0);
+    expect(stored?.status).toBe("open");
+  });
+
+  it("recusa estorno de pagamento que ainda não foi executado", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+    const { data: scheduled } = await schedule(env, payable.id); // pending_approval
+
+    const res = await reverse(env, scheduled.payment.id);
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toContain("não está executado");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("scheduled");
+  });
+
+  it("papel sem payment.execute não estorna", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+    const { data: scheduled } = await schedule(env, payable.id);
+    await decide(env, scheduled.payment.id, "approved");
+
+    const res = await reverse(env, scheduled.payment.id, "analyst");
+
+    expect(res.status).toBe("error");
+    // Nada mudou: o título continua quitado.
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
+    expect(env.db.payments.find((p) => p.id === scheduled.payment.id)?.status).toBe("executed");
   });
 });

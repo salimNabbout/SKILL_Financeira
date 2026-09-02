@@ -126,6 +126,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "payment.executed": "Pagamento executado",
   "payment.rejected": "Pagamento rejeitado",
   "payment.canceled": "Pagamento cancelado",
+  "payment.reversed": "Pagamento estornado",
 
   // Contas a receber e recebimentos
   "receivable.created": "Título a receber criado",

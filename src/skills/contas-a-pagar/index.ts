@@ -135,6 +135,15 @@ const updatePayableSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+// Estorno de pagamento JÁ EXECUTADO: desfaz a baixa e devolve o título para
+// Contas a pagar. Nada é apagado — o pagamento fica "canceled" e a trilha de
+// auditoria guarda o antes/depois com o motivo informado.
+const reversePaymentSchema = z.object({
+  action: z.literal("reverse_payment"),
+  paymentId: z.string().min(1),
+  reason: z.string().min(1),
+});
+
 const generateRecurringSchema = z.object({
   action: z.literal("generate_recurring"),
 });
@@ -147,6 +156,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   detectDuplicatesSchema,
   cancelPayableSchema,
   updatePayableSchema,
+  reversePaymentSchema,
   generateRecurringSchema,
 ]);
 
@@ -157,6 +167,7 @@ export type ForecastDisbursementsInput = z.infer<typeof forecastDisbursementsSch
 export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
 export type UpdatePayableInput = z.infer<typeof updatePayableSchema>;
+export type ReversePaymentInput = z.infer<typeof reversePaymentSchema>;
 export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
 export type ContasAPagarInput = z.infer<typeof contasAPagarInputSchema>;
 
@@ -231,6 +242,12 @@ export interface UpdatePayableData {
   payable: Payable;
 }
 
+export interface ReversePaymentData {
+  payment: Payment;
+  payable: Payable;
+  reason: string;
+}
+
 export interface GenerateRecurringData {
   /** Títulos criados nesta rodada (vazio se nada era devido ou já existia). */
   generated: Array<{ templateId: string; payableId: string; dueDate: string }>;
@@ -244,6 +261,7 @@ export type ContasAPagarData =
   | DetectDuplicatesData
   | CancelPayableData
   | UpdatePayableData
+  | ReversePaymentData
   | GenerateRecurringData;
 
 // ---------------------------------------------------------------------------
@@ -1287,6 +1305,140 @@ async function updatePayable(
 }
 
 /**
+ * ESTORNO de pagamento executado. Desfaz a baixa e devolve o título para Contas
+ * a pagar — é a volta atrás de uma aprovação que já produziu efeito.
+ *
+ * Exige `payment.execute` (a mesma permissão de executar o pagamento): desfazer
+ * uma baixa pesa tanto quanto fazê-la. Só pagamento `executed` é estornável;
+ * pendente/aprovado se cancela pelo título, e rejeitado nunca teve efeito.
+ *
+ * Nada é apagado: o pagamento vai para `canceled` (some das visões de caixa,
+ * orçamento e contabilidade, que filtram por status) e a trilha guarda o
+ * antes/depois com o motivo. `executedAt`/`executedBy` permanecem no registro —
+ * são o histórico de que houve execução, e nenhuma consulta os lê sem antes
+ * filtrar o status.
+ *
+ * O título volta para: `open` quando não sobra baixa nenhuma; `partially_paid`
+ * se outro pagamento executado ainda o baixa em parte; `scheduled` quando resta
+ * outro pagamento aguardando aprovação. Nos três casos ele reaparece em Contas
+ * a pagar (os três são status "em aberto" da tela).
+ */
+async function reversePayment(
+  ctx: SkillContext,
+  input: ReversePaymentInput
+): Promise<SkillResult<ReversePaymentData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payment.execute")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode estornar pagamentos.`
+      );
+    }
+  }
+
+  const payment = await ctx.repos.payments.getById(ctx.companyId, input.paymentId);
+  if (!payment) throw new NotFoundError("Pagamento", input.paymentId);
+  const payable = await ctx.repos.payables.getById(ctx.companyId, payment.payableId);
+  if (!payable) throw new NotFoundError("Título a pagar", payment.payableId);
+
+  // Idempotência: estorno repetido (duplo clique, reenvio do formulário) não
+  // devolve o valor duas vezes.
+  if (payment.status === "canceled") {
+    return makeResult(
+      SKILL,
+      ctx,
+      { payment, payable, reason: input.reason },
+      {
+        assumptions: ["Pagamento já estava estornado; nenhuma alteração adicional foi feita."],
+        dataSources: DATA_SOURCES,
+      }
+    );
+  }
+  if (payment.status !== "executed") {
+    throw new ValidationError(
+      `Pagamento ${payment.id} não está executado (status atual: ${payment.status}) e não pode ser estornado.`
+    );
+  }
+  if (payable.status === "canceled") {
+    throw new ValidationError(
+      `Título ${payable.id} está cancelado; não é possível devolvê-lo para Contas a pagar pelo estorno.`
+    );
+  }
+
+  // Outro pagamento ainda reservando o título mantém a situação "agendado"
+  // depois do estorno — o título volta para a lista, mas não como livre.
+  const siblings = await ctx.repos.payments.listByPayable(ctx.companyId, payable.id);
+  const stillReserved = siblings.some(
+    (p) => p.id !== payment.id && (p.status === "pending_approval" || p.status === "approved")
+  );
+
+  const nowIso = ctx.clock.now().toISOString();
+  const paymentBefore = { ...payment };
+  const payableBefore = { ...payable };
+
+  payment.status = "canceled";
+  payment.updatedAt = nowIso;
+
+  // Math.max protege contra paidCents negativo se a baixa tiver sido desfeita
+  // por outro caminho (conciliação) entre a leitura e a escrita.
+  payable.paidCents = Math.max(0, payable.paidCents - payment.amountCents);
+  payable.status =
+    payable.paidCents > 0 ? "partially_paid" : stillReserved ? "scheduled" : "open";
+  payable.updatedAt = nowIso;
+
+  // Atômico, como na execução: estorno do pagamento e devolução do saldo do
+  // título commitam juntos — um crash no meio não deixa título baixado sem
+  // pagamento correspondente.
+  await ctx.repos.withTransaction(async (tx) => {
+    await tx.payments.update(payment);
+    await tx.payables.update(payable);
+  });
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payment.reversed",
+    entityType: "payment",
+    entityId: payment.id,
+    before: paymentBefore,
+    after: { ...payment, reverseReason: input.reason },
+    correlationId: ctx.correlationId,
+  });
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payable.updated",
+    entityType: "payable",
+    entityId: payable.id,
+    before: payableBefore,
+    after: payable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "payment.reversed",
+    payload: {
+      id: payment.id,
+      payableId: payable.id,
+      amountCents: payment.amountCents,
+      reason: input.reason,
+    },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL,
+    ctx,
+    { payment, payable, reason: input.reason },
+    {
+      assumptions: [
+        `Pagamento ${payment.id} estornado (${formatBRL(payment.amountCents)}); título ${payable.id} devolvido para Contas a pagar com situação "${payable.status}".`,
+        "O pagamento fica como cancelado e sai das visões de caixa, orçamento e contabilidade; a trilha de auditoria preserva a execução anterior.",
+      ],
+      dataSources: DATA_SOURCES,
+    }
+  );
+}
+
+/**
  * Gera os títulos a pagar recorrentes devidos no mês corrente. Para cada
  * template ativo (kind=payable) cuja janela inclui o mês de hoje, cria o título
  * do mês reaproveitando createPayable — idempotente por originKey (que inclui o
@@ -1347,6 +1499,7 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
     "payable.canceled",
     "payment.scheduled",
     "payment.executed",
+    "payment.reversed",
   ],
   dataSources: DATA_SOURCES,
   async execute(ctx, input) {
@@ -1365,6 +1518,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return cancelPayable(ctx, input);
       case "update_payable":
         return updatePayable(ctx, input);
+      case "reverse_payment":
+        return reversePayment(ctx, input);
       case "generate_recurring":
         return generateRecurring(ctx);
     }
