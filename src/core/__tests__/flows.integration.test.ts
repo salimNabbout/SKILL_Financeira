@@ -303,6 +303,64 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(payable?.status).toBe("paid");
   });
 
+  it("título rejeitado pode ser reenviado à aprovação com o MESMO payload", async () => {
+    const payableId = await createPayable();
+    const payload = {
+      payableId,
+      bankAccountId: "ba_1",
+      scheduledDate: "2026-08-20",
+      method: "pix",
+    };
+
+    // 1ª tentativa: suspende aguardando aprovação.
+    const primeira = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+    expect(primeira.status).toBe("awaiting_approval");
+
+    // Rejeitada — o título volta para Contas a pagar.
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: primeira.approval!.id,
+      decision: "rejected",
+      actor: env.actorFor("approver"),
+    });
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe("open");
+
+    // 2ª tentativa com o MESMO payload: precisa gerar uma aprovação NOVA. Antes,
+    // a chave de idempotência gravada na rejeição devolvia a resposta em cache —
+    // a tela dizia "enviado para aprovação" e Aprovações ficava vazia.
+    const segunda = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+
+    expect(segunda.idempotent_replay).toBeFalsy();
+    expect(segunda.status).toBe("awaiting_approval");
+    expect(segunda.approval).toBeTruthy();
+    expect(segunda.approval!.id).not.toBe(primeira.approval!.id);
+
+    const pendentes = await env.repos.approvals.listByStatus(env.company.id, ["pending"]);
+    expect(pendentes).toHaveLength(1);
+    expect(pendentes[0].id).toBe(segunda.approval!.id);
+
+    // E a nova aprovação leva o pagamento até o fim do fluxo normal.
+    const decidida = await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: segunda.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    expect((decidida as OrchestratorResponse).status).toBe("completed");
+    const aprovados = await env.repos.payments.listByStatus(env.company.id, ["approved"]);
+    expect(aprovados).toHaveLength(1);
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

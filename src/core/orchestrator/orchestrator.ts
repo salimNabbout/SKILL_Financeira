@@ -424,7 +424,11 @@ export class Orchestrator {
           correlationId: flowRun.correlationId,
         });
         // Falha não grava idempotência: a nova tentativa reexecuta com segurança
-        // (ações de escrita das skills são idempotentes por chave natural).
+        // (ações de escrita das skills são idempotentes por chave natural). A
+        // RESERVA in-progress também precisa cair — numa falha durante a
+        // RETOMADA (decideApproval) não há ninguém em execute() para liberá-la,
+        // e a chave presa faria toda retentativa responder "em andamento".
+        await this.env.repos.idempotency.remove(flowRun.companyId, flowRun.idempotencyKey);
         return this.buildResponse(flowDef, flowRun, stored, assumptions);
       }
 
@@ -444,14 +448,24 @@ export class Orchestrator {
 
     const response = this.buildResponse(flowDef, flowRun, stored, assumptions);
 
-    await this.env.repos.idempotency.save({
-      id: this.env.ids.next("idem"),
-      companyId: flowRun.companyId,
-      key: flowRun.idempotencyKey,
-      requestHash: hashPayload(flowRun.payload ?? null),
-      result: response,
-      createdAt: this.env.clock.now().toISOString(),
-    });
+    if (flowRun.status === "rejected") {
+      // REJEIÇÃO não grava idempotência — libera a chave, como já se fazia na
+      // falha. Gravá-la congelava a requisição: reenviar o MESMO pagamento
+      // (mesmo título, conta e data) devolvia a resposta velha em cache, sem
+      // criar pagamento nem aprovação. A tela dizia "enviado para aprovação" e
+      // Aprovações continuava vazia — o título rejeitado nunca mais voltava ao
+      // fluxo. Rejeitar é justamente o desfecho que pede nova tentativa.
+      await this.env.repos.idempotency.remove(flowRun.companyId, flowRun.idempotencyKey);
+    } else {
+      await this.env.repos.idempotency.save({
+        id: this.env.ids.next("idem"),
+        companyId: flowRun.companyId,
+        key: flowRun.idempotencyKey,
+        requestHash: hashPayload(flowRun.payload ?? null),
+        result: response,
+        createdAt: this.env.clock.now().toISOString(),
+      });
+    }
 
     await this.audit.record(flowRun.companyId, {
       actor,

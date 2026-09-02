@@ -338,5 +338,16 @@ export async function schedulePaymentAction(formData: FormData): Promise<void> {
   const amount = response.approval?.amountCents ?? payableAmount;
   const quem = supplierName ? `de ${supplierName} ` : "";
   const quanto = amount !== undefined ? `— ${formatBRL(amount)} ` : "";
+
+  // Requisição repetida (mesma chave de idempotência: fluxo + título + conta +
+  // data): NADA foi criado. Dizer "enviado para aprovação" aqui é mentira — era
+  // o que mandava o usuário procurar em Aprovações uma solicitação inexistente.
+  if (response.idempotent_replay) {
+    ok(
+      "Nada foi enviado: já existe uma solicitação igual para este título (mesma conta e mesma data) e ela não foi duplicada. " +
+        "Se a anterior ainda está pendente, decida-a em Aprovações; se já foi decidida, altere a data do pagamento para enviar uma nova."
+    );
+  }
+
   ok(`Pagamento ${quem}${quanto}enviado para aprovação.`);
 }
