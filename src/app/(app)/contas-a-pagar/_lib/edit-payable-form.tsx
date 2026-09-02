@@ -86,192 +86,206 @@ export function EditPayableForm({
   const cardOff = `${cardBase} border-[var(--line)] opacity-60`;
 
   return (
-    <form
-      action={updatePayableAction}
-      className="grid gap-4 rounded-lg border border-[var(--line)] bg-slate-50 p-3 md:grid-cols-4"
+    // Borda vermelha em degradê: a moldura é o `div` externo (2px de gradiente)
+    // e o formulário, com fundo próprio, cobre o miolo — é o jeito de ter uma
+    // borda com gradiente, que `border-color` sozinho não aceita. As cores são
+    // literais (e não tokens do tema) para o vermelho ficar igual no claro e no
+    // escuro. O raio interno (rounded-md, 6px) é 2px menor que o externo
+    // (rounded-lg, 8px) — a diferença exata da moldura, para os cantos casarem.
+    <div
+      className="rounded-lg p-[2px]"
+      style={{
+        backgroundImage:
+          "linear-gradient(135deg, #dc2626 0%, #f87171 30%, #7f1d1d 65%, #ef4444 100%)",
+      }}
     >
-      <input type="hidden" name="payableId" value={payable.id} />
+      <form
+        action={updatePayableAction}
+        className="grid gap-4 rounded-md bg-slate-50 p-3 md:grid-cols-4"
+      >
+        <input type="hidden" name="payableId" value={payable.id} />
 
-      <Field label="Fornecedor">
-        <input value={payable.supplierName} disabled className={readOnlyClass} />
-        <span className="mt-1 block text-xs text-[var(--ink-muted)]">
-          Não editável: trocar o fornecedor é outro título. Cancele e recrie.
-        </span>
-      </Field>
-      <Field label="Descrição">
-        <input
-          name="description"
-          required
-          defaultValue={prefill?.description ?? payable.description}
-          className={inputClass}
-          placeholder="Ex.: NF 1234 — insumos"
-        />
-      </Field>
-      <Field label="Valor (R$)">
-        <MoneyInput
-          name="amount"
-          required
-          defaultValue={prefill?.amount ?? payable.amount}
-          className={inputClass}
-          placeholder="1.234,56"
-        />
-      </Field>
-      <Field label="Nº do Doc. (opcional)">
-        <input value={payable.documentNumber ?? "—"} disabled className={readOnlyClass} />
-        <span className="mt-1 block text-xs text-[var(--ink-muted)]">
-          Não editável: o documento é a chave que evita lançamento duplicado.
-        </span>
-      </Field>
-      <Field label="Emissão">
-        <input
-          type="date"
-          name="issueDate"
-          required
-          defaultValue={prefill?.issueDate ?? payable.issueDate}
-          className={inputClass}
-        />
-      </Field>
-      <Field label="Vencimento">
-        <input
-          type="date"
-          name="dueDate"
-          required
-          defaultValue={prefill?.dueDate ?? payable.dueDate}
-          className={inputClass}
-        />
-      </Field>
-      <Field label="Categoria">
-        <select
-          name="supplierCategory"
-          defaultValue={prefill?.supplierCategory ?? payable.supplierCategory}
-          className={inputClass}
-        >
-          <option value="">— selecione —</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Classificação do CUSTO">
-        <select
-          name="costClassification"
-          defaultValue={prefill?.costClassification ?? payable.costClassification}
-          className={inputClass}
-        >
-          <option value="">— selecione —</option>
-          <option value="fixed">Custo Fixo</option>
-          <option value="variable">Custo Variável</option>
-        </select>
-      </Field>
-      {/* A lista recebida já inclui o centro de custo atual do título, mesmo
-          inativo ou de outro destino, para a edição não trocar em silêncio o
-          que foi lançado. */}
-      <Field label="Centro de Custo">
-        <select
-          name="costCenterId"
-          defaultValue={prefill?.costCenterId ?? payable.costCenterId}
-          className={inputClass}
-        >
-          <option value="">— selecione —</option>
-          {costCenters.map((cc) => (
-            <option key={cc.id} value={cc.id}>
-              {cc.label}
-            </option>
-          ))}
-        </select>
-      </Field>
+        <Field label="Fornecedor">
+          <input value={payable.supplierName} disabled className={readOnlyClass} />
+          <span className="mt-1 block text-xs text-[var(--ink-muted)]">
+            Não editável: trocar o fornecedor é outro título. Cancele e recrie.
+          </span>
+        </Field>
+        <Field label="Descrição">
+          <input
+            name="description"
+            required
+            defaultValue={prefill?.description ?? payable.description}
+            className={inputClass}
+            placeholder="Ex.: NF 1234 — insumos"
+          />
+        </Field>
+        <Field label="Valor (R$)">
+          <MoneyInput
+            name="amount"
+            required
+            defaultValue={prefill?.amount ?? payable.amount}
+            className={inputClass}
+            placeholder="1.234,56"
+          />
+        </Field>
+        <Field label="Nº do Doc. (opcional)">
+          <input value={payable.documentNumber ?? "—"} disabled className={readOnlyClass} />
+          <span className="mt-1 block text-xs text-[var(--ink-muted)]">
+            Não editável: o documento é a chave que evita lançamento duplicado.
+          </span>
+        </Field>
+        <Field label="Emissão">
+          <input
+            type="date"
+            name="issueDate"
+            required
+            defaultValue={prefill?.issueDate ?? payable.issueDate}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Vencimento">
+          <input
+            type="date"
+            name="dueDate"
+            required
+            defaultValue={prefill?.dueDate ?? payable.dueDate}
+            className={inputClass}
+          />
+        </Field>
+        <Field label="Categoria">
+          <select
+            name="supplierCategory"
+            defaultValue={prefill?.supplierCategory ?? payable.supplierCategory}
+            className={inputClass}
+          >
+            <option value="">— selecione —</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Classificação do CUSTO">
+          <select
+            name="costClassification"
+            defaultValue={prefill?.costClassification ?? payable.costClassification}
+            className={inputClass}
+          >
+            <option value="">— selecione —</option>
+            <option value="fixed">Custo Fixo</option>
+            <option value="variable">Custo Variável</option>
+          </select>
+        </Field>
+        {/* A lista recebida já inclui o centro de custo atual do título, mesmo
+            inativo ou de outro destino, para a edição não trocar em silêncio o
+            que foi lançado. */}
+        <Field label="Centro de Custo">
+          <select
+            name="costCenterId"
+            defaultValue={prefill?.costCenterId ?? payable.costCenterId}
+            className={inputClass}
+          >
+            <option value="">— selecione —</option>
+            {costCenters.map((cc) => (
+              <option key={cc.id} value={cc.id}>
+                {cc.label}
+              </option>
+            ))}
+          </select>
+        </Field>
 
-      {/* TIPO DE LANÇAMENTO — espelha o bloco do Novo título, em leitura. O tipo
-          é decidido na criação (define quantos títulos existem e a originKey de
-          cada um); aqui ele é mostrado com a posição desta linha na série. */}
-      <fieldset className="md:col-span-4 rounded-lg border border-[var(--line)] p-3">
-        <legend className="px-1 text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">
-          Tipo de lançamento
-        </legend>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className={isRecorrente ? cardOff : cardOn}>
-            <span>
-              <span className="font-medium">Parcelado</span>
-              <span className="mt-0.5 block text-xs text-[var(--ink-muted)]">
-                O valor informado é o TOTAL, dividido entre as parcelas.
+        {/* TIPO DE LANÇAMENTO — espelha o bloco do Novo título, em leitura. O tipo
+            é decidido na criação (define quantos títulos existem e a originKey de
+            cada um); aqui ele é mostrado com a posição desta linha na série. */}
+        <fieldset className="md:col-span-4 rounded-lg border border-[var(--line)] p-3">
+          <legend className="px-1 text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">
+            Tipo de lançamento
+          </legend>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className={isRecorrente ? cardOff : cardOn}>
+              <span>
+                <span className="font-medium">Parcelado</span>
+                <span className="mt-0.5 block text-xs text-[var(--ink-muted)]">
+                  O valor informado é o TOTAL, dividido entre as parcelas.
+                </span>
               </span>
-            </span>
-          </div>
-          <div className={isRecorrente ? cardOn : cardOff}>
-            <span>
-              <span className="font-medium">Recorrente</span>
-              <span className="mt-0.5 block text-xs text-[var(--ink-muted)]">
-                O valor informado se repete INTEGRALMENTE a cada período.
+            </div>
+            <div className={isRecorrente ? cardOn : cardOff}>
+              <span>
+                <span className="font-medium">Recorrente</span>
+                <span className="mt-0.5 block text-xs text-[var(--ink-muted)]">
+                  O valor informado se repete INTEGRALMENTE a cada período.
+                </span>
               </span>
-            </span>
+            </div>
           </div>
-        </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {isRecorrente ? (
-            <Field label="Frequência">
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {isRecorrente ? (
+              <Field label="Frequência">
+                <input
+                  value={
+                    FREQUENCIA_LABEL[payable.recurrenceFrequency ?? ""] ??
+                    payable.recurrenceFrequency ??
+                    "—"
+                  }
+                  disabled
+                  className={readOnlyClass}
+                />
+              </Field>
+            ) : (
+              <Field label="Número de parcelas">
+                <input value={payable.installmentCount} disabled className={readOnlyClass} />
+              </Field>
+            )}
+            <Field label={`${posicaoLabel} deste título`}>
               <input
-                value={
-                  FREQUENCIA_LABEL[payable.recurrenceFrequency ?? ""] ??
-                  payable.recurrenceFrequency ??
-                  "—"
-                }
+                value={`${payable.installmentNumber} de ${payable.installmentCount}`}
                 disabled
                 className={readOnlyClass}
               />
             </Field>
-          ) : (
-            <Field label="Número de parcelas">
-              <input value={payable.installmentCount} disabled className={readOnlyClass} />
-            </Field>
-          )}
-          <Field label={`${posicaoLabel} deste título`}>
-            <input
-              value={`${payable.installmentNumber} de ${payable.installmentCount}`}
-              disabled
-              className={readOnlyClass}
+          </div>
+          <p className="mt-2 text-xs text-[var(--ink-muted)]">
+            O tipo de lançamento é definido na criação e vale para a série inteira.
+            Salvar aqui altera apenas este título; os demais da série continuam como
+            estão.
+          </p>
+        </fieldset>
+
+        {/* Observação: texto livre do título (campo `notes` da entidade). Em bloco
+            próprio, ocupando a linha, por ser mais longo que os demais campos. */}
+        <div className="md:col-span-4">
+          <Field label="Observação">
+            <textarea
+              name="notes"
+              rows={3}
+              defaultValue={prefill?.notes ?? payable.notes}
+              className={inputClass}
+              placeholder="Anotações sobre este título (opcional)."
             />
           </Field>
         </div>
-        <p className="mt-2 text-xs text-[var(--ink-muted)]">
-          O tipo de lançamento é definido na criação e vale para a série inteira.
-          Salvar aqui altera apenas este título; os demais da série continuam como
-          estão.
-        </p>
-      </fieldset>
 
-      {/* Observação: texto livre do título (campo `notes` da entidade). Em bloco
-          próprio, ocupando a linha, por ser mais longo que os demais campos. */}
-      <div className="md:col-span-4">
-        <Field label="Observação">
-          <textarea
-            name="notes"
-            rows={3}
-            defaultValue={prefill?.notes ?? payable.notes}
-            className={inputClass}
-            placeholder="Anotações sobre este título (opcional)."
-          />
-        </Field>
-      </div>
-
-      <div className="flex flex-wrap items-end gap-2 md:col-span-4">
-        <Button variant="warn" type="submit">
-          Salvar alterações
-        </Button>
-        <Link
-          href={cancelHref}
-          className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-        >
-          Cancelar
-        </Link>
-        {payable.scheduled ? (
-          <span className="text-xs text-amber-700">
-            Este título tem pagamento agendado: o valor não pode ser alterado até o
-            agendamento ser cancelado.
-          </span>
-        ) : null}
-      </div>
-    </form>
+        <div className="flex flex-wrap items-end gap-2 md:col-span-4">
+          <Button variant="warn" type="submit">
+            Salvar alterações
+          </Button>
+          <Link
+            href={cancelHref}
+            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+          >
+            Cancelar
+          </Link>
+          {payable.scheduled ? (
+            <span className="text-xs text-amber-700">
+              Este título tem pagamento agendado: o valor não pode ser alterado até o
+              agendamento ser cancelado.
+            </span>
+          ) : null}
+        </div>
+      </form>
+    </div>
   );
 }
