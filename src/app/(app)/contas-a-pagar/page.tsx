@@ -32,7 +32,7 @@ import { IconeExportar, IconeImportar, IconeImprimir } from "./_lib/icons";
 
 // Situações DERIVADAS usadas como filtro. Cada uma vira um recorte de
 // status + intervalo de vencimento aplicado NO BANCO (listPage) — nunca em
-// memória, para não quebrar o total/Pager. "Pago Atraso" não é filtrável no
+// memória, para não quebrar o total/Pager. "Pago Atrasado" não é filtrável no
 // listPage atual (compara Payment.executedAt com dueDate) — fica só como badge.
 type SituacaoFiltro =
   | "todos"
@@ -61,7 +61,7 @@ const SITUACAO_TONE: Record<PayableSituation, "neutral" | "ok" | "warn" | "crit"
   Hoje: "warn",
   "A Vencer": "neutral",
   Pago: "ok",
-  "Pago Atraso": "ok", // ok, mas o texto do badge sinaliza o atraso
+  "Pago Atrasado": "crit", // quitado, mas fora do prazo — vermelho
   Cancelado: "neutral", // apagado
 };
 
@@ -222,7 +222,7 @@ export default async function ContasAPagarPage({
       repos.payables.listAll(companyId),
       // Centros de custo para o select do formulário (carregado uma vez).
       repos.costCenters.listAll(companyId),
-      // Pagamentos executados: para a data de quitação (situação "Pago Atraso").
+      // Pagamentos executados: para a data de quitação (situação "Pago Atrasado").
       // UMA consulta; monta-se um Map por payableId (sem getById em loop).
       repos.payments.listByStatus(companyId, ["executed"]),
     ]);

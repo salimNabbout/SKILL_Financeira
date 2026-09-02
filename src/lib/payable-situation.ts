@@ -6,7 +6,7 @@
  *
  * A lógica de datas/precedência vive em `deriveSituation` (genérica, comum a
  * pagar e receber). Aqui só se traduz o enum abstrato para o rótulo pt-BR do
- * lado "a pagar" ("Pago" / "Pago Atraso"). A função continua PURA: recebe
+ * lado "a pagar" ("Pago" / "Pago Atrasado"). A função continua PURA: recebe
  * `today` e a data de pagamento por parâmetro.
  */
 
@@ -19,7 +19,7 @@ export type PayableSituation =
   | "Hoje"
   | "Atrasado"
   | "Pago"
-  | "Pago Atraso"
+  | "Pago Atrasado"
   | "Cancelado";
 
 /** Enum abstrato → rótulo pt-BR do lado a PAGAR. */
@@ -28,7 +28,7 @@ const PAYABLE_LABEL: Record<Situation, PayableSituation> = {
   hoje: "Hoje",
   atrasado: "Atrasado",
   quitado: "Pago",
-  quitado_atraso: "Pago Atraso",
+  quitado_atraso: "Pago Atrasado",
   cancelado: "Cancelado",
 };
 

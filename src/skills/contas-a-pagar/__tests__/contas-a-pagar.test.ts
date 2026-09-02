@@ -16,6 +16,7 @@ import {
   type ForecastDisbursementsData,
   type GenerateRecurringData,
   type ListDueData,
+  type ReconcilePaymentData,
   type ReversePaymentData,
   type SchedulePaymentData,
   type UpdatePayableData,
@@ -125,6 +126,24 @@ async function schedule(env: TestEnv, payableId: string, amountCents?: number) {
     ...(amountCents !== undefined ? { amountCents } : {}),
   });
   return { res, data: res.data as SchedulePaymentData };
+}
+
+/**
+ * Concilia o pagamento aprovado (é a conciliação, não a aprovação, que baixa o
+ * título). `paymentDate` default = hoje, antes do vencimento dos títulos
+ * semeados (2026-08-20) — logo, quitação em dia.
+ */
+async function reconcile(
+  env: TestEnv,
+  paymentId: string,
+  paymentDate: string = TODAY,
+  role: "manager" | "analyst" = "manager"
+) {
+  return runSkill(contasAPagarSkill, env.ctx(env.actorFor(role)), {
+    action: "reconcile_payment",
+    paymentId,
+    paymentDate,
+  });
 }
 
 /** Simula a retomada pós-decisão: grava a Approval no repositório e reexecuta com ctx.approval. */
@@ -453,7 +472,7 @@ describe("contas_a_pagar — schedule_payment e aprovação", () => {
     expect(third.res.status).toBe("error");
   });
 
-  it("aprovação executa (mock), quita o título e publica payment.executed", async () => {
+  it("aprovação NÃO baixa o título: deixa o pagamento aprovado aguardando conciliação", async () => {
     const env = createTestEnv();
     seedSupplier(env);
     seedBankAccount(env);
@@ -463,9 +482,31 @@ describe("contas_a_pagar — schedule_payment e aprovação", () => {
     const { res, data } = await decide(env, scheduled.payment.id, "approved");
 
     expect(res.status).toBe("success");
+    expect(data.payment.status).toBe("approved");
+    expect(data.payment.executedAt).toBeUndefined();
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.paidCents).toBe(0);
+    expect(stored?.status).toBe("scheduled"); // continua em Contas a pagar
+    expect(env.db.events.some((e) => e.type === "payment.approved")).toBe(true);
+    expect(env.db.events.some((e) => e.type === "payment.executed")).toBe(false);
+  });
+
+  it("conciliação executa (mock), quita o título e publica payment.executed", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+    const { data: scheduled } = await schedule(env, payable.id);
+    await decide(env, scheduled.payment.id, "approved");
+
+    const res = await reconcile(env, scheduled.payment.id, "2026-08-17");
+    const data = res.data as ReconcilePaymentData;
+
+    expect(res.status).toBe("success");
     expect(data.payment.status).toBe("executed");
-    expect(data.payment.executedBy).toBe("usr_approver");
-    expect(data.payment.executedAt).toBe(env.clock.now().toISOString());
+    expect(data.payment.executedBy).toBe("usr_manager");
+    // A data informada vira o executedAt (meio-dia UTC, para não mudar de dia).
+    expect(data.payment.executedAt).toBe("2026-08-17T12:00:00.000Z");
     const stored = env.db.payables.find((p) => p.id === payable.id);
     expect(stored?.paidCents).toBe(50_000);
     expect(stored?.status).toBe("paid");
@@ -473,19 +514,56 @@ describe("contas_a_pagar — schedule_payment e aprovação", () => {
     expect(res.assumptions.some((a) => a.toLowerCase().includes("mock"))).toBe(true);
   });
 
-  it("pagamento parcial aprovado deixa o título partially_paid", async () => {
+  it("conciliação após o vencimento sinaliza a quitação em atraso", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    // Vencido em 2026-08-10; conciliado em 2026-08-18 (hoje) → em atraso.
+    const payable = seedPayable(env, { amountCents: 50_000, dueDate: "2026-08-10" });
+    const { data: scheduled } = await schedule(env, payable.id);
+    await decide(env, scheduled.payment.id, "approved");
+
+    const res = await reconcile(env, scheduled.payment.id);
+
+    expect(res.status).toBe("success");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
+    expect(res.assumptions.some((a) => /Pago Atrasado/.test(a))).toBe(true);
+  });
+
+  it("pagamento parcial conciliado deixa o título partially_paid", async () => {
     const env = createTestEnv();
     seedSupplier(env);
     seedBankAccount(env);
     const payable = seedPayable(env, { amountCents: 50_000 });
     const { data: scheduled } = await schedule(env, payable.id, 20_000);
+    await decide(env, scheduled.payment.id, "approved");
 
-    const { data } = await decide(env, scheduled.payment.id, "approved");
+    const res = await reconcile(env, scheduled.payment.id);
+    const data = res.data as ReconcilePaymentData;
 
     expect(data.payment.amountCents).toBe(20_000);
     const stored = env.db.payables.find((p) => p.id === payable.id);
     expect(stored?.paidCents).toBe(20_000);
     expect(stored?.status).toBe("partially_paid");
+  });
+
+  it("recusa conciliação de pagamento não aprovado e de data futura", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+    const { data: scheduled } = await schedule(env, payable.id);
+
+    // Ainda pending_approval.
+    const semAprovacao = await reconcile(env, scheduled.payment.id);
+    expect(semAprovacao.status).toBe("error");
+    expect(semAprovacao.alerts[0].message).toContain("não está aprovado");
+
+    await decide(env, scheduled.payment.id, "approved");
+    const futura = await reconcile(env, scheduled.payment.id, "2026-12-31");
+    expect(futura.status).toBe("error");
+    expect(futura.alerts[0].message).toContain("futuro");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("scheduled");
   });
 
   it("rejeição cancela o pagamento e devolve o título para open", async () => {
@@ -679,6 +757,7 @@ describe("contas_a_pagar — cancel_payable", () => {
     const payable = seedPayable(env, { amountCents: 50_000 });
     const { data: scheduled } = await schedule(env, payable.id, 20_000);
     await decide(env, scheduled.payment.id, "approved");
+    await reconcile(env, scheduled.payment.id); // é a conciliação que baixa
 
     const res = await runSkill(contasAPagarSkill, env.ctx(env.actorFor("manager")), {
       action: "cancel_payable",
@@ -1125,6 +1204,7 @@ describe("contas_a_pagar — estorno de pagamento executado", () => {
     const payable = seedPayable(env, { amountCents: 50_000 });
     const { data: scheduled } = await schedule(env, payable.id);
     await decide(env, scheduled.payment.id, "approved");
+    await reconcile(env, scheduled.payment.id);
     expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
 
     const res = await reverse(env, scheduled.payment.id);
@@ -1147,8 +1227,10 @@ describe("contas_a_pagar — estorno de pagamento executado", () => {
 
     const primeiro = await schedule(env, payable.id, 20_000);
     await decide(env, primeiro.data.payment.id, "approved");
+    await reconcile(env, primeiro.data.payment.id);
     const segundo = await schedule(env, payable.id, 30_000);
     await decide(env, segundo.data.payment.id, "approved");
+    await reconcile(env, segundo.data.payment.id);
     expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
 
     const res = await reverse(env, segundo.data.payment.id);
@@ -1166,6 +1248,7 @@ describe("contas_a_pagar — estorno de pagamento executado", () => {
     const payable = seedPayable(env, { amountCents: 50_000 });
     const { data: scheduled } = await schedule(env, payable.id);
     await decide(env, scheduled.payment.id, "approved");
+    await reconcile(env, scheduled.payment.id);
 
     await reverse(env, scheduled.payment.id);
     const segunda = await reverse(env, scheduled.payment.id);
@@ -1197,6 +1280,7 @@ describe("contas_a_pagar — estorno de pagamento executado", () => {
     const payable = seedPayable(env, { amountCents: 50_000 });
     const { data: scheduled } = await schedule(env, payable.id);
     await decide(env, scheduled.payment.id, "approved");
+    await reconcile(env, scheduled.payment.id);
 
     const res = await reverse(env, scheduled.payment.id, "analyst");
 

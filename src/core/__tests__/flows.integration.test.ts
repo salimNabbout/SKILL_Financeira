@@ -136,7 +136,7 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     return (res.results[0].result.data as any).payables[0].id;
   }
 
-  it("suspende, aprova com segregação, executa (mock) e prepara contabilidade", async () => {
+  it("suspende, aprova com segregação e só a conciliação executa e prepara contabilidade", async () => {
     const payableId = await createPayable();
 
     const res = await orch.execute({
@@ -174,9 +174,26 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
 
     expect(resumed.status).toBe("completed");
 
+    // A aprovação autoriza, mas NÃO baixa: nada executado ainda e o título
+    // continua em Contas a pagar, agendado.
+    expect(await env.repos.payments.listByStatus(env.company.id, ["executed"])).toHaveLength(0);
+    const aprovados = await env.repos.payments.listByStatus(env.company.id, ["approved"]);
+    expect(aprovados).toHaveLength(1);
+    expect(aprovados[0].approvalId).toBeTruthy();
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe("scheduled");
+
+    // Conciliação: informa a data real da saída e é ela que quita o título.
+    const conciliado = await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId: aprovados[0].id, paymentDate: "2026-08-18" },
+    });
+    expect(conciliado.status).toBe("completed");
+
     const payments = await env.repos.payments.listByStatus(env.company.id, ["executed"]);
     expect(payments).toHaveLength(1);
-    expect(payments[0].executedBy).toBe("usr_approver");
+    expect(payments[0].executedBy).toBe("usr_manager");
     expect(payments[0].approvalId).toBeTruthy();
 
     const payable = await env.repos.payables.getById(env.company.id, payableId);
@@ -236,7 +253,7 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(res.approval?.requiredRole).toBe("admin");
   });
 
-  it("duas decisões concorrentes na mesma aprovação executam o pagamento UMA vez (A2)", async () => {
+  it("duas decisões concorrentes na mesma aprovação aprovam o pagamento UMA vez (A2)", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({
       flow: "schedule_payment",
@@ -267,7 +284,18 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     const ok = results.filter((r) => r.status === "fulfilled");
     expect(ok).toHaveLength(1);
 
-    // O pagamento é executado uma única vez e o título não é sobre-baixado.
+    // O pagamento é aprovado uma única vez — e, conciliado depois, baixa o
+    // título uma única vez (sem sobre-baixa).
+    const aprovados = await env.repos.payments.listByStatus(env.company.id, ["approved"]);
+    expect(aprovados).toHaveLength(1);
+
+    await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("admin"),
+      payload: { paymentId: aprovados[0].id, paymentDate: "2026-08-18" },
+    });
+
     const executed = await env.repos.payments.listByStatus(env.company.id, ["executed"]);
     expect(executed).toHaveLength(1);
     const payable = await env.repos.payables.getById(env.company.id, payableId);
