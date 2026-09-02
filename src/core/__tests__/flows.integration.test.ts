@@ -399,6 +399,60 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(pendentes).toHaveLength(1);
   });
 
+  it("registro de idempotência parado em 'aguardando aprovação' não trava o reenvio", async () => {
+    const payableId = await createPayable();
+    const payload = {
+      payableId,
+      bankAccountId: "ba_1",
+      scheduledDate: "2026-08-20",
+      method: "pix",
+    };
+
+    // 1ª tentativa + rejeição, pelo caminho real.
+    const primeira = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: primeira.approval!.id,
+      decision: "rejected",
+      actor: env.actorFor("approver"),
+    });
+
+    // Simula o registro que a suspensão gravava e que a versão antiga deixava
+    // para trás: a foto "awaiting_approval" apontando para um fluxo que, hoje,
+    // está REJEITADO. Olhar só o status do cache não perceberia o problema.
+    const key = hashPayload({ flow: "schedule_payment", payload });
+    await env.repos.idempotency.save({
+      id: "idem_parado",
+      companyId: env.company.id,
+      key,
+      requestHash: hashPayload(payload),
+      result: {
+        flowRunId: primeira.flowRunId,
+        flow: "schedule_payment",
+        status: "awaiting_approval",
+      },
+      createdAt: env.clock.now().toISOString(),
+    });
+
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+
+    expect(res.idempotent_replay).toBeFalsy();
+    expect(res.status).toBe("awaiting_approval");
+    expect(res.approval!.id).not.toBe(primeira.approval!.id);
+    const pendentes = await env.repos.approvals.listByStatus(env.company.id, ["pending"]);
+    expect(pendentes).toHaveLength(1);
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({
