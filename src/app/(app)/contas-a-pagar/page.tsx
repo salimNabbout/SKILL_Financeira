@@ -21,7 +21,12 @@ import { derivePayableSituation, hasPartialPayment, type PayableSituation } from
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { cancelPayableAction, schedulePaymentAction, updatePayableAction } from "./actions";
-import { NewPayableForm, type SupplierOption } from "./_lib/new-payable-form";
+import {
+  NewPayableForm,
+  type CostCenterOption,
+  type SupplierOption,
+} from "./_lib/new-payable-form";
+import { EditPayableForm } from "./_lib/edit-payable-form";
 import { filtersToQuery } from "./_lib/filters";
 import { IconeExportar, IconeImportar, IconeImprimir } from "./_lib/icons";
 
@@ -90,6 +95,7 @@ export default async function ContasAPagarPage({
     f_valor?: string;
     f_categoria?: string;
     f_custo?: string;
+    f_centrocusto?: string;
     f_notas?: string;
     excluir?: string;
     f_motivo?: string;
@@ -301,6 +307,51 @@ export default async function ContasAPagarPage({
   // amountCents → "1234,56" (sem símbolo) para o defaultValue do input de valor.
   const centsToInput = (cents: number): string =>
     (cents / 100).toFixed(2).replace(".", ",");
+
+  // --- Dados do título em EDIÇÃO ------------------------------------------
+  // O formulário de edição espelha o "Novo título", então precisa de coisas que
+  // a listagem não carrega: o número do documento e o centro de custo atual.
+  // Tudo restrito ao ÚNICO título aberto (?editar=), para não pesar a página.
+  const editingPayable = editar ? rows.find((r) => r.id === editar) : undefined;
+  const editingDocument = editingPayable?.documentId
+    ? await repos.documents.getById(companyId, editingPayable.documentId)
+    : null;
+  const editingDocumentNumber = editingDocument?.number;
+
+  // Recorrência não é campo da entidade: a skill marca a série na originKey
+  // ("<fornecedor>:<doc>:R-<frequência>:<n>/<total>"). É daí que o formulário
+  // sabe se o título nasceu Parcelado ou Recorrente.
+  const editingRecurrenceFrequency = editingPayable?.originKey.match(
+    /:R-(weekly|monthly|quarterly|yearly):/
+  )?.[1];
+
+  // O centro de custo do título pode estar inativo (ou ser de outro destino) e
+  // não constar da lista de opções. Sem ele na lista, o select abriria em
+  // branco e salvar trocaria o vínculo sem ninguém pedir — então ele entra.
+  const editingCostCenter =
+    editingPayable?.costCenterId &&
+    !costCenterOptions.some((c) => c.id === editingPayable.costCenterId)
+      ? costCenters.find((c) => c.id === editingPayable.costCenterId)
+      : undefined;
+  const editCostCenterOptions: CostCenterOption[] = editingCostCenter
+    ? [
+        { id: editingCostCenter.id, label: `${editingCostCenter.code} — ${editingCostCenter.name}` },
+        ...costCenterOptions,
+      ]
+    : costCenterOptions;
+
+  // Reidratação da edição após falha de validação (f_*). Campos ausentes ficam
+  // undefined e o formulário cai no valor gravado do título.
+  const editPrefill = {
+    description: sp.f_descricao,
+    amount: sp.f_valor,
+    issueDate: sp.f_emissao,
+    dueDate: sp.f_vencimento,
+    supplierCategory: sp.f_categoria,
+    costClassification: sp.f_custo,
+    costCenterId: sp.f_centrocusto,
+    notes: sp.f_notas,
+  };
 
   // Reexibição do formulário "Novo título" após falha de validação: reidrata os
   // campos com o que foi digitado (nt_*). Ausente em caso de sucesso (nada é
@@ -639,99 +690,33 @@ export default async function ContasAPagarPage({
                         Usa <td> cru (não o Td compartilhado) porque precisa de colSpan,
                         que o Td não expõe — o componente compartilhado não é alterado. */}
                     <td className="px-2 py-2 align-middle" colSpan={9}>
-                      {/* Formulário de edição inline (Server Component; sem client/useState).
-                          Em erro de validação, a action reabre esta linha com os campos
-                          preenchidos via ?f_*= (defaultValue abaixo). */}
-                      <form
-                        action={updatePayableAction}
-                        className="grid gap-3 rounded-lg border border-[var(--line)] bg-slate-50 p-3 md:grid-cols-3"
-                      >
-                        <input type="hidden" name="payableId" value={p.id} />
-                        <Field label="Descrição">
-                          <input
-                            name="description"
-                            required
-                            defaultValue={sp.f_descricao ?? p.description}
-                            className={inputClass}
-                          />
-                        </Field>
-                        <Field label="Valor (R$)">
-                          <input
-                            name="amount"
-                            required
-                            defaultValue={sp.f_valor ?? centsToInput(p.amountCents)}
-                            className={inputClass}
-                            placeholder="1.234,56"
-                          />
-                        </Field>
-                        <Field label="Categoria">
-                          <select
-                            name="supplierCategory"
-                            defaultValue={sp.f_categoria ?? p.supplierCategory ?? ""}
-                            className={inputClass}
-                          >
-                            <option value="">— sem categoria —</option>
-                            {categoryOptions.map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
-                            ))}
-                          </select>
-                        </Field>
-                        <Field label="Emissão">
-                          <input
-                            type="date"
-                            name="issueDate"
-                            required
-                            defaultValue={sp.f_emissao ?? p.issueDate}
-                            className={inputClass}
-                          />
-                        </Field>
-                        <Field label="Vencimento">
-                          <input
-                            type="date"
-                            name="dueDate"
-                            required
-                            defaultValue={sp.f_vencimento ?? p.dueDate}
-                            className={inputClass}
-                          />
-                        </Field>
-                        <Field label="Classificação do CUSTO">
-                          <select
-                            name="costClassification"
-                            defaultValue={sp.f_custo ?? p.costClassification ?? ""}
-                            className={inputClass}
-                          >
-                            <option value="">— sem classificação —</option>
-                            <option value="fixed">Custo Fixo</option>
-                            <option value="variable">Custo Variável</option>
-                          </select>
-                        </Field>
-                        <Field label="Observações">
-                          <input
-                            name="notes"
-                            defaultValue={sp.f_notas ?? p.notes ?? ""}
-                            className={inputClass}
-                          />
-                        </Field>
-                        <div className="flex items-end gap-2 md:col-span-3">
-                          <Button variant="warn" type="submit">
-                            Salvar alterações
-                          </Button>
-                          <Link
-                            href={editHref(null)}
-                            className="rounded-lg border border-[var(--line)] bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-                          >
-                            Cancelar
-                          </Link>
-                          {p.status === "scheduled" ? (
-                            <span className="text-xs text-amber-700">
-                              Este título tem pagamento agendado: o valor não pode ser alterado até o
-                              agendamento ser cancelado.
-                            </span>
-                          ) : null}
-                        </div>
-                      </form>
+                      {/* Formulário de edição: espelho do "Novo título" (mesmos campos,
+                          mesma ordem), com Observação e com os campos de identidade do
+                          título só em leitura. Em erro de validação, a action reabre
+                          esta linha com o que foi digitado (?f_*= → prefill). */}
+                      <EditPayableForm
+                        payable={{
+                          id: p.id,
+                          supplierName: supplierName.get(p.supplierId) ?? p.supplierId,
+                          description: p.description,
+                          amount: centsToInput(p.amountCents),
+                          documentNumber: editingDocumentNumber,
+                          issueDate: p.issueDate,
+                          dueDate: p.dueDate,
+                          supplierCategory: p.supplierCategory ?? "",
+                          costClassification: p.costClassification ?? "",
+                          costCenterId: p.costCenterId ?? "",
+                          notes: p.notes ?? "",
+                          installmentNumber: p.installmentNumber,
+                          installmentCount: p.installmentCount,
+                          recurrenceFrequency: editingRecurrenceFrequency,
+                          scheduled: p.status === "scheduled",
+                        }}
+                        categories={categoryOptions}
+                        costCenters={editCostCenterOptions}
+                        prefill={editPrefill}
+                        cancelHref={editHref(null)}
+                      />
                     </td>
                   </tr>
                 ) : null}
