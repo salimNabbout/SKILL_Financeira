@@ -623,6 +623,61 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(entries[0].entryDate).toBe("2026-08-12");
   });
 
+  it("título ESTORNADO pode ser reenviado com os mesmos dados", async () => {
+    const payableId = await createPayable();
+    const payload = {
+      payableId,
+      bankAccountId: "ba_1",
+      scheduledDate: "2026-08-20",
+      method: "pix",
+    };
+
+    // Ciclo completo: agenda, aprova, concilia.
+    const agendado = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: agendado.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    const paymentId = (await env.repos.payments.listByStatus(env.company.id, ["approved"]))[0].id;
+    await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId, paymentDate: "2026-08-18" },
+    });
+
+    // Estorna: o título volta para Contas a pagar.
+    await orch.execute({
+      flow: "undo_reconciliation",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId, reason: "pago em duplicidade" },
+    });
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe("open");
+
+    // Reenvia com o MESMO payload. Antes, o fluxo concluído do agendamento
+    // original devolvia a resposta em cache: nada criado, Aprovações vazia.
+    const reenviado = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+
+    expect(reenviado.idempotent_replay).toBeFalsy();
+    expect(reenviado.status).toBe("awaiting_approval");
+    expect(reenviado.approval!.id).not.toBe(agendado.approval!.id);
+    const pendentes = await env.repos.approvals.listByStatus(env.company.id, ["pending"]);
+    expect(pendentes).toHaveLength(1);
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

@@ -1745,6 +1745,24 @@ async function reversePayment(
         `Aprovação ${approval.id} marcada como estornada: sai do histórico de decisões, mas segue registrada para auditoria e controles internos.`
       );
     }
+
+    // LIBERA a chave de idempotência do agendamento que originou este pagamento.
+    // Sem isto, o título volta para Contas a pagar mas um novo "Pagar" com os
+    // MESMOS parâmetros (mesma conta, mesma data) bate no fluxo concluído e é
+    // devolvido do cache: nada é criado e nenhuma aprovação aparece. É a mesma
+    // armadilha da rejeição, pelo caminho do estorno — e a regra do orquestrador
+    // não pega, porque ela só descarta fluxo rejeitado ou falho, e este ficou
+    // "concluído". Estornar é justamente o desfecho que devolve o título à fila.
+    const flowRun =
+      (approval?.flowRunId
+        ? await ctx.repos.flowRuns.getById(ctx.companyId, approval.flowRunId)
+        : null) ?? (await ctx.repos.flowRuns.findByApprovalId(ctx.companyId, payment.approvalId));
+    if (flowRun) {
+      await ctx.repos.idempotency.remove(ctx.companyId, flowRun.idempotencyKey);
+      approvalNota.push(
+        "O título pode ser reenviado para pagamento com os mesmos dados (conta e data) — a solicitação anterior deixou de bloquear."
+      );
+    }
   }
 
   return makeResult(
