@@ -30,6 +30,10 @@ export interface EditPayableValues {
    *  exibi-lo sem precisar da lista de opções. */
   costCenterLabel?: string;
   notes: string;
+  /** Data do pagamento conciliado (só usada no modo "paymentDateOnly"). */
+  paymentDate?: string;
+  /** Teto do campo de data de pagamento: hoje, no fuso da empresa. */
+  paymentDateMax?: string;
   installmentNumber: number;
   installmentCount: number;
   /** Preenchido só quando o título nasceu de recorrência (marcador da originKey). */
@@ -48,6 +52,7 @@ export interface EditPayablePrefill {
   costClassification?: string;
   costCenterId?: string;
   notes?: string;
+  paymentDate?: string;
 }
 
 /**
@@ -66,9 +71,10 @@ export interface EditPayablePrefill {
  *
  * `mode` escolhe o alcance:
  *  - "full" (Contas a pagar): tudo acima editável;
- *  - "dueDateOnly" (Conciliados): SÓ o Vencimento. Serve para corrigir um
- *    vencimento digitado errado depois da conciliação — o título já está pago e
- *    a skill recusa alterar qualquer outro campo dele.
+ *  - "paymentDateOnly" (Conciliados): SÓ a Data de Pagamento. Serve para
+ *    corrigir uma data digitada errada na conciliação — é ela, contra o
+ *    vencimento, que decide Pago / Pago no Vencimento / Pago Atrasado. O
+ *    vencimento fica visível em leitura, por ser a referência da comparação.
  *
  * `action` é a server action de destino, passada pelo chamador: cada tela
  * redireciona e revalida a SUA própria rota.
@@ -88,7 +94,7 @@ export function EditPayableForm({
   /** Campos ocultos extras que a tela chamadora precisa devolver na action
    *  (ex.: o id do pagamento, para reabrir a linha certa em caso de erro). */
   hiddenFields?: Record<string, string>;
-  mode?: "full" | "dueDateOnly";
+  mode?: "full" | "paymentDateOnly";
   categories?: string[];
   costCenters?: CostCenterOption[];
   prefill?: EditPayablePrefill;
@@ -100,8 +106,9 @@ export function EditPayableForm({
   const readOnlyClass = `${inputClass} cursor-not-allowed text-[var(--ink-muted)] opacity-70`;
   // Modo restrito: os campos que a skill não aceita alterar num título baixado
   // são renderizados DESABILITADOS (mesma aparência dos já bloqueados), em vez
-  // de escondidos — o colaborador continua vendo o título inteiro.
-  const soVencimento = mode === "dueDateOnly";
+  // de escondidos — o colaborador continua vendo o título inteiro, incluindo o
+  // vencimento, que é contra o que a data de pagamento é comparada.
+  const soDataPagamento = mode === "paymentDateOnly";
   const CUSTO_LABEL: Record<string, string> = {
     fixed: "Custo Fixo",
     variable: "Custo Variável",
@@ -139,7 +146,7 @@ export function EditPayableForm({
           </span>
         </Field>
         <Field label="Descrição">
-          {soVencimento ? (
+          {soDataPagamento ? (
             <input value={payable.description} disabled className={readOnlyClass} />
           ) : (
             <input
@@ -152,7 +159,7 @@ export function EditPayableForm({
           )}
         </Field>
         <Field label="Valor (R$)">
-          {soVencimento ? (
+          {soDataPagamento ? (
             <input value={payable.amount} disabled className={readOnlyClass} />
           ) : (
             <MoneyInput
@@ -173,27 +180,42 @@ export function EditPayableForm({
         <Field label="Emissão">
           <input
             type="date"
-            name={soVencimento ? undefined : "issueDate"}
-            required={!soVencimento}
-            disabled={soVencimento}
+            name={soDataPagamento ? undefined : "issueDate"}
+            required={!soDataPagamento}
+            disabled={soDataPagamento}
             defaultValue={prefill?.issueDate ?? payable.issueDate}
-            className={soVencimento ? readOnlyClass : inputClass}
+            className={soDataPagamento ? readOnlyClass : inputClass}
           />
         </Field>
-        {/* Vencimento: o único campo editável no modo restrito. */}
         <Field label="Vencimento">
           <input
             type="date"
-            name="dueDate"
-            required
-            autoFocus={soVencimento}
+            name={soDataPagamento ? undefined : "dueDate"}
+            required={!soDataPagamento}
+            disabled={soDataPagamento}
             min={payable.issueDate}
             defaultValue={prefill?.dueDate ?? payable.dueDate}
-            className={inputClass}
+            className={soDataPagamento ? readOnlyClass : inputClass}
           />
         </Field>
+        {/* Data de Pagamento: o único campo editável no modo restrito. Só
+            aparece ali, porque em Contas a pagar o título ainda não foi pago. */}
+        {soDataPagamento ? (
+          <Field label="Data de Pagamento">
+            <input
+              type="date"
+              name="paymentDate"
+              required
+              autoFocus
+              min={payable.issueDate}
+              max={payable.paymentDateMax}
+              defaultValue={prefill?.paymentDate ?? payable.paymentDate ?? ""}
+              className={inputClass}
+            />
+          </Field>
+        ) : null}
         <Field label="Categoria">
-          {soVencimento ? (
+          {soDataPagamento ? (
             <input
               value={payable.supplierCategory || "—"}
               disabled
@@ -215,7 +237,7 @@ export function EditPayableForm({
           )}
         </Field>
         <Field label="Classificação do CUSTO">
-          {soVencimento ? (
+          {soDataPagamento ? (
             <input
               value={CUSTO_LABEL[payable.costClassification] ?? "—"}
               disabled
@@ -237,7 +259,7 @@ export function EditPayableForm({
             inativo ou de outro destino, para a edição não trocar em silêncio o
             que foi lançado. */}
         <Field label="Centro de Custo">
-          {soVencimento ? (
+          {soDataPagamento ? (
             <input
               value={payable.costCenterLabel ?? "—"}
               disabled
@@ -322,30 +344,32 @@ export function EditPayableForm({
         <div className="md:col-span-4">
           <Field label="Observação">
             <textarea
-              name={soVencimento ? undefined : "notes"}
+              name={soDataPagamento ? undefined : "notes"}
               rows={3}
-              disabled={soVencimento}
+              disabled={soDataPagamento}
               defaultValue={prefill?.notes ?? payable.notes}
-              className={soVencimento ? readOnlyClass : inputClass}
+              className={soDataPagamento ? readOnlyClass : inputClass}
               placeholder="Anotações sobre este título (opcional)."
             />
           </Field>
         </div>
 
-        {soVencimento ? (
+        {soDataPagamento ? (
           <p className="md:col-span-4 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-            Título já baixado: só o vencimento pode ser corrigido. Mudá-lo
-            reclassifica a situação em Contas a pagar — <strong>Pago</strong> (antes
-            do vencimento), <strong>Pago no Vencimento</strong> (no dia) ou{" "}
-            <strong>Pago Atrasado</strong> (depois) —, comparando a data do
-            pagamento com o novo vencimento. Valor, baixa e lançamentos contábeis
-            não são afetados.
+            Título já conciliado: só a data de pagamento pode ser corrigida.
+            Mudá-la reclassifica a situação em Contas a pagar —{" "}
+            <strong>Pago</strong> (antes do vencimento),{" "}
+            <strong>Pago no Vencimento</strong> (no dia) ou{" "}
+            <strong>Pago Atrasado</strong> (depois) —, comparando com o vencimento
+            acima. O realizado do Orçamento acompanha a nova data e pode mudar de
+            mês, e o lançamento contábil é realinhado junto. Valor e baixa não são
+            afetados.
           </p>
         ) : null}
 
         <div className="flex flex-wrap items-end gap-2 md:col-span-4">
           <Button variant="warn" type="submit">
-            {soVencimento ? "Salvar vencimento" : "Salvar alterações"}
+            {soDataPagamento ? "Salvar data de pagamento" : "Salvar alterações"}
           </Button>
           <Link
             href={cancelHref}

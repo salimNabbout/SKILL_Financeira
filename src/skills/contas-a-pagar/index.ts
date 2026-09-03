@@ -144,13 +144,14 @@ const updatePayableSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
-// Ajuste do VENCIMENTO de título já baixado. Existe porque `update_payable`
-// recusa título pago (e deve continuar recusando: liberar lá abriria todos os
-// campos de um título quitado). Aqui o contrato é de UM campo só.
-const adjustDueDateSchema = z.object({
-  action: z.literal("adjust_due_date"),
-  payableId: z.string().min(1),
-  dueDate: isoDateSchema,
+// Correção da DATA DE PAGAMENTO de um pagamento já conciliado. Existe porque
+// `reconcile_payment` é idempotente e não reedita (volta sem efeito quando o
+// pagamento já está executado), e porque `update_payable` recusa título pago —
+// e deve continuar recusando. Aqui o contrato é de UM campo só.
+const adjustPaymentDateSchema = z.object({
+  action: z.literal("adjust_payment_date"),
+  paymentId: z.string().min(1),
+  paymentDate: isoDateSchema,
 });
 
 // Conciliação do pagamento aprovado: informa a data em que o dinheiro saiu de
@@ -183,7 +184,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   detectDuplicatesSchema,
   cancelPayableSchema,
   updatePayableSchema,
-  adjustDueDateSchema,
+  adjustPaymentDateSchema,
   reconcilePaymentSchema,
   reversePaymentSchema,
   generateRecurringSchema,
@@ -196,7 +197,7 @@ export type ForecastDisbursementsInput = z.infer<typeof forecastDisbursementsSch
 export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
 export type UpdatePayableInput = z.infer<typeof updatePayableSchema>;
-export type AdjustDueDateInput = z.infer<typeof adjustDueDateSchema>;
+export type AdjustPaymentDateInput = z.infer<typeof adjustPaymentDateSchema>;
 export type ReconcilePaymentInput = z.infer<typeof reconcilePaymentSchema>;
 export type ReversePaymentInput = z.infer<typeof reversePaymentSchema>;
 export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
@@ -273,7 +274,8 @@ export interface UpdatePayableData {
   payable: Payable;
 }
 
-export interface AdjustDueDateData {
+export interface AdjustPaymentDateData {
+  payment: Payment;
   payable: Payable;
 }
 
@@ -301,7 +303,7 @@ export type ContasAPagarData =
   | DetectDuplicatesData
   | CancelPayableData
   | UpdatePayableData
-  | AdjustDueDateData
+  | AdjustPaymentDateData
   | ReconcilePaymentData
   | ReversePaymentData
   | GenerateRecurringData;
@@ -1339,93 +1341,110 @@ async function updatePayable(
 }
 
 /**
- * AJUSTE DO VENCIMENTO de um título já baixado (pago ou parcialmente pago).
+ * CORREÇÃO DA DATA DE PAGAMENTO de um pagamento já conciliado.
  *
- * Existe porque `update_payable` recusa título com movimento financeiro — e
- * deve continuar recusando: afrouxar aquele guarda liberaria descrição, valor,
- * categoria e centro de custo de um título quitado. Esta ação altera UM campo.
+ * A data informada na conciliação é a que decide a situação do título: "Pago"
+ * (antes do vencimento), "Pago no Vencimento" (no dia) ou "Pago Atrasado"
+ * (depois). Digitada errada, não havia como corrigir — `reconcile_payment` é
+ * idempotente e volta sem efeito num pagamento já executado.
  *
- * Serve para corrigir um vencimento digitado errado depois da conciliação. O
- * efeito colateral é o objetivo: a situação exibida ("Pago" / "Pago no
- * Vencimento" / "Pago Atrasado") é derivada da data do pagamento CONTRA o
- * vencimento, então corrigir o vencimento reclassifica o título.
+ * Repete as validações que a conciliação faz sobre essa mesma data: nada de
+ * futuro (conciliar é confirmar fato ocorrido) e nada antes da emissão do
+ * título. Não toca em valor, saldo, status do pagamento nem do título.
  *
- * Não mexe em valor, saldo, pagamento nem em qualquer coisa contábil.
+ * O lançamento contábil NÃO é ajustado aqui: quem realinha é o passo seguinte
+ * do fluxo (`restate_entries` na skill contábil), porque a regra de quando
+ * corrigir e quando estornar é dela.
  */
-async function adjustDueDate(
+async function adjustPaymentDate(
   ctx: SkillContext,
-  input: AdjustDueDateInput
-): Promise<SkillResult<AdjustDueDateData>> {
+  input: AdjustPaymentDateInput
+): Promise<SkillResult<AdjustPaymentDateData>> {
   if (ctx.actor.type === "user") {
-    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payable.create")) {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payment.execute")) {
       throw new PermissionError(
-        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode alterar títulos a pagar.`
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode corrigir a data de pagamentos.`
       );
     }
   }
 
-  const payable = await ctx.repos.payables.getById(ctx.companyId, input.payableId);
-  if (!payable) throw new NotFoundError("Título a pagar", input.payableId);
+  const payment = await ctx.repos.payments.getById(ctx.companyId, input.paymentId);
+  if (!payment) throw new NotFoundError("Pagamento", input.paymentId);
+  const payable = await ctx.repos.payables.getById(ctx.companyId, payment.payableId);
+  if (!payable) throw new NotFoundError("Título a pagar", payment.payableId);
 
-  if (payable.status === "canceled") {
-    throw new ValidationError(`Título ${payable.id} está cancelado e não pode ser alterado.`);
-  }
-  // Título SEM baixa é caso da edição normal, que edita tudo. Direcionar para
-  // lá evita dois caminhos concorrentes para a mesma coisa.
-  if (payable.paidCents <= 0) {
+  if (payment.status !== "executed") {
     throw new ValidationError(
-      `Título ${payable.id} não possui baixa registrada; use a edição do título em Contas a pagar para alterar o vencimento.`
+      `Pagamento ${payment.id} não está conciliado (status atual: ${payment.status}); não há data de pagamento para corrigir.`
     );
   }
-  // Mesma regra do create/update: vencimento nunca antes da emissão.
-  if (input.dueDate < payable.issueDate) {
+  if (input.paymentDate > ctx.today()) {
     throw new ValidationError(
-      `Verificar a Data da Emissão (vencimento ${formatBR(input.dueDate)} é anterior à emissão ${formatBR(payable.issueDate)}).`
+      `Data do pagamento (${formatBR(input.paymentDate)}) está no futuro; informe a data em que o pagamento realmente saiu.`
+    );
+  }
+  if (input.paymentDate < payable.issueDate) {
+    throw new ValidationError(
+      `Data do pagamento (${formatBR(input.paymentDate)}) é anterior à emissão do título (${formatBR(payable.issueDate)}).`
     );
   }
 
-  if (input.dueDate === payable.dueDate) {
+  // A data corrente vem do executedAt gravado ao meio-dia UTC pela conciliação:
+  // os 10 primeiros caracteres são a data informada, sem risco de fuso.
+  const atual = (payment.executedAt ?? "").slice(0, 10);
+  if (atual === input.paymentDate) {
     return makeResult(
       SKILL,
       ctx,
-      { payable },
+      { payment, payable },
       {
-        assumptions: ["Vencimento informado é igual ao atual; nada foi alterado."],
+        assumptions: ["Data informada é igual à atual; nada foi alterado."],
         dataSources: DATA_SOURCES,
       }
     );
   }
 
-  const before = { ...payable };
-  payable.dueDate = input.dueDate;
-  payable.updatedAt = ctx.clock.now().toISOString();
-  await ctx.repos.payables.update(payable);
+  const before = { ...payment };
+  // Meio-dia UTC, como na conciliação: converter para o fuso da empresa nunca
+  // muda o dia informado.
+  payment.executedAt = toUtcNoon(input.paymentDate).toISOString();
+  payment.updatedAt = ctx.clock.now().toISOString();
+  await ctx.repos.payments.update(payment);
 
   await ctx.audit.record(ctx.companyId, {
     actor: ctx.actor,
-    action: "payable.due_date_adjusted",
-    entityType: "payable",
-    entityId: payable.id,
+    action: "payment.date_adjusted",
+    entityType: "payment",
+    entityId: payment.id,
     before,
-    after: payable,
+    after: payment,
     correlationId: ctx.correlationId,
   });
+  // A situação do título é derivada desta data; avisar que ele mudou de leitura.
   await ctx.events.publish({
     companyId: ctx.companyId,
     type: "payable.updated",
-    payload: { id: payable.id, dueDate: payable.dueDate },
+    payload: { id: payable.id, paidAt: input.paymentDate },
     source: SKILL,
     correlationId: ctx.correlationId,
   });
 
+  const emAtraso = input.paymentDate > payable.dueDate;
   return makeResult(
     SKILL,
     ctx,
-    { payable },
+    { payment, payable },
     {
       assumptions: [
-        `Vencimento alterado de ${formatBR(before.dueDate)} para ${formatBR(payable.dueDate)}. Apenas o vencimento mudou — valor, baixa e lançamentos contábeis seguem intactos.`,
-        "A situação do título (Pago / Pago no Vencimento / Pago Atrasado) é recalculada na leitura, comparando a data do pagamento com o novo vencimento.",
+        `Data do pagamento corrigida de ${formatBR(atual)} para ${formatBR(input.paymentDate)}. Valor, baixa e status do título não mudam.`,
+        `Situação do título passa a ser "${
+          emAtraso
+            ? "Pago Atrasado"
+            : input.paymentDate === payable.dueDate
+              ? "Pago no Vencimento"
+              : "Pago"
+        }" (vencimento ${formatBR(payable.dueDate)}).`,
+        "O realizado do Orçamento acompanha a nova data e pode mudar de mês.",
       ],
       dataSources: DATA_SOURCES,
     }
@@ -1824,8 +1843,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return cancelPayable(ctx, input);
       case "update_payable":
         return updatePayable(ctx, input);
-      case "adjust_due_date":
-        return adjustDueDate(ctx, input);
+      case "adjust_payment_date":
+        return adjustPaymentDate(ctx, input);
       case "reconcile_payment":
         return reconcilePayment(ctx, input);
       case "reverse_payment":

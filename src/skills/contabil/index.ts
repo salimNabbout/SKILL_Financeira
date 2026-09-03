@@ -113,6 +113,17 @@ const reverseEntriesSchema = z.object({
   reason: z.string().min(1),
 });
 
+// Realinha os lançamentos de uma origem depois que a DATA dela foi corrigida
+// (ex.: a data de pagamento ajustada em Conciliados). O lançamento já criado
+// nunca é revisitado por prepare_entries — que é idempotente por origem —,
+// então sem esta ação a contabilidade ficaria com a data antiga.
+const restateEntriesSchema = z.object({
+  action: z.literal("restate_entries"),
+  sourceType: z.enum(["payment", "receipt"]),
+  sourceId: z.string().min(1),
+  reason: z.string().min(1),
+});
+
 const checkMasterDataSchema = z.object({
   action: z.literal("check_master_data"),
 });
@@ -126,6 +137,7 @@ export const contabilInputSchema = z
   .discriminatedUnion("action", [
     prepareEntriesSchema,
     reverseEntriesSchema,
+    restateEntriesSchema,
     exportBatchSchema,
     checkMasterDataSchema,
     taxSummarySchema,
@@ -155,6 +167,7 @@ export const contabilInputSchema = z
 
 export type PrepareEntriesInput = z.infer<typeof prepareEntriesSchema>;
 export type ReverseEntriesInput = z.infer<typeof reverseEntriesSchema>;
+export type RestateEntriesInput = z.infer<typeof restateEntriesSchema>;
 export type ExportBatchInput = z.infer<typeof exportBatchSchema>;
 export type CheckMasterDataInput = z.infer<typeof checkMasterDataSchema>;
 export type TaxSummaryInput = z.infer<typeof taxSummarySchema>;
@@ -222,9 +235,17 @@ export interface ReverseEntriesData {
   originalExported: boolean;
 }
 
+export interface RestateEntriesData {
+  /** Lançamentos que tiveram a data corrigida no próprio registro. */
+  corrected: AccountingEntry[];
+  /** Pares estorno+relançamento, para lançamentos já exportados. */
+  restated: AccountingEntry[];
+}
+
 export type ContabilData =
   | PrepareEntriesData
   | ReverseEntriesData
+  | RestateEntriesData
   | ExportBatchData
   | CheckMasterDataData
   | TaxSummaryData;
@@ -591,6 +612,164 @@ async function reverseEntries(
   );
 }
 
+/**
+ * REALINHA os lançamentos de uma origem cuja data foi corrigida (hoje: a data
+ * de pagamento ajustada no card Conciliados). Sem isto a contabilidade fica com
+ * a data antiga para sempre — `prepare_entries` é idempotente por origem e não
+ * revisita lançamento existente.
+ *
+ * O tratamento depende de o lançamento já ter saído da empresa:
+ *  - NÃO exportado: corrige o `entryDate` no próprio registro. Ninguém viu esse
+ *    lançamento ainda; estornar e relançar só encheria o razão de linhas.
+ *  - JÁ exportado: estorna (lançamento inverso) e relança com a data certa —
+ *    o contador recebeu o arquivo, e o que ele tem em mãos não se reescreve.
+ *    Vira pendência, para alguém avisá-lo.
+ */
+async function restateEntries(
+  ctx: SkillContext,
+  input: RestateEntriesInput
+): Promise<SkillResult<RestateEntriesData>> {
+  const chave = `${input.sourceType}:${input.sourceId}`;
+
+  // A data nova vem da própria origem, já corrigida por quem chamou.
+  let novaData: ISODate;
+  if (input.sourceType === "payment") {
+    const payment = await ctx.repos.payments.getById(ctx.companyId, input.sourceId);
+    if (!payment) throw new NotFoundError("Pagamento", input.sourceId);
+    if (!payment.executedAt) {
+      throw new ValidationError(
+        `Pagamento ${payment.id} não tem data de execução; não há o que realinhar.`
+      );
+    }
+    novaData = businessDateOf(ctx, payment.executedAt);
+  } else {
+    const receipt = await ctx.repos.receipts.getById(ctx.companyId, input.sourceId);
+    if (!receipt) throw new NotFoundError("Recebimento", input.sourceId);
+    novaData = receipt.receivedDate;
+  }
+
+  const originais = (await ctx.repos.accountingEntries.listAll(ctx.companyId)).filter(
+    (e) => `${e.sourceType}:${e.sourceId}` === chave && e.entryDate !== novaData
+  );
+
+  if (originais.length === 0) {
+    return makeResult(
+      SKILL,
+      ctx,
+      { corrected: [], restated: [] },
+      {
+        assumptions: [
+          `Nenhum lançamento de ${chave} com data divergente; contabilidade já estava alinhada.`,
+        ],
+        dataSources: DATA_SOURCES,
+      }
+    );
+  }
+
+  const nowIso = ctx.clock.now().toISOString();
+  const corrected: AccountingEntry[] = [];
+  const restated: AccountingEntry[] = [];
+  const pendingItems: PendingItem[] = [];
+
+  for (const original of originais) {
+    const dataAntiga = original.entryDate;
+
+    if (!original.exported) {
+      const before = { ...original };
+      original.entryDate = novaData;
+      await ctx.repos.accountingEntries.update(original);
+      corrected.push(original);
+      await ctx.audit.record(ctx.companyId, {
+        actor: ctx.actor,
+        action: "accounting.entry_date_corrected",
+        entityType: "accounting_entry",
+        entityId: original.id,
+        before,
+        after: original,
+        correlationId: ctx.correlationId,
+      });
+      continue;
+    }
+
+    // Já exportado: estorna e relança (mesma mecânica de reverse_entries).
+    const inverso: AccountingEntry = {
+      id: ctx.ids.next("ae"),
+      companyId: ctx.companyId,
+      entryDate: ctx.today(),
+      debitAccount: original.creditAccount,
+      creditAccount: original.debitAccount,
+      amountCents: original.amountCents,
+      memo: `Estorno de: ${original.memo} (${input.reason})`,
+      sourceType: "adjustment",
+      sourceId: `rev:${input.sourceId}`,
+      exported: false,
+      createdAt: nowIso,
+    };
+    await ctx.repos.accountingEntries.create(inverso);
+
+    const relancado: AccountingEntry = {
+      id: ctx.ids.next("ae"),
+      companyId: ctx.companyId,
+      entryDate: novaData,
+      debitAccount: original.debitAccount,
+      creditAccount: original.creditAccount,
+      amountCents: original.amountCents,
+      memo: `${original.memo} (data corrigida: ${input.reason})`,
+      sourceType: "adjustment",
+      sourceId: `readj:${input.sourceId}`,
+      exported: false,
+      createdAt: nowIso,
+    };
+    await ctx.repos.accountingEntries.create(relancado);
+    restated.push(inverso, relancado);
+
+    await ctx.audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "accounting.entries_reversed",
+      entityType: "accounting_entry",
+      entityId: inverso.id,
+      before: original,
+      after: inverso,
+      correlationId: ctx.correlationId,
+    });
+    await ctx.audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "accounting.entry_prepared",
+      entityType: "accounting_entry",
+      entityId: relancado.id,
+      after: relancado,
+      correlationId: ctx.correlationId,
+    });
+
+    pendingItems.push({
+      code: "data_corrigida_apos_exportacao",
+      description: `O lançamento ${original.id} (${formatBRL(original.amountCents)}) já havia sido exportado com a data ${dataAntiga}; foi estornado e relançado em ${novaData}.`,
+      entityType: "accounting_entry",
+      entityId: original.id,
+      suggestedAction:
+        "Avisar o contador: o próximo lote traz o estorno e o relançamento com a data correta.",
+    });
+  }
+
+  return makeResult(
+    SKILL,
+    ctx,
+    { corrected, restated },
+    {
+      assumptions: [
+        corrected.length > 0
+          ? `${corrected.length} lançamento(s) de ${chave} ainda não exportado(s): data corrigida para ${novaData} no próprio registro.`
+          : `Nenhum lançamento pendente de exportação em ${chave}.`,
+        restated.length > 0
+          ? `${restated.length / 2} lançamento(s) já exportado(s): estornado(s) e relançado(s) em ${novaData} — o que o contador já recebeu não se reescreve.`
+          : "Nenhum lançamento já exportado precisou de estorno.",
+      ],
+      pendingItems,
+      dataSources: DATA_SOURCES,
+    }
+  );
+}
+
 async function exportBatch(
   ctx: SkillContext,
   input: ExportBatchInput
@@ -922,6 +1101,8 @@ export const contabilSkill: SkillDefinition<ContabilInput, ContabilData> = {
         return prepareEntries(ctx, input);
       case "reverse_entries":
         return reverseEntries(ctx, input);
+      case "restate_entries":
+        return restateEntries(ctx, input);
       case "export_batch":
         return exportBatch(ctx, input);
       case "check_master_data":

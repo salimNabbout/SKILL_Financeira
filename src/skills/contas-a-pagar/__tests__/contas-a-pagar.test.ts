@@ -8,6 +8,7 @@ import type {
   Supplier,
 } from "@/core/entities";
 import { runSkill } from "@/core/skill";
+import { derivePayableSituation } from "@/lib/payable-situation";
 import {
   contasAPagarSkill,
   type CancelPayableData,
@@ -15,7 +16,7 @@ import {
   type DetectDuplicatesData,
   type ForecastDisbursementsData,
   type GenerateRecurringData,
-  type AdjustDueDateData,
+  type AdjustPaymentDateData,
   type ListDueData,
   type ReconcilePaymentData,
   type ReversePaymentData,
@@ -1293,85 +1294,127 @@ describe("contas_a_pagar — estorno de pagamento executado", () => {
 });
 
 
-describe("contas_a_pagar — ajuste de vencimento de título baixado", () => {
+describe("contas_a_pagar — correção da data de pagamento", () => {
   /** Deixa um título conciliado (pago) e devolve o payable semeado. */
-  async function conciliado(env: TestEnv, over: Record<string, unknown> = {}) {
+  async function conciliadoEm(
+    env: TestEnv,
+    paymentDate: string,
+    over: Record<string, unknown> = {}
+  ) {
     seedSupplier(env);
     seedBankAccount(env);
     const payable = seedPayable(env, { amountCents: 50_000, ...over });
     const { data: scheduled } = await schedule(env, payable.id);
     await decide(env, scheduled.payment.id, "approved");
-    await reconcile(env, scheduled.payment.id);
-    return payable;
+    await reconcile(env, scheduled.payment.id, paymentDate);
+    return { payable, paymentId: scheduled.payment.id };
   }
 
-  function ajustar(
+  function corrigir(
     env: TestEnv,
-    payableId: string,
-    dueDate: string,
-    role: "manager" | "viewer" = "manager"
+    paymentId: string,
+    paymentDate: string,
+    role: "manager" | "analyst" = "manager"
   ) {
     return runSkill(contasAPagarSkill, env.ctx(env.actorFor(role)), {
-      action: "adjust_due_date",
-      payableId,
-      dueDate,
+      action: "adjust_payment_date",
+      paymentId,
+      paymentDate,
     });
   }
 
-  it("corrige o vencimento de um título já conciliado", async () => {
+  it("corrige a data e reclassifica a situação de Pago Atrasado para Pago", async () => {
     const env = createTestEnv();
-    const payable = await conciliado(env);
-    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
+    // Vence 10/08, conciliado em 18/08 (hoje) → atrasado.
+    const { payable, paymentId } = await conciliadoEm(env, TODAY, {
+      dueDate: "2026-08-10",
+    });
+    const antes = env.db.payments.find((p) => p.id === paymentId)!;
+    expect(
+      derivePayableSituation(
+        env.db.payables.find((p) => p.id === payable.id)!,
+        TODAY,
+        (antes.executedAt ?? "").slice(0, 10)
+      )
+    ).toBe("Pago Atrasado");
 
-    const res = await ajustar(env, payable.id, "2026-08-31");
-    const data = res.data as AdjustDueDateData;
+    const res = await corrigir(env, paymentId, "2026-08-05");
+    const data = res.data as AdjustPaymentDateData;
 
     expect(res.status).toBe("success");
-    expect(data.payable.dueDate).toBe("2026-08-31");
+    // Gravado ao meio-dia UTC, como na conciliação.
+    expect(data.payment.executedAt).toBe("2026-08-05T12:00:00.000Z");
     const stored = env.db.payables.find((p) => p.id === payable.id);
-    expect(stored?.dueDate).toBe("2026-08-31");
-    // Nada além do vencimento muda.
+    // Só a data muda: valor, baixa e status do título seguem iguais.
     expect(stored?.status).toBe("paid");
     expect(stored?.paidCents).toBe(50_000);
-    expect(env.db.auditRecords.some((a) => a.action === "payable.due_date_adjusted")).toBe(true);
+    expect(derivePayableSituation(stored!, TODAY, "2026-08-05")).toBe("Pago");
+    expect(env.db.auditRecords.some((a) => a.action === "payment.date_adjusted")).toBe(true);
   });
 
-  it("recusa vencimento anterior à emissão", async () => {
+  it("recusa data no futuro", async () => {
     const env = createTestEnv();
-    const payable = await conciliado(env); // emissão semeada em 2026-08-01
+    const { paymentId } = await conciliadoEm(env, TODAY);
 
-    const res = await ajustar(env, payable.id, "2026-07-31");
+    const res = await corrigir(env, paymentId, "2026-12-31");
 
     expect(res.status).toBe("error");
-    expect(res.alerts[0].message).toContain("Verificar a Data da Emissão");
-    expect(env.db.payables.find((p) => p.id === payable.id)?.dueDate).toBe("2026-08-20");
+    expect(res.alerts[0].message).toContain("futuro");
+    expect(env.db.payments.find((p) => p.id === paymentId)?.executedAt).toBe(
+      "2026-08-18T12:00:00.000Z"
+    );
   });
 
-  it("recusa título SEM baixa — esse é caso da edição normal", async () => {
+  it("recusa data anterior à emissão do título", async () => {
+    const env = createTestEnv();
+    const { paymentId } = await conciliadoEm(env, TODAY); // emissão 2026-08-01
+
+    const res = await corrigir(env, paymentId, "2026-07-20");
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toContain("anterior à emissão");
+  });
+
+  it("recusa pagamento que ainda não foi conciliado", async () => {
     const env = createTestEnv();
     seedSupplier(env);
     seedBankAccount(env);
     const payable = seedPayable(env, { amountCents: 50_000 });
+    const { data: scheduled } = await schedule(env, payable.id); // pending_approval
 
-    const res = await ajustar(env, payable.id, "2026-08-31");
-
-    expect(res.status).toBe("error");
-    expect(res.alerts[0].message).toContain("não possui baixa registrada");
-  });
-
-  it("papel sem payable.create não ajusta vencimento", async () => {
-    const env = createTestEnv();
-    const payable = await conciliado(env);
-
-    const res = await ajustar(env, payable.id, "2026-08-31", "viewer");
+    const res = await corrigir(env, scheduled.payment.id, TODAY);
 
     expect(res.status).toBe("error");
-    expect(env.db.payables.find((p) => p.id === payable.id)?.dueDate).toBe("2026-08-20");
+    expect(res.alerts[0].message).toContain("não está conciliado");
   });
 
-  it("update_payable CONTINUA recusando título pago (a ação nova não afrouxou a antiga)", async () => {
+  it("data igual à atual é no-op", async () => {
     const env = createTestEnv();
-    const payable = await conciliado(env);
+    const { paymentId } = await conciliadoEm(env, TODAY);
+    const antes = env.db.auditRecords.length;
+
+    const res = await corrigir(env, paymentId, TODAY);
+
+    expect(res.status).toBe("success");
+    expect(res.assumptions[0]).toContain("igual à atual");
+    expect(env.db.auditRecords.length).toBe(antes);
+  });
+
+  it("papel sem payment.execute não corrige a data", async () => {
+    const env = createTestEnv();
+    const { paymentId } = await conciliadoEm(env, TODAY);
+
+    const res = await corrigir(env, paymentId, "2026-08-05", "analyst");
+
+    expect(res.status).toBe("error");
+    expect(env.db.payments.find((p) => p.id === paymentId)?.executedAt).toBe(
+      "2026-08-18T12:00:00.000Z"
+    );
+  });
+
+  it("update_payable CONTINUA recusando título pago (nenhuma ação nova afrouxou a antiga)", async () => {
+    const env = createTestEnv();
+    const { payable } = await conciliadoEm(env, TODAY);
 
     const res = await runSkill(contasAPagarSkill, env.ctx(env.actorFor("manager")), {
       action: "update_payable",
