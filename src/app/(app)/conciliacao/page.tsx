@@ -134,6 +134,20 @@ export default async function ConciliacaoPage({
   // real em que o dinheiro saiu. Ordena pelo vencimento (o mais urgente antes).
   const today = todayInTz(clock.now(), session.config.timezone);
   const podeConciliar = hasPermission(session.membership.role, "payment.execute");
+  // Pagamentos JÁ conciliados, do mais recente para o mais antigo. A data
+  // exibida é a do pagamento informada na conciliação (executedAt), convertida
+  // para o fuso da empresa — nunca UTC, senão a data pularia um dia.
+  const CONCILIADOS_RECENTES = 30;
+  const conciliados = payments
+    .filter((pay) => pay.status === "executed" && pay.executedAt)
+    .sort((a, b) => (b.executedAt ?? "").localeCompare(a.executedAt ?? ""))
+    .slice(0, CONCILIADOS_RECENTES)
+    .map((pay) => ({
+      pay,
+      payable: payableById.get(pay.payableId),
+      data: todayInTz(new Date(pay.executedAt as string), session.config.timezone),
+    }));
+
   const aprovados = payments
     .filter((pay) => pay.status === "approved")
     .map((pay) => ({ pay, payable: payableById.get(pay.payableId) }))
@@ -220,6 +234,40 @@ export default async function ConciliacaoPage({
               </div>
             ))}
           </div>
+        )}
+      </Card>
+
+      {/* Conciliados: o que a tela de Conciliação não guardava. A linha sai do
+          card de pendentes assim que é registrada, e o histórico logo abaixo é
+          de conciliação de EXTRATO bancário — outro fluxo. Este card é o
+          registro dos pagamentos conciliados aqui. */}
+      <Card
+        className="mb-6"
+        title={`Conciliados (${conciliados.length})`}
+      >
+        {conciliados.length === 0 ? (
+          <EmptyState message="Nenhum pagamento conciliado ainda." />
+        ) : (
+          <Table
+            headers={["Data do pagamento", "Fornecedor", "Título", "Valor", "Conciliado por"]}
+            align={["l", "l", "l", "r", "l"]}
+          >
+            {conciliados.map(({ pay, payable, data }) => (
+              <tr key={pay.id}>
+                <Td>{formatBR(data)}</Td>
+                <Td>
+                  {payable
+                    ? (supplierName.get(payable.supplierId) ?? payable.supplierId)
+                    : "—"}
+                </Td>
+                <Td>{payable?.description ?? pay.payableId}</Td>
+                <Td right>{formatBRL(pay.amountCents)}</Td>
+                <Td>
+                  {pay.executedBy ? (userName.get(pay.executedBy) ?? pay.executedBy) : "—"}
+                </Td>
+              </tr>
+            ))}
+          </Table>
         )}
       </Card>
 
