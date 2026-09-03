@@ -519,22 +519,37 @@ const cancelReceivableFlow: FlowDefinition = {
 };
 
 /**
- * Ajuste do vencimento de título já baixado. Fluxo de um único passo — a skill
- * exige payable.create, aceita só título com baixa registrada (o sem baixa é
- * caso do update_payable) e altera exclusivamente o vencimento.
- * payload: { payableId, dueDate }
+ * Correção da DATA DE PAGAMENTO de um pagamento conciliado. A data decide a
+ * situação do título (Pago / Pago no Vencimento / Pago Atrasado), e o lançamento
+ * contábil é realinhado junto — sem o segundo passo, a contabilidade ficaria
+ * com a data antiga, que nada no sistema revisita.
+ * payload: { paymentId, paymentDate }
  */
-const adjustDueDateFlow: FlowDefinition = {
-  name: "adjust_due_date",
+const adjustPaymentDateFlow: FlowDefinition = {
+  name: "adjust_payment_date",
   description:
-    "Corrige o vencimento de um título já baixado, sem tocar em valor, baixa ou contabilidade. A situação (Pago / Pago no Vencimento / Pago Atrasado) é reclassificada pela nova data.",
-  requiredPermission: "payable.create",
+    "Corrige a data de um pagamento já conciliado e realinha o lançamento contábil. A situação do título é reclassificada pela nova data; valor e baixa não mudam.",
+  requiredPermission: "payment.execute",
   steps: [
     {
-      id: "ap_adjust_due_date",
+      id: "ap_adjust_payment_date",
       skill: "contas_a_pagar",
-      description: "Ajustar vencimento de título baixado",
-      buildInput: (f) => ({ action: "adjust_due_date", ...f.payload }),
+      description: "Corrigir a data do pagamento conciliado",
+      buildInput: (f) => ({ action: "adjust_payment_date", ...f.payload }),
+    },
+    // continueOnError: a correção da data já commitou no passo anterior; uma
+    // falha contábil não pode desfazê-la — vira alerta no resultado.
+    {
+      id: "accounting_restate",
+      skill: "integracao_contabil_fiscal",
+      description: "Realinhar o lançamento contábil com a nova data",
+      buildInput: (f) => ({
+        action: "restate_entries",
+        sourceType: "payment",
+        sourceId: (f.payload as { paymentId?: string }).paymentId,
+        reason: "correção da data de pagamento",
+      }),
+      continueOnError: true,
     },
   ],
 };
@@ -669,7 +684,7 @@ export const BUILTIN_FLOWS: FlowDefinition[] = [
   updatePayable,
   cancelPayableFlow,
   cancelReceivableFlow,
-  adjustDueDateFlow,
+  adjustPaymentDateFlow,
   reconcilePaymentFlow,
   reversePaymentFlow,
   undoReconciliationFlow,

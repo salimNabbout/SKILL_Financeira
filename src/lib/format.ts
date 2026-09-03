@@ -121,7 +121,6 @@ export const ACTION_LABELS: Record<string, string> = {
   // Contas a pagar e pagamentos
   "payable.created": "Título a pagar criado",
   "payable.updated": "Título a pagar alterado",
-  "payable.due_date_adjusted": "Vencimento do título corrigido",
   "payable.canceled": "Título a pagar cancelado",
   "payable.settled_via_reconciliation": "Título baixado pela conciliação",
   "payment.requested": "Pagamento solicitado",
@@ -130,8 +129,10 @@ export const ACTION_LABELS: Record<string, string> = {
   "payment.rejected": "Pagamento rejeitado",
   "payment.canceled": "Pagamento cancelado",
   "payment.reversed": "Pagamento estornado",
+  "payment.date_adjusted": "Data do pagamento corrigida",
   "approval.reverted": "Aprovação estornada",
   "accounting.entries_reversed": "Lançamento contábil estornado",
+  "accounting.entry_date_corrected": "Data do lançamento contábil corrigida",
 
   // Contas a receber e recebimentos
   "receivable.created": "Título a receber criado",

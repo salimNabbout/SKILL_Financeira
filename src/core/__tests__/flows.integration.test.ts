@@ -575,6 +575,54 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(verifyChain(audit).valid).toBe(true);
   });
 
+  it("corrigir a data do pagamento reclassifica o título e realinha a contabilidade", async () => {
+    const payableId = await createPayable();
+    const agendado = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: agendado.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    const paymentId = (await env.repos.payments.listByStatus(env.company.id, ["approved"]))[0].id;
+    await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId, paymentDate: "2026-08-18" },
+    });
+    const lancamento = (await env.repos.accountingEntries.listAll(env.company.id)).find(
+      (e) => e.sourceType === "payment" && e.sourceId === paymentId
+    );
+    expect(lancamento?.entryDate).toBe("2026-08-18");
+
+    // Corrige para uma data anterior (ainda ≥ emissão do título).
+    const res = await orch.execute({
+      flow: "adjust_payment_date",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId, paymentDate: "2026-08-12" },
+    });
+    expect(res.status).toBe("completed");
+
+    // Data do pagamento corrigida…
+    const payment = await env.repos.payments.getById(env.company.id, paymentId);
+    expect(payment?.executedAt).toBe("2026-08-12T12:00:00.000Z");
+    expect(payment?.status).toBe("executed"); // baixa intacta
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe("paid");
+
+    // …e a contabilidade acompanhou (lançamento ainda não exportado: corrigido
+    // no lugar, sem poluir o razão).
+    const entries = await env.repos.accountingEntries.listAll(env.company.id);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].entryDate).toBe("2026-08-12");
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

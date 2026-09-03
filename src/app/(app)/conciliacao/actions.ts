@@ -193,36 +193,34 @@ export async function reconcilePaymentAction(formData: FormData): Promise<void> 
 }
 
 /**
- * Corrige o VENCIMENTO de um título já conciliado, a partir do card "Conciliados".
- * Só esse campo — as regras e os bloqueios ficam na skill contas_a_pagar. Em
- * falha, reabre o formulário na mesma linha preservando o que foi digitado.
+ * Corrige a DATA DE PAGAMENTO de um lançamento do card "Conciliados". Só esse
+ * campo — as regras e os bloqueios ficam na skill, e o fluxo realinha o
+ * lançamento contábil junto. Em falha, reabre o formulário na mesma linha
+ * preservando o que foi digitado.
  */
-export async function adjustDueDateAction(formData: FormData): Promise<void> {
+export async function adjustPaymentDateAction(formData: FormData): Promise<void> {
   const session = await requireSession();
   const { orchestrator } = await getContainer();
 
-  const payableId = fdString(formData, "payableId");
-  const dueDate = fdString(formData, "dueDate");
-  // A linha do card é identificada pelo PAGAMENTO (um título pode ter dois
-  // conciliados); é essa a chave que reabre o formulário no lugar certo.
   const paymentId = fdString(formData, "paymentId");
+  const paymentDate = fdString(formData, "paymentDate");
 
   function failEdit(message: string): never {
     const qs = new URLSearchParams({ editar: paymentId, erro: message });
-    if (dueDate) qs.set("f_vencimento", dueDate);
+    if (paymentDate) qs.set("f_pagamento", paymentDate);
     redirect(`${PATH}?${qs.toString()}`);
   }
 
-  if (!payableId) fail("Título não identificado para alteração.");
-  if (!dueDate) failEdit("Informe a data de vencimento.");
+  if (!paymentId) fail("Pagamento não identificado.");
+  if (!paymentDate) failEdit("Informe a data do pagamento.");
 
   let response: OrchestratorResponse;
   try {
     response = await orchestrator.execute({
-      flow: "adjust_due_date",
+      flow: "adjust_payment_date",
       companyId: session.company.id,
       actor: session.actor,
-      payload: { payableId, dueDate },
+      payload: { paymentId, paymentDate },
     });
   } catch (error) {
     failEdit(errorMessage(error));
@@ -230,7 +228,7 @@ export async function adjustDueDateAction(formData: FormData): Promise<void> {
 
   if (response.status === "failed") failEdit(flowErrorMessage(response));
 
-  ok("Vencimento corrigido. A situação do título foi reclassificada em Contas a pagar.");
+  ok("Data do pagamento corrigida. A situação do título foi reclassificada em Contas a pagar.");
 }
 
 /**

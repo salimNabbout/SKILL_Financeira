@@ -10,7 +10,7 @@ import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import {
-  adjustDueDateAction,
+  adjustPaymentDateAction,
   confirmMatchAction,
   importStatementAction,
   reconcilePaymentAction,
@@ -38,7 +38,7 @@ export default async function ConciliacaoPage({
     pt?: string;
     /** Título conciliado com o formulário de vencimento aberto. */
     editar?: string;
-    f_vencimento?: string;
+    f_pagamento?: string;
     /** Pagamento com o pop-up de exclusão aberto. */
     excluir?: string;
     f_motivo?: string;
@@ -153,9 +153,9 @@ export default async function ConciliacaoPage({
   const today = todayInTz(clock.now(), session.config.timezone);
   const podeConciliar = hasPermission(session.membership.role, "payment.execute");
   // --- Ações do card "Conciliados" ---------------------------------------
-  // Corrigir vencimento exige payable.create (é alteração de título); desfazer
-  // a conciliação exige payment.execute, a mesma de conciliar.
-  const podeCorrigirVencimento = hasPermission(session.membership.role, "payable.create");
+  // Corrigir a data e desfazer a conciliação mexem no PAGAMENTO: as duas usam
+  // payment.execute, a mesma permissão de conciliar.
+  const podeCorrigirPagamento = podeConciliar;
   const costCenterLabelById = new Map(
     costCenters.map((cc) => [cc.id, `${cc.code} — ${cc.name}`])
   );
@@ -324,7 +324,7 @@ export default async function ConciliacaoPage({
                       a conciliação. Ambos são GET — não agem por si. */}
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     <div className="flex flex-nowrap items-center gap-1">
-                      {podeCorrigirVencimento && payable ? (
+                      {podeCorrigirPagamento && payable ? (
                         <form method="get" action="/conciliacao" className="inline">
                           <input
                             type="hidden"
@@ -348,7 +348,7 @@ export default async function ConciliacaoPage({
                           </span>
                         </form>
                       ) : null}
-                      {!podeCorrigirVencimento && !podeConciliar ? (
+                      {!podeCorrigirPagamento && !podeConciliar ? (
                         <span className="text-[var(--ink-muted)]">—</span>
                       ) : null}
                     </div>
@@ -359,8 +359,8 @@ export default async function ConciliacaoPage({
                     {/* <td> cru por causa do colSpan, que o Td não expõe. */}
                     <td className="px-2 py-2 align-middle" colSpan={6}>
                       <EditPayableForm
-                        mode="dueDateOnly"
-                        action={adjustDueDateAction}
+                        mode="paymentDateOnly"
+                        action={adjustPaymentDateAction}
                         payable={{
                           id: editandoPayable.id,
                           supplierName:
@@ -381,8 +381,11 @@ export default async function ConciliacaoPage({
                           installmentNumber: editandoPayable.installmentNumber,
                           installmentCount: editandoPayable.installmentCount,
                           scheduled: false,
+                          // A data que a coluna exibe, já no fuso da empresa.
+                          paymentDate: data,
+                          paymentDateMax: today,
                         }}
-                        prefill={{ dueDate: sp.f_vencimento }}
+                        prefill={{ paymentDate: sp.f_pagamento }}
                         cancelHref="/conciliacao"
                         hiddenFields={{ paymentId: pay.id }}
                       />

@@ -16,6 +16,7 @@ import {
   type CheckMasterDataData,
   type ExportBatchData,
   type PrepareEntriesData,
+  type RestateEntriesData,
   type TaxSummaryData,
 } from "..";
 
@@ -563,5 +564,96 @@ describe("integracao_contabil_fiscal — tax_summary", () => {
     expect(data.formula).toContain("NENHUM imposto");
     expect(res.assumptions.length).toBeGreaterThanOrEqual(2);
     expect(res.assumptions.some((a) => a.includes("não substitui o contador"))).toBe(true);
+  });
+});
+
+
+describe("integracao_contabil_fiscal — restate_entries", () => {
+  /** Prepara o lançamento do pagamento e devolve o cenário. */
+  async function comLancamento(env: TestEnv) {
+    const cenario = seedExecutedPaymentScenario(env);
+    await runSkill(contabilSkill, env.ctx(), {
+      action: "prepare_entries",
+      sourceType: "payment",
+      sourceId: cenario.payment.id,
+    });
+    return cenario;
+  }
+
+  function realinhar(env: TestEnv, paymentId: string) {
+    return runSkill(contabilSkill, env.ctx(), {
+      action: "restate_entries",
+      sourceType: "payment",
+      sourceId: paymentId,
+      reason: "correção da data de pagamento",
+    });
+  }
+
+  it("lançamento NÃO exportado tem a data corrigida no próprio registro", async () => {
+    const env = createTestEnv();
+    const { payment } = await comLancamento(env);
+    expect(env.db.accountingEntries).toHaveLength(1);
+    expect(env.db.accountingEntries[0].entryDate).toBe("2026-08-15");
+
+    // A data do pagamento foi corrigida por quem chamou (aqui, direto).
+    env.db.payments.find((p) => p.id === payment.id)!.executedAt = "2026-08-10T12:00:00Z";
+
+    const res = await realinhar(env, payment.id);
+    const data = res.data as RestateEntriesData;
+
+    expect(res.status).toBe("success");
+    // Corrigido no lugar: nenhuma linha nova no razão.
+    expect(env.db.accountingEntries).toHaveLength(1);
+    expect(env.db.accountingEntries[0].entryDate).toBe("2026-08-10");
+    expect(data.corrected).toHaveLength(1);
+    expect(data.restated).toHaveLength(0);
+    expect(res.pending_items).toHaveLength(0);
+    expect(
+      env.db.auditRecords.some((a) => a.action === "accounting.entry_date_corrected")
+    ).toBe(true);
+  });
+
+  it("lançamento JÁ exportado é estornado e relançado, com pendência", async () => {
+    const env = createTestEnv();
+    const { payment } = await comLancamento(env);
+    // Simula o lote já enviado ao contador.
+    env.db.accountingEntries[0].exported = true;
+    const original = { ...env.db.accountingEntries[0] };
+
+    env.db.payments.find((p) => p.id === payment.id)!.executedAt = "2026-08-10T12:00:00Z";
+
+    const res = await realinhar(env, payment.id);
+    const data = res.data as RestateEntriesData;
+
+    expect(res.status).toBe("success");
+    // O exportado permanece intocado.
+    expect(env.db.accountingEntries[0].entryDate).toBe("2026-08-15");
+    expect(data.corrected).toHaveLength(0);
+    expect(data.restated).toHaveLength(2);
+
+    const [inverso, relancado] = data.restated;
+    // Inverso zera o original.
+    expect(inverso.debitAccount).toBe(original.creditAccount);
+    expect(inverso.creditAccount).toBe(original.debitAccount);
+    expect(inverso.amountCents).toBe(original.amountCents);
+    // Relançamento repete a partida na data certa.
+    expect(relancado.debitAccount).toBe(original.debitAccount);
+    expect(relancado.creditAccount).toBe(original.creditAccount);
+    expect(relancado.entryDate).toBe("2026-08-10");
+
+    expect(res.pending_items.some((i) => i.code === "data_corrigida_apos_exportacao")).toBe(
+      true
+    );
+  });
+
+  it("contabilidade já alinhada é no-op", async () => {
+    const env = createTestEnv();
+    const { payment } = await comLancamento(env);
+
+    const res = await realinhar(env, payment.id);
+
+    expect(res.status).toBe("success");
+    expect(env.db.accountingEntries).toHaveLength(1);
+    expect(res.assumptions.some((a) => a.includes("já estava alinhada"))).toBe(true);
   });
 });
