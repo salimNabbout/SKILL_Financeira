@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
 import { getContainer } from "@/lib/container";
@@ -9,12 +10,15 @@ import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import {
+  adjustDueDateAction,
   confirmMatchAction,
   importStatementAction,
   reconcilePaymentAction,
   rejectMatchAction,
   syncBankAction,
+  undoReconciliationAction,
 } from "./actions";
+import { EditPayableForm } from "@/app/(app)/contas-a-pagar/_lib/edit-payable-form";
 import { hasPermission } from "@/core/auth";
 import { todayInTz } from "@/core/dates";
 
@@ -28,14 +32,25 @@ interface TargetInfo {
 export default async function ConciliacaoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; erro?: string; pt?: string }>;
+  searchParams: Promise<{
+    ok?: string;
+    erro?: string;
+    pt?: string;
+    /** Título conciliado com o formulário de vencimento aberto. */
+    editar?: string;
+    f_vencimento?: string;
+    /** Pagamento com o pop-up de exclusão aberto. */
+    excluir?: string;
+    f_motivo?: string;
+  }>;
 }) {
-  const { ok, erro, pt } = await searchParams;
+  const sp = await searchParams;
+  const { ok, erro, pt } = sp;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
 
-  const [bankAccounts, suggested, decided, unreconciledPage, payables, receivables, payments, suppliers, customers, users] =
+  const [bankAccounts, suggested, decided, unreconciledPage, payables, receivables, payments, suppliers, customers, users, costCenters] =
     await Promise.all([
       repos.bankAccounts.listAll(companyId),
       repos.reconciliations.listByStatus(companyId, ["suggested"]),
@@ -52,6 +67,9 @@ export default async function ConciliacaoPage({
       repos.suppliers.listAll(companyId),
       repos.customers.listAll(companyId),
       repos.users.listAll(),
+      // Só para exibir o centro de custo do título no formulário de vencimento
+      // (que o mostra em leitura). Lista pequena, uma consulta.
+      repos.costCenters.listAll(companyId),
     ]);
 
   const accountName = new Map(bankAccounts.map((b) => [b.id, b.name]));
@@ -134,6 +152,34 @@ export default async function ConciliacaoPage({
   // real em que o dinheiro saiu. Ordena pelo vencimento (o mais urgente antes).
   const today = todayInTz(clock.now(), session.config.timezone);
   const podeConciliar = hasPermission(session.membership.role, "payment.execute");
+  // --- Ações do card "Conciliados" ---------------------------------------
+  // Corrigir vencimento exige payable.create (é alteração de título); desfazer
+  // a conciliação exige payment.execute, a mesma de conciliar.
+  const podeCorrigirVencimento = hasPermission(session.membership.role, "payable.create");
+  const costCenterLabelById = new Map(
+    costCenters.map((cc) => [cc.id, `${cc.code} — ${cc.name}`])
+  );
+  const centsToInput = (cents: number): string => (cents / 100).toFixed(2).replace(".", ",");
+
+  // Chave por PAGAMENTO, não por título: um título pode ter dois pagamentos
+  // conciliados (baixa parcial), e por id de título as duas linhas abririam o
+  // formulário ao mesmo tempo.
+  const editarId = sp.editar?.trim() || undefined;
+  const editandoPayment = editarId ? paymentById.get(editarId) : undefined;
+  const editandoPayable = editandoPayment
+    ? payableById.get(editandoPayment.payableId)
+    : undefined;
+  const editandoDocumento = editandoPayable?.documentId
+    ? await repos.documents.getById(companyId, editandoPayable.documentId)
+    : null;
+
+  const excluirId = sp.excluir?.trim() || undefined;
+  const excluirPayment =
+    excluirId && paymentById.get(excluirId)?.status === "executed"
+      ? paymentById.get(excluirId)
+      : undefined;
+  const excluirPayable = excluirPayment ? payableById.get(excluirPayment.payableId) : undefined;
+
   // Pagamentos JÁ conciliados, do mais recente para o mais antigo. A data
   // exibida é a do pagamento informada na conciliação (executedAt), convertida
   // para o fuso da empresa — nunca UTC, senão a data pularia um dia.
@@ -249,27 +295,158 @@ export default async function ConciliacaoPage({
           <EmptyState message="Nenhum pagamento conciliado ainda." />
         ) : (
           <Table
-            headers={["Data do pagamento", "Fornecedor", "Título", "Valor", "Conciliado por"]}
-            align={["l", "l", "l", "r", "l"]}
+            headers={[
+              "Data do pagamento",
+              "Fornecedor",
+              "Título",
+              "Valor",
+              "Conciliado por",
+              "Ações",
+            ]}
+            align={["l", "l", "l", "r", "l", "l"]}
           >
             {conciliados.map(({ pay, payable, data }) => (
-              <tr key={pay.id}>
-                <Td>{formatBR(data)}</Td>
-                <Td>
-                  {payable
-                    ? (supplierName.get(payable.supplierId) ?? payable.supplierId)
-                    : "—"}
-                </Td>
-                <Td>{payable?.description ?? pay.payableId}</Td>
-                <Td right>{formatBRL(pay.amountCents)}</Td>
-                <Td>
-                  {pay.executedBy ? (userName.get(pay.executedBy) ?? pay.executedBy) : "—"}
-                </Td>
-              </tr>
+              <Fragment key={pay.id}>
+                <tr>
+                  <Td>{formatBR(data)}</Td>
+                  <Td>
+                    {payable
+                      ? (supplierName.get(payable.supplierId) ?? payable.supplierId)
+                      : "—"}
+                  </Td>
+                  <Td>{payable?.description ?? pay.payableId}</Td>
+                  <Td right>{formatBRL(pay.amountCents)}</Td>
+                  <Td>
+                    {pay.executedBy ? (userName.get(pay.executedBy) ?? pay.executedBy) : "—"}
+                  </Td>
+                  {/* Editar (✎) abre o formulário do título na linha, só com o
+                      vencimento liberado. Excluir (🗑) abre o pop-up que desfaz
+                      a conciliação. Ambos são GET — não agem por si. */}
+                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
+                    <div className="flex flex-nowrap items-center gap-1">
+                      {podeCorrigirVencimento && payable ? (
+                        <form method="get" action="/conciliacao" className="inline">
+                          <input
+                            type="hidden"
+                            name="editar"
+                            value={editarId === pay.id ? "" : pay.id}
+                          />
+                          <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                            <Button variant="warn" type="submit">
+                              {editarId === pay.id ? "Fechar" : "✎"}
+                            </Button>
+                          </span>
+                        </form>
+                      ) : null}
+                      {podeConciliar ? (
+                        <form method="get" action="/conciliacao" className="inline">
+                          <input type="hidden" name="excluir" value={pay.id} />
+                          <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                            <Button variant="danger" type="submit">
+                              🗑
+                            </Button>
+                          </span>
+                        </form>
+                      ) : null}
+                      {!podeCorrigirVencimento && !podeConciliar ? (
+                        <span className="text-[var(--ink-muted)]">—</span>
+                      ) : null}
+                    </div>
+                  </Td>
+                </tr>
+                {editandoPayable && editarId === pay.id ? (
+                  <tr>
+                    {/* <td> cru por causa do colSpan, que o Td não expõe. */}
+                    <td className="px-2 py-2 align-middle" colSpan={6}>
+                      <EditPayableForm
+                        mode="dueDateOnly"
+                        action={adjustDueDateAction}
+                        payable={{
+                          id: editandoPayable.id,
+                          supplierName:
+                            supplierName.get(editandoPayable.supplierId) ??
+                            editandoPayable.supplierId,
+                          description: editandoPayable.description,
+                          amount: centsToInput(editandoPayable.amountCents),
+                          documentNumber: editandoDocumento?.number,
+                          issueDate: editandoPayable.issueDate,
+                          dueDate: editandoPayable.dueDate,
+                          supplierCategory: editandoPayable.supplierCategory ?? "",
+                          costClassification: editandoPayable.costClassification ?? "",
+                          costCenterId: editandoPayable.costCenterId ?? "",
+                          costCenterLabel: editandoPayable.costCenterId
+                            ? costCenterLabelById.get(editandoPayable.costCenterId)
+                            : undefined,
+                          notes: editandoPayable.notes ?? "",
+                          installmentNumber: editandoPayable.installmentNumber,
+                          installmentCount: editandoPayable.installmentCount,
+                          scheduled: false,
+                        }}
+                        prefill={{ dueDate: sp.f_vencimento }}
+                        cancelHref="/conciliacao"
+                        hiddenFields={{ paymentId: pay.id }}
+                      />
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
             ))}
           </Table>
         )}
       </Card>
+
+      {/* POP-UP de confirmação da exclusão do conciliado. Mesmo padrão do
+          estorno em Aprovações: sobreposição renderizada no servidor, aberta
+          por ?excluir=<paymentId> e fechada voltando para /conciliacao. */}
+      {excluirPayment && excluirPayable ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card w-full max-w-lg p-4 shadow-xl">
+            <h2 className="text-base font-semibold text-[var(--crit)]">
+              Excluir lançamento conciliado
+            </h2>
+            <p className="mt-2 text-sm">
+              A conciliação de{" "}
+              <strong className="tabular">{formatBRL(excluirPayment.amountCents)}</strong>{" "}
+              {supplierName.get(excluirPayable.supplierId) ?? excluirPayable.supplierId} será
+              desfeita.
+            </p>
+            <p className="mt-1 text-sm text-[var(--ink-muted)]">
+              {excluirPayable.description} · vencimento {formatBR(excluirPayable.dueDate)}
+            </p>
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+              O título <strong>volta para Contas a pagar</strong> com a situação da regra
+              atual, o lançamento contábil é <strong>estornado</strong> por um lançamento
+              inverso, e a aprovação que originou esta conciliação sai do{" "}
+              <strong>Histórico de decisões</strong>. Nada é apagado: tudo permanece
+              registrado em Auditoria.
+            </p>
+            <form action={undoReconciliationAction} className="mt-3">
+              <input type="hidden" name="paymentId" value={excluirPayment.id} />
+              <Field label="Motivo da exclusão">
+                <input
+                  name="reason"
+                  required
+                  autoFocus
+                  defaultValue={sp.f_motivo ?? ""}
+                  className={inputClass}
+                  placeholder="Ex.: conciliado com a data errada"
+                />
+              </Field>
+              <div className="mt-3 flex items-center gap-2">
+                <Button variant="danger" type="submit">
+                  Confirmar exclusão
+                </Button>
+                <Link
+                  href="/conciliacao"
+                  className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+                >
+                  Voltar
+                </Link>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
 
       <Card className="mb-6" title="1 — Importar extrato">
         {contasAtivas.length === 0 ? (

@@ -144,6 +144,15 @@ const updatePayableSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+// Ajuste do VENCIMENTO de título já baixado. Existe porque `update_payable`
+// recusa título pago (e deve continuar recusando: liberar lá abriria todos os
+// campos de um título quitado). Aqui o contrato é de UM campo só.
+const adjustDueDateSchema = z.object({
+  action: z.literal("adjust_due_date"),
+  payableId: z.string().min(1),
+  dueDate: isoDateSchema,
+});
+
 // Conciliação do pagamento aprovado: informa a data em que o dinheiro saiu de
 // fato e baixa o título. É esta data — não a da aprovação — que decide se o
 // título fica "Pago" ou "Pago Atrasado".
@@ -174,6 +183,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   detectDuplicatesSchema,
   cancelPayableSchema,
   updatePayableSchema,
+  adjustDueDateSchema,
   reconcilePaymentSchema,
   reversePaymentSchema,
   generateRecurringSchema,
@@ -186,6 +196,7 @@ export type ForecastDisbursementsInput = z.infer<typeof forecastDisbursementsSch
 export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
 export type UpdatePayableInput = z.infer<typeof updatePayableSchema>;
+export type AdjustDueDateInput = z.infer<typeof adjustDueDateSchema>;
 export type ReconcilePaymentInput = z.infer<typeof reconcilePaymentSchema>;
 export type ReversePaymentInput = z.infer<typeof reversePaymentSchema>;
 export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
@@ -262,6 +273,10 @@ export interface UpdatePayableData {
   payable: Payable;
 }
 
+export interface AdjustDueDateData {
+  payable: Payable;
+}
+
 export interface ReconcilePaymentData {
   payment: Payment;
   payable: Payable;
@@ -286,6 +301,7 @@ export type ContasAPagarData =
   | DetectDuplicatesData
   | CancelPayableData
   | UpdatePayableData
+  | AdjustDueDateData
   | ReconcilePaymentData
   | ReversePaymentData
   | GenerateRecurringData;
@@ -1323,6 +1339,100 @@ async function updatePayable(
 }
 
 /**
+ * AJUSTE DO VENCIMENTO de um título já baixado (pago ou parcialmente pago).
+ *
+ * Existe porque `update_payable` recusa título com movimento financeiro — e
+ * deve continuar recusando: afrouxar aquele guarda liberaria descrição, valor,
+ * categoria e centro de custo de um título quitado. Esta ação altera UM campo.
+ *
+ * Serve para corrigir um vencimento digitado errado depois da conciliação. O
+ * efeito colateral é o objetivo: a situação exibida ("Pago" / "Pago no
+ * Vencimento" / "Pago Atrasado") é derivada da data do pagamento CONTRA o
+ * vencimento, então corrigir o vencimento reclassifica o título.
+ *
+ * Não mexe em valor, saldo, pagamento nem em qualquer coisa contábil.
+ */
+async function adjustDueDate(
+  ctx: SkillContext,
+  input: AdjustDueDateInput
+): Promise<SkillResult<AdjustDueDateData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payable.create")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode alterar títulos a pagar.`
+      );
+    }
+  }
+
+  const payable = await ctx.repos.payables.getById(ctx.companyId, input.payableId);
+  if (!payable) throw new NotFoundError("Título a pagar", input.payableId);
+
+  if (payable.status === "canceled") {
+    throw new ValidationError(`Título ${payable.id} está cancelado e não pode ser alterado.`);
+  }
+  // Título SEM baixa é caso da edição normal, que edita tudo. Direcionar para
+  // lá evita dois caminhos concorrentes para a mesma coisa.
+  if (payable.paidCents <= 0) {
+    throw new ValidationError(
+      `Título ${payable.id} não possui baixa registrada; use a edição do título em Contas a pagar para alterar o vencimento.`
+    );
+  }
+  // Mesma regra do create/update: vencimento nunca antes da emissão.
+  if (input.dueDate < payable.issueDate) {
+    throw new ValidationError(
+      `Verificar a Data da Emissão (vencimento ${formatBR(input.dueDate)} é anterior à emissão ${formatBR(payable.issueDate)}).`
+    );
+  }
+
+  if (input.dueDate === payable.dueDate) {
+    return makeResult(
+      SKILL,
+      ctx,
+      { payable },
+      {
+        assumptions: ["Vencimento informado é igual ao atual; nada foi alterado."],
+        dataSources: DATA_SOURCES,
+      }
+    );
+  }
+
+  const before = { ...payable };
+  payable.dueDate = input.dueDate;
+  payable.updatedAt = ctx.clock.now().toISOString();
+  await ctx.repos.payables.update(payable);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payable.due_date_adjusted",
+    entityType: "payable",
+    entityId: payable.id,
+    before,
+    after: payable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "payable.updated",
+    payload: { id: payable.id, dueDate: payable.dueDate },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL,
+    ctx,
+    { payable },
+    {
+      assumptions: [
+        `Vencimento alterado de ${formatBR(before.dueDate)} para ${formatBR(payable.dueDate)}. Apenas o vencimento mudou — valor, baixa e lançamentos contábeis seguem intactos.`,
+        "A situação do título (Pago / Pago no Vencimento / Pago Atrasado) é recalculada na leitura, comparando a data do pagamento com o novo vencimento.",
+      ],
+      dataSources: DATA_SOURCES,
+    }
+  );
+}
+
+/**
  * CONCILIAÇÃO de um pagamento aprovado: registra a data em que o dinheiro saiu
  * do banco e baixa o título, que volta para Contas a pagar já quitado.
  *
@@ -1591,6 +1701,33 @@ async function reversePayment(
     correlationId: ctx.correlationId,
   });
 
+  // Marca a aprovação que autorizou este pagamento como ESTORNADA. A tela de
+  // Aprovações deixa de listá-la no histórico, mas o registro permanece: é a
+  // única cópia de quem aprovou (approverIds/decidedBy/justification) e
+  // Controles Internos exige encontrá-lo (regra approval_exists). Apagar a
+  // linha deixaria Payment.approvalId e FlowRun.approvalId órfãos.
+  const approvalNota: string[] = [];
+  if (payment.approvalId) {
+    const approval = await ctx.repos.approvals.getById(ctx.companyId, payment.approvalId);
+    if (approval && !approval.revertedAt) {
+      const approvalBefore = { ...approval };
+      approval.revertedAt = nowIso;
+      await ctx.repos.approvals.update(approval);
+      await ctx.audit.record(ctx.companyId, {
+        actor: ctx.actor,
+        action: "approval.reverted",
+        entityType: "approval",
+        entityId: approval.id,
+        before: approvalBefore,
+        after: { ...approval, reverseReason: input.reason },
+        correlationId: ctx.correlationId,
+      });
+      approvalNota.push(
+        `Aprovação ${approval.id} marcada como estornada: sai do histórico de decisões, mas segue registrada para auditoria e controles internos.`
+      );
+    }
+  }
+
   return makeResult(
     SKILL,
     ctx,
@@ -1599,6 +1736,7 @@ async function reversePayment(
       assumptions: [
         `Pagamento ${payment.id} estornado (${formatBRL(payment.amountCents)}); título ${payable.id} devolvido para Contas a pagar com situação "${payable.status}".`,
         "O pagamento fica como cancelado e sai das visões de caixa, orçamento e contabilidade; a trilha de auditoria preserva a execução anterior.",
+        ...approvalNota,
       ],
       dataSources: DATA_SOURCES,
     }
@@ -1686,6 +1824,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return cancelPayable(ctx, input);
       case "update_payable":
         return updatePayable(ctx, input);
+      case "adjust_due_date":
+        return adjustDueDate(ctx, input);
       case "reconcile_payment":
         return reconcilePayment(ctx, input);
       case "reverse_payment":

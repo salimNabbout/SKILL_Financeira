@@ -143,6 +143,27 @@ export function canSelfApprove(email?: string | null): boolean {
 }
 
 /**
+ * EXCEÇÃO NOMINAL para REDEFINIR a senha de outra pessoa. Lista própria, e
+ * deliberadamente separada de SELF_APPROVAL_EXEMPT_EMAILS: autoaprovar
+ * pagamento e trocar a senha de terceiros são poderes distintos, e ninguém
+ * deve ganhar um por estar na lista do outro.
+ *
+ * O papel `admin` é condição necessária (permissão `user.manage`), não
+ * suficiente: só quem está nesta lista redefine senha de outra pessoa.
+ *
+ * ⚠️ Quem está aqui pode assumir o acesso de qualquer usuário da empresa
+ * (redefine a senha e entra com ela). A trilha registra a ação, com quem fez e
+ * em quem — mas o poder é real. Para revogar, remova o e-mail.
+ */
+export const PASSWORD_RESET_EXEMPT_EMAILS: readonly string[] = ["salim@cetemrj.com.br"];
+
+/** Este e-mail pode redefinir a senha de OUTRO usuário? */
+export function canResetOthersPassword(email?: string | null): boolean {
+  if (!email) return false;
+  return PASSWORD_RESET_EXEMPT_EMAILS.includes(email.trim().toLowerCase());
+}
+
+/**
  * Segregação de funções: quem solicita não pode aprovar a própria solicitação.
  *
  * `approverEmail` é opcional e serve só para a exceção nominal acima. Omitido,

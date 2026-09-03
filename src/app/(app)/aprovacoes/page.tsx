@@ -42,8 +42,11 @@ export default async function AprovacoesPage({
   ]);
   const userName = new Map(users.map((u) => [u.id, u.name]));
   const pendingRows = [...pending].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  // Estornadas saem do histórico (a conciliação que elas originaram foi
+  // desfeita), mas continuam no banco — visíveis em Auditoria e encontráveis
+  // por Controles Internos.
   const history = all
-    .filter((a) => a.status !== "pending")
+    .filter((a) => a.status !== "pending" && !a.revertedAt)
     .sort((a, b) => (b.decidedAt ?? b.createdAt).localeCompare(a.decidedAt ?? a.createdAt))
     .slice(0, 30);
 

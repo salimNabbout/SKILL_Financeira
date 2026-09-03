@@ -408,6 +408,12 @@ export interface Approval {
   justification?: string;
   /** Versão para trava otimista (four-eyes sem lost-update). Ausente = 0. */
   version?: number;
+  /**
+   * Preenchido quando a conciliação originada por esta aprovação foi desfeita.
+   * A linha sai do Histórico de decisões, mas o registro é preservado — é a
+   * única cópia de quem aprovou, e Controles Internos depende dele.
+   */
+  revertedAt?: string;
   createdAt: string;
 }
 

@@ -19,10 +19,19 @@ describe("deriveSituation (genérica, comum a pagar/receber)", () => {
     ).toBe("quitado_atraso");
   });
 
-  it("quitado no dia do vencimento → quitado (não é atraso)", () => {
+  it("quitado no dia do vencimento → quitado_no_vencimento (não é atraso)", () => {
     expect(
       deriveSituation(
         { status: "settled", dueDate: "2026-08-25", remainingCents: 0, settledAt: "2026-08-25" },
+        TODAY
+      )
+    ).toBe("quitado_no_vencimento");
+  });
+
+  it("quitado antes do vencimento → quitado", () => {
+    expect(
+      deriveSituation(
+        { status: "settled", dueDate: "2026-08-30", remainingCents: 0, settledAt: "2026-08-25" },
         TODAY
       )
     ).toBe("quitado");

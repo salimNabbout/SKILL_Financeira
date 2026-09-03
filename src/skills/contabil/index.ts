@@ -103,6 +103,16 @@ const exportBatchSchema = z.object({
   layout: z.enum(EXPORT_LAYOUT_IDS).optional(),
 });
 
+// Estorno CONTÁBIL de uma origem (ex.: pagamento estornado): não apaga o
+// lançamento original — cria o lançamento INVERSO, como manda a prática
+// contábil e como o resto do app faz (nada auditado é apagado).
+const reverseEntriesSchema = z.object({
+  action: z.literal("reverse_entries"),
+  sourceType: z.enum(["payment", "receipt"]),
+  sourceId: z.string().min(1),
+  reason: z.string().min(1),
+});
+
 const checkMasterDataSchema = z.object({
   action: z.literal("check_master_data"),
 });
@@ -115,6 +125,7 @@ const taxSummarySchema = z.object({
 export const contabilInputSchema = z
   .discriminatedUnion("action", [
     prepareEntriesSchema,
+    reverseEntriesSchema,
     exportBatchSchema,
     checkMasterDataSchema,
     taxSummarySchema,
@@ -143,6 +154,7 @@ export const contabilInputSchema = z
   });
 
 export type PrepareEntriesInput = z.infer<typeof prepareEntriesSchema>;
+export type ReverseEntriesInput = z.infer<typeof reverseEntriesSchema>;
 export type ExportBatchInput = z.infer<typeof exportBatchSchema>;
 export type CheckMasterDataInput = z.infer<typeof checkMasterDataSchema>;
 export type TaxSummaryInput = z.infer<typeof taxSummarySchema>;
@@ -203,8 +215,16 @@ export interface TaxSummaryData {
   observacao: string;
 }
 
+export interface ReverseEntriesData {
+  /** Lançamentos inversos criados nesta chamada. */
+  reversals: AccountingEntry[];
+  /** true quando algum lançamento original já havia sido exportado ao contador. */
+  originalExported: boolean;
+}
+
 export type ContabilData =
   | PrepareEntriesData
+  | ReverseEntriesData
   | ExportBatchData
   | CheckMasterDataData
   | TaxSummaryData;
@@ -453,6 +473,121 @@ async function prepareEntries(
         "pagamento executado → débito conta da categoria (deducoes→2.2, custos→4.1, despesas_operacionais→4.2, despesas_financeiras→4.3; sem categoria→4.2), crédito 1.1; recebimento → débito 1.1, crédito 3.1; valor = amountCents da liquidação; data = data de negócio da liquidação no fuso da empresa",
     },
     { alerts, pendingItems, assumptions, confidence: 1.0, dataSources: DATA_SOURCES }
+  );
+}
+
+/**
+ * ESTORNO CONTÁBIL de uma origem. Para cada lançamento daquela origem, cria o
+ * lançamento INVERSO (débito e crédito trocados, mesmo valor). O original é
+ * preservado: contabilidade não se apaga, se estorna — e é o mesmo princípio do
+ * resto do app, onde nada auditado é excluído fisicamente.
+ *
+ * `sourceType` do inverso é "adjustment" (ajuste), valor já previsto no modelo,
+ * para o inverso não ser confundido com o lançamento do próprio pagamento nem
+ * ser recolhido de novo por `prepare_entries` (que é idempotente por origem).
+ *
+ * Se o original já foi EXPORTADO ao contador, o estorno é registrado do mesmo
+ * jeito e vira pendência: quem recebeu o arquivo precisa ser avisado.
+ */
+async function reverseEntries(
+  ctx: SkillContext,
+  input: ReverseEntriesInput
+): Promise<SkillResult<ReverseEntriesData>> {
+  // Permissão fica no fluxo (requiredPermission), como no export_batch desta
+  // mesma skill — o estorno contábil é consequência do estorno do pagamento,
+  // não uma autorização separada.
+  const chave = `${input.sourceType}:${input.sourceId}`;
+  const originais = (await ctx.repos.accountingEntries.listAll(ctx.companyId)).filter(
+    (e) => `${e.sourceType}:${e.sourceId}` === chave
+  );
+
+  if (originais.length === 0) {
+    return makeResult(
+      SKILL,
+      ctx,
+      { reversals: [], originalExported: false },
+      {
+        assumptions: [
+          `Nenhum lançamento contábil encontrado para ${chave}; nada a estornar.`,
+        ],
+        dataSources: DATA_SOURCES,
+      }
+    );
+  }
+
+  // Idempotência: um estorno já registrado para esta origem não é repetido.
+  // O inverso carrega sourceId = "rev:<origem>", chave natural da reversão.
+  const revSourceId = `rev:${input.sourceId}`;
+  const jaEstornados = new Set(
+    (await ctx.repos.accountingEntries.listAll(ctx.companyId))
+      .filter((e) => e.sourceType === "adjustment" && e.sourceId === revSourceId)
+      .map((e) => e.memo)
+  );
+
+  const nowIso = ctx.clock.now().toISOString();
+  const reversals: AccountingEntry[] = [];
+  const pendingItems: PendingItem[] = [];
+  let originalExported = false;
+
+  for (const original of originais) {
+    if (original.exported) originalExported = true;
+    const memo = `Estorno de: ${original.memo} (${input.reason})`;
+    if (jaEstornados.has(memo)) continue;
+
+    const inverso: AccountingEntry = {
+      id: ctx.ids.next("ae"),
+      companyId: ctx.companyId,
+      // Data do estorno = hoje (fato novo), não a data do lançamento original:
+      // reabrir competência fechada é decisão do contador, não do sistema.
+      entryDate: ctx.today(),
+      debitAccount: original.creditAccount,
+      creditAccount: original.debitAccount,
+      amountCents: original.amountCents,
+      memo,
+      sourceType: "adjustment",
+      sourceId: revSourceId,
+      exported: false,
+      createdAt: nowIso,
+    };
+    await ctx.repos.accountingEntries.create(inverso);
+    reversals.push(inverso);
+
+    await ctx.audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "accounting.entries_reversed",
+      entityType: "accounting_entry",
+      entityId: inverso.id,
+      before: original,
+      after: inverso,
+      correlationId: ctx.correlationId,
+    });
+
+    if (original.exported) {
+      pendingItems.push({
+        code: "estorno_de_lancamento_exportado",
+        description: `O lançamento ${original.id} (${formatBRL(original.amountCents)}) já havia sido exportado ao contador; o estorno entra em lote posterior.`,
+        entityType: "accounting_entry",
+        entityId: original.id,
+        suggestedAction:
+          "Avisar o contador de que o lançamento foi estornado e enviar o próximo lote com o inverso.",
+      });
+    }
+  }
+
+  return makeResult(
+    SKILL,
+    ctx,
+    { reversals, originalExported },
+    {
+      assumptions: [
+        reversals.length === 0
+          ? `Estorno de ${chave} já havia sido registrado; nada foi duplicado.`
+          : `${reversals.length} lançamento(s) inverso(s) criado(s) para ${chave} (débito e crédito trocados). O lançamento original é preservado — contabilidade se estorna, não se apaga.`,
+        "A data do estorno é a de hoje, não a do lançamento original: reabrir competência fechada é decisão do contador.",
+      ],
+      pendingItems,
+      dataSources: DATA_SOURCES,
+    }
   );
 }
 
@@ -785,6 +920,8 @@ export const contabilSkill: SkillDefinition<ContabilInput, ContabilData> = {
     switch (input.action) {
       case "prepare_entries":
         return prepareEntries(ctx, input);
+      case "reverse_entries":
+        return reverseEntries(ctx, input);
       case "export_batch":
         return exportBatch(ctx, input);
       case "check_master_data":

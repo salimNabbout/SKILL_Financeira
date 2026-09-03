@@ -6,7 +6,7 @@
  *
  * A lógica de datas/precedência vive em `deriveSituation` (genérica, comum a
  * pagar e receber). Aqui só se traduz o enum abstrato para o rótulo pt-BR do
- * lado "a pagar" ("Pago" / "Pago Atrasado"). A função continua PURA: recebe
+ * lado "a pagar" ("Pago" / "Pago no Vencimento" / "Pago Atrasado"). A função continua PURA: recebe
  * `today` e a data de pagamento por parâmetro.
  */
 
@@ -19,15 +19,24 @@ export type PayableSituation =
   | "Hoje"
   | "Atrasado"
   | "Pago"
+  | "Pago no Vencimento"
   | "Pago Atrasado"
   | "Cancelado";
 
-/** Enum abstrato → rótulo pt-BR do lado a PAGAR. */
+/**
+ * Enum abstrato → rótulo pt-BR do lado a PAGAR.
+ *
+ * As TRÊS quitações têm rótulos distintos de propósito: a tela pinta cada uma
+ * de uma cor (verde / amarelo / vermelho), e o texto distinto garante que a
+ * informação sobreviva onde a cor não chega — exportação, impressão em preto e
+ * branco e quem não distingue cores.
+ */
 const PAYABLE_LABEL: Record<Situation, PayableSituation> = {
   a_vencer: "A Vencer",
   hoje: "Hoje",
   atrasado: "Atrasado",
   quitado: "Pago",
+  quitado_no_vencimento: "Pago no Vencimento",
   quitado_atraso: "Pago Atrasado",
   cancelado: "Cancelado",
 };

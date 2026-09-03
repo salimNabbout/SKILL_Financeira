@@ -80,6 +80,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "auth.switch_company": "Empresa ativa trocada",
   "user.created": "Usuário criado",
   "user.password_changed": "Senha alterada",
+  "user.password_reset": "Senha redefinida pelo administrador",
   "user.deactivated": "Usuário desativado",
   "user.reactivated": "Usuário reativado",
   "user.totp_enabled": "Verificação em duas etapas ativada",
@@ -120,6 +121,7 @@ export const ACTION_LABELS: Record<string, string> = {
   // Contas a pagar e pagamentos
   "payable.created": "Título a pagar criado",
   "payable.updated": "Título a pagar alterado",
+  "payable.due_date_adjusted": "Vencimento do título corrigido",
   "payable.canceled": "Título a pagar cancelado",
   "payable.settled_via_reconciliation": "Título baixado pela conciliação",
   "payment.requested": "Pagamento solicitado",
@@ -128,6 +130,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "payment.rejected": "Pagamento rejeitado",
   "payment.canceled": "Pagamento cancelado",
   "payment.reversed": "Pagamento estornado",
+  "approval.reverted": "Aprovação estornada",
+  "accounting.entries_reversed": "Lançamento contábil estornado",
 
   // Contas a receber e recebimentos
   "receivable.created": "Título a receber criado",
