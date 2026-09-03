@@ -120,13 +120,45 @@ export function assertPermission(actor: Actor, permission: Permission): void {
   }
 }
 
-/** Segregação de funções: quem solicita não pode aprovar a própria solicitação. */
-export function assertSegregation(requestedBy: string, approverId: string): void {
-  if (requestedBy === approverId) {
-    throw new SegregationError(
-      "Segregação de funções: o solicitante não pode aprovar a própria solicitação."
-    );
-  }
+/**
+ * EXCEÇÃO NOMINAL à segregação de funções: e-mails autorizados a aprovar a
+ * própria solicitação. Decisão de negócio do responsável pelo app — a lista é
+ * nominal de propósito, para que a dispensa seja de pessoas identificadas e não
+ * de um papel (dar isso ao papel "admin" liberaria qualquer admin futuro sem
+ * ninguém decidir por isso).
+ *
+ * Comparação sempre em minúsculas: o e-mail do cadastro é normalizado assim.
+ *
+ * ⚠️ Continua sendo o controle de quatro olhos sendo dispensado: quem estiver
+ * nesta lista pode solicitar e aprovar o próprio pagamento sozinho. A trilha de
+ * auditoria registra solicitante e aprovador, então o caso fica visível — mas o
+ * bloqueio não existe mais para essas pessoas. Para revogar, remova o e-mail.
+ */
+export const SELF_APPROVAL_EXEMPT_EMAILS: readonly string[] = ["salim@cetemrj.com.br"];
+
+/** Este e-mail pode aprovar a própria solicitação? */
+export function canSelfApprove(email?: string | null): boolean {
+  if (!email) return false;
+  return SELF_APPROVAL_EXEMPT_EMAILS.includes(email.trim().toLowerCase());
+}
+
+/**
+ * Segregação de funções: quem solicita não pode aprovar a própria solicitação.
+ *
+ * `approverEmail` é opcional e serve só para a exceção nominal acima. Omitido,
+ * a regra vale integralmente — nenhum chamador perde a proteção por esquecer o
+ * parâmetro.
+ */
+export function assertSegregation(
+  requestedBy: string,
+  approverId: string,
+  approverEmail?: string | null
+): void {
+  if (requestedBy !== approverId) return;
+  if (canSelfApprove(approverEmail)) return;
+  throw new SegregationError(
+    "Segregação de funções: o solicitante não pode aprovar a própria solicitação."
+  );
 }
 
 /**
