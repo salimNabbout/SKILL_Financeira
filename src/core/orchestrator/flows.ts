@@ -8,6 +8,8 @@
 import type { Permission } from "../auth";
 import type { CompanyConfig } from "../config";
 import type { ISODate } from "../dates";
+import type { ID } from "../entities";
+import type { Repositories } from "../repositories";
 import type { SkillName } from "../skill";
 import type { SkillAlert, SkillResult } from "../types";
 
@@ -47,6 +49,20 @@ export interface FlowDefinition {
    * do primeiro dia. Continua protegendo o duplo clique dentro do mesmo dia.
    */
   periodicDefault?: boolean;
+  /**
+   * Escopo extra da chave de idempotência, resolvido no momento da chamada.
+   *
+   * A chave default é hash(fluxo + payload). Para fluxos em que o MESMO payload
+   * é uma tentativa legítima diferente — reenviar um título que voltou para a
+   * fila, por exemplo —, isso faz a tentativa nova colidir com a anterior e ser
+   * devolvida do cache. Este gancho acrescenta à chave algo que muda entre
+   * tentativas, sem tirar a proteção contra duplo clique (que acontece com o
+   * escopo inalterado).
+   */
+  idempotencyScope?(
+    repos: Repositories,
+    request: { companyId: ID; payload: unknown }
+  ): Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +143,19 @@ const supplierInvoiceIntake: FlowDefinition = {
  */
 const schedulePayment: FlowDefinition = {
   name: "schedule_payment",
+  // Cada clique em Pagar cria exatamente UM pagamento, então a contagem de
+  // pagamentos do título identifica a TENTATIVA. Reenviar depois de uma
+  // rejeição, de um estorno ou de um cancelamento passa a gerar chave nova —
+  // antes colidia com a tentativa anterior e a tela dizia "Nada foi enviado"
+  // sem criar nada. Dois cliques no mesmo estado mantêm a mesma chave, então a
+  // proteção contra duplo clique continua de pé; e impedir DOIS pagamentos
+  // vivos no mesmo título é trabalho da skill, que já recusa por saldo
+  // reservado com uma mensagem que explica o motivo.
+  async idempotencyScope(repos, { companyId, payload }) {
+    const payableId = (payload as { payableId?: string } | null)?.payableId;
+    if (!payableId) return null;
+    return (await repos.payments.listByPayable(companyId, payableId)).length;
+  },
   description:
     "Agenda pagamento de título e exige aprovação por alçada. A aprovação NÃO baixa o título: o pagamento fica aprovado aguardando a conciliação, que é quem executa (mock) e quita.",
   requiredPermission: "payment.request",

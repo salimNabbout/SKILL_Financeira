@@ -34,6 +34,13 @@ import type { ApprovalRequestData, PendingItem, SkillAlert, SkillResult } from "
 import { buildFlowMap, type FlowDefinition, type FlowStepContext } from "./flows";
 import type { SkillRegistry } from "./registry";
 
+/**
+ * Idade a partir da qual um flowRun "running" é considerado preso (processo
+ * morto no meio). Mesmo limiar do reaper — 15 minutos é muito acima de qualquer
+ * execução real e muito abaixo da paciência de quem está tentando de novo.
+ */
+const STUCK_RUNNING_MS = 15 * 60 * 1000;
+
 export interface OrchestratorRequest {
   flow: string;
   companyId: ID;
@@ -125,6 +132,14 @@ export class Orchestrator {
     if (flowDef.periodicDefault) {
       defaultKeyBase.day = todayInTz(this.env.clock.now(), config.timezone);
     }
+    // Escopo declarado pelo fluxo (ver FlowDefinition.idempotencyScope): o que
+    // distingue uma TENTATIVA legítima de uma repetição da mesma requisição.
+    if (flowDef.idempotencyScope) {
+      defaultKeyBase.scope = await flowDef.idempotencyScope(this.env.repos, {
+        companyId: request.companyId,
+        payload: request.payload ?? null,
+      });
+    }
     const idempotencyKey = request.idempotencyKey ?? hashPayload(defaultKeyBase);
 
     const now = this.env.clock.now().toISOString();
@@ -182,8 +197,24 @@ export class Orchestrator {
       const previousRun = previousRunId
         ? await this.env.repos.flowRuns.getById(request.companyId, previousRunId)
         : null;
+      // A chave só deve bloquear enquanto houver fluxo VIVO ou CONCLUÍDO por
+      // trás dela. "Vivo" se decide pelo estado REAL, não pelo rótulo gravado:
+      //  - `awaiting_approval` cuja aprovação já foi decidida (ou sumiu) é um
+      //    fluxo que travou depois da decisão — a retomada não chegou ao fim.
+      //    Sem isto ele bloqueia para sempre, com o título já devolvido para a
+      //    fila e o botão de pagar visível: o sintoma que se repetiu três vezes.
+      //  - `running` parado há muito tempo é um processo que morreu no meio
+      //    (mesma noção do reaper em ./reaper.ts, aplicada no momento em que
+      //    ela importa: quando alguém tenta de novo).
       const staleKey =
-        !previousRun || previousRun.status === "rejected" || previousRun.status === "failed";
+        !previousRun ||
+        previousRun.status === "rejected" ||
+        previousRun.status === "failed" ||
+        (previousRun.status === "awaiting_approval" &&
+          !(await this.approvalAindaPendente(request.companyId, previousRun))) ||
+        (previousRun.status === "running" &&
+          this.env.clock.now().getTime() - new Date(previousRun.updatedAt).getTime() >
+            STUCK_RUNNING_MS);
       if (staleKey && !staleRejectRetry) {
         await this.env.repos.idempotency.remove(request.companyId, idempotencyKey);
         return this.execute(request, true);
@@ -658,6 +689,20 @@ export class Orchestrator {
       approval,
       today: () => todayInTz(clock.now(), config.timezone),
     };
+  }
+
+  /**
+   * O fluxo suspenso ainda espera decisão humana? Um `awaiting_approval` cuja
+   * aprovação já foi decidida (ou não existe mais) não está esperando ninguém —
+   * está preso, e não deve continuar bloqueando a chave de idempotência.
+   */
+  private async approvalAindaPendente(companyId: ID, flowRun: FlowRun): Promise<boolean> {
+    // Sem aprovação vinculada, o fluxo não está esperando decisão nenhuma —
+    // ficou suspenso sem alvo, que é o mesmo que preso.
+    const approvalId = flowRun.approvalId;
+    if (!approvalId) return false;
+    const approval = await this.env.repos.approvals.getById(companyId, approvalId);
+    return approval?.status === "pending";
   }
 
   private buildResponse(

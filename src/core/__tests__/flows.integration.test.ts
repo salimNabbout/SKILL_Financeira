@@ -678,6 +678,251 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(pendentes).toHaveLength(1);
   });
 
+  it("título CANCELADO e reaberto aceita novo envio com os mesmos dados", async () => {
+    const payableId = await createPayable();
+    const payload = {
+      payableId,
+      bankAccountId: "ba_1",
+      scheduledDate: "2026-08-20",
+      method: "pix",
+    };
+
+    const primeira = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+    expect(primeira.status).toBe("awaiting_approval");
+
+    // Cancela o título: a skill cancela junto o pagamento pendente.
+    await orch.execute({
+      flow: "cancel_payable",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { payableId, reason: "lançado errado" },
+    });
+    // Reabre o título na marra (o app não tem "descancelar"; o que importa aqui
+    // é que a CHAVE não bloqueie quando ele volta a ser agendável).
+    const payable = env.db.payables.find((p) => p.id === payableId)!;
+    payable.status = "open";
+    payable.canceledAt = undefined;
+
+    const segunda = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+
+    expect(segunda.idempotent_replay).toBeFalsy();
+    expect(segunda.status).toBe("awaiting_approval");
+    expect(segunda.approval!.id).not.toBe(primeira.approval!.id);
+  });
+
+  it("segunda parcela de título parcialmente pago, mesma conta e mesma data", async () => {
+    const payableId = await createPayable(); // 120.000 centavos
+    const parcial = {
+      payableId,
+      bankAccountId: "ba_1",
+      scheduledDate: "2026-08-20",
+      method: "pix",
+      amountCents: 60_000,
+    };
+
+    // 1ª metade: agenda, aprova e concilia.
+    const um = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: parcial,
+    });
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: um.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    const pay1 = (await env.repos.payments.listByStatus(env.company.id, ["approved"]))[0];
+    await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId: pay1.id, paymentDate: "2026-08-18" },
+    });
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe(
+      "partially_paid"
+    );
+
+    // 2ª metade com payload IDÊNTICO — antes batia na chave da primeira.
+    const dois = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: parcial,
+    });
+
+    expect(dois.idempotent_replay).toBeFalsy();
+    expect(dois.status).toBe("awaiting_approval");
+    expect(dois.approval!.id).not.toBe(um.approval!.id);
+  });
+
+  it("reenvio idêntico com pagamento pendente é recusado pela REGRA DE SALDO, não pelo cache", async () => {
+    const payableId = await createPayable();
+    const payload = {
+      payableId,
+      bankAccountId: "ba_1",
+      scheduledDate: "2026-08-20",
+      method: "pix",
+    };
+
+    await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+
+    const segunda = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload,
+    });
+
+    // Não é replay silencioso: é uma recusa com motivo.
+    expect(segunda.status).toBe("failed");
+    expect(
+      segunda.consolidated.alerts.some((a) => /saldo|reservad/i.test(a.message))
+    ).toBe(true);
+    // E nenhum segundo pagamento foi criado.
+    const pagamentos = await env.repos.payments.listByPayable(env.company.id, payableId);
+    expect(pagamentos).toHaveLength(1);
+  });
+
+  it("chave presa em fluxo suspenso cuja aprovação JÁ foi decidida não bloqueia", async () => {
+    // Cenário artificial: um registro de idempotência apontando para um fluxo
+    // que nunca terminou. Usa reconcile_payment, que não tem escopo próprio.
+    const payableId = await createPayable();
+    const agendado = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: agendado.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    const paymentId = (await env.repos.payments.listByStatus(env.company.id, ["approved"]))[0].id;
+    const payload = { paymentId, paymentDate: "2026-08-18" };
+    const key = hashPayload({ flow: "reconcile_payment", payload });
+
+    // (a) fluxo suspenso cuja aprovação JÁ foi decidida → preso.
+    env.db.approvals.push({
+      id: "apr_decidida",
+      companyId: env.company.id,
+      targetType: "payment",
+      targetId: paymentId,
+      summary: "artificial",
+      requestedBy: "usr_analyst",
+      requiredRole: "approver",
+      status: "rejected",
+      createdAt: env.clock.now().toISOString(),
+    });
+    env.db.flowRuns.push({
+      id: "flow_preso",
+      companyId: env.company.id,
+      flow: "reconcile_payment",
+      status: "awaiting_approval",
+      cursor: 0,
+      payload,
+      results: [],
+      approvalId: "apr_decidida",
+      idempotencyKey: key,
+      correlationId: "corr_preso",
+      requestedBy: "usr_analyst",
+      createdAt: env.clock.now().toISOString(),
+      updatedAt: env.clock.now().toISOString(),
+    });
+    env.db.idempotencyRecords.push({
+      id: "idem_preso",
+      companyId: env.company.id,
+      key,
+      requestHash: hashPayload(payload),
+      result: { flowRunId: "flow_preso", flow: "reconcile_payment", status: "awaiting_approval" },
+      createdAt: env.clock.now().toISOString(),
+    });
+
+    const res = await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload,
+    });
+
+    expect(res.idempotent_replay).toBeFalsy();
+    expect(res.status).toBe("completed");
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe("paid");
+  });
+
+  it("chave presa em fluxo 'running' antigo (processo morto no meio) não bloqueia", async () => {
+    const payableId = await createPayable();
+    const agendado = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: agendado.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    const paymentId = (await env.repos.payments.listByStatus(env.company.id, ["approved"]))[0].id;
+    const payload = { paymentId, paymentDate: "2026-08-18" };
+    const key = hashPayload({ flow: "reconcile_payment", payload });
+
+    // Relógio do teste: 2026-08-18T15:00:00Z. Fluxo parado desde 14:00 → 1h,
+    // muito além do limite de 15 min.
+    env.db.flowRuns.push({
+      id: "flow_morto",
+      companyId: env.company.id,
+      flow: "reconcile_payment",
+      status: "running",
+      cursor: 0,
+      payload,
+      results: [],
+      idempotencyKey: key,
+      correlationId: "corr_morto",
+      requestedBy: "usr_manager",
+      createdAt: "2026-08-18T14:00:00.000Z",
+      updatedAt: "2026-08-18T14:00:00.000Z",
+    });
+    env.db.idempotencyRecords.push({
+      id: "idem_morto",
+      companyId: env.company.id,
+      key,
+      requestHash: hashPayload(payload),
+      result: { __inProgressFlowRunId: "flow_morto" },
+      createdAt: "2026-08-18T14:00:00.000Z",
+    });
+
+    const res = await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload,
+    });
+
+    expect(res.idempotent_replay).toBeFalsy();
+    expect(res.status).toBe("completed");
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe("paid");
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

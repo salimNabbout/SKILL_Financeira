@@ -308,17 +308,6 @@ export async function schedulePaymentAction(formData: FormData): Promise<void> {
   // Fornecedor do título, para a mensagem deixar claro o que foi enviado.
   let supplierName = "";
   let payableAmount: number | undefined;
-  try {
-    const payable = await repos.payables.getById(session.company.id, payableId);
-    if (payable) {
-      payableAmount = payable.amountCents;
-      const supplier = await repos.suppliers.getById(session.company.id, payable.supplierId);
-      supplierName = supplier?.name ?? payable.supplierId;
-    }
-  } catch {
-    // Falha ao resolver o nome não deve impedir o fluxo; segue sem o nome.
-  }
-
   let response: OrchestratorResponse;
   try {
     response = await orchestrator.execute({
