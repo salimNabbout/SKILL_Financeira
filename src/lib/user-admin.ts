@@ -11,11 +11,11 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { assertPermission } from "@/core/auth";
+import { assertPermission, canResetOthersPassword } from "@/core/auth";
 import type { AuditTrail } from "@/core/audit";
 import type { Clock } from "@/core/clock";
 import type { Actor, ID, Membership, RoleName, User } from "@/core/entities";
-import { NotFoundError, ValidationError } from "@/core/errors";
+import { NotFoundError, PermissionError, ValidationError } from "@/core/errors";
 import type { IdGenerator } from "@/core/ids";
 import type { Repositories } from "@/core/repositories";
 import { hashPassword } from "@/lib/password";
@@ -84,6 +84,15 @@ export interface InviteUserResult {
 }
 
 /**
+ * Senha temporária, exibida uma única vez. O sufixo fixo garante as classes
+ * exigidas pela política padrão (maiúscula, minúscula e dígito); a entropia vem
+ * dos 9 bytes aleatórios (12 caracteres base64url).
+ */
+export function generateTemporaryPassword(): string {
+  return `${randomBytes(9).toString("base64url")}Aa1`;
+}
+
+/**
  * Convida um usuário para a empresa: cria o usuário (com senha temporária,
  * convite MOCK) ou, se o e-mail já existe, apenas vincula à empresa.
  */
@@ -111,10 +120,7 @@ export async function inviteUser(
     }
   } else {
     if (!input.name.trim()) throw new ValidationError("Informe o nome do usuário.");
-    // Exibida uma única vez; o sufixo fixo garante as classes exigidas pela
-    // política de senha padrão (maiúscula/minúscula/dígito) — a entropia vem
-    // dos 9 bytes aleatórios (12 chars base64url).
-    temporaryPassword = `${randomBytes(9).toString("base64url")}Aa1`;
+    temporaryPassword = generateTemporaryPassword();
     user = await repos.users.create({
       id: ids.next("usr"),
       name: input.name.trim(),
@@ -252,4 +258,75 @@ export async function setUserActive(deps: UserAdminDeps, input: SetUserActiveInp
     after: { active: input.active },
   });
   return updated;
+}
+
+export interface ResetUserPasswordInput {
+  companyId: ID;
+  actor: Actor;
+  /** E-mail de quem está redefinindo — a exceção nominal é por pessoa. */
+  actorEmail?: string | null;
+  /** Usuário que terá a senha redefinida. */
+  userId: ID;
+}
+
+export interface ResetUserPasswordResult {
+  user: User;
+  /** Exibir UMA vez e nunca gravar em log, URL ou auditoria. */
+  temporaryPassword: string;
+}
+
+/**
+ * REDEFINE a senha de outro usuário, gerando uma temporária para ele trocar no
+ * primeiro acesso (Segurança → alterar senha, que exige a senha atual).
+ *
+ * Duas barreiras, e as duas são necessárias:
+ *  - `user.manage` (só o papel admin tem);
+ *  - a exceção NOMINAL `canResetOthersPassword` — ser admin não basta.
+ *
+ * A própria senha não se redefine por aqui: o caminho é Segurança, informando a
+ * senha atual. Isso evita que este atalho vire uma forma de contornar aquela
+ * verificação.
+ *
+ * A auditoria registra a ação sem NENHUM material de senha (nem o hash).
+ */
+export async function resetUserPassword(
+  deps: UserAdminDeps,
+  input: ResetUserPasswordInput
+): Promise<ResetUserPasswordResult> {
+  const { repos, clock, audit } = deps;
+  assertPermission(input.actor, "user.manage");
+  if (!canResetOthersPassword(input.actorEmail)) {
+    throw new PermissionError(
+      "Redefinir a senha de outro usuário é restrito: seu acesso não está autorizado para esta ação."
+    );
+  }
+  if (input.userId === input.actor.id) {
+    throw new ValidationError(
+      "Para trocar a sua própria senha use Segurança → alterar senha (exige a senha atual)."
+    );
+  }
+
+  const user = await repos.users.getById(input.userId);
+  if (!user) throw new NotFoundError("Usuário", input.userId);
+  // Só usuários DESTA empresa: um admin não redefine senha de quem não é dele.
+  const membership = await repos.memberships.findByUserAndCompany(user.id, input.companyId);
+  if (!membership) throw new ValidationError(`${user.name} não tem acesso a esta empresa.`);
+
+  const temporaryPassword = generateTemporaryPassword();
+  const updated = await repos.users.update({
+    ...user,
+    passwordHash: hashPassword(temporaryPassword),
+    updatedAt: clock.now().toISOString(),
+  });
+
+  await audit.record(input.companyId, {
+    actor: input.actor,
+    action: "user.password_reset",
+    entityType: "User",
+    entityId: user.id,
+    // Nunca auditar hash nem a senha: só quem teve a senha redefinida.
+    after: { name: user.name, email: user.email },
+  });
+
+  return { user: updated, temporaryPassword };
 }

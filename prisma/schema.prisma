@@ -472,6 +472,9 @@ model Approval {
   justification     String?
   version           Int       @default(0) // trava otimista (four-eyes sem lost-update)
   createdAt         DateTime  @default(now())
+  /// Estornada: a conciliação que ela originou foi desfeita. Sai do Histórico
+  /// de decisões, mas o registro PERMANECE (auditoria e controles internos).
+  revertedAt        DateTime?
 
   company Company @relation(fields: [companyId], references: [id])
 

@@ -704,6 +704,7 @@ const approvalToDomain = (r: DbApproval): Approval => ({
   decidedAt: fromInstantOpt(r.decidedAt),
   justification: strOpt(r.justification),
   version: r.version,
+  revertedAt: fromInstantOpt(r.revertedAt),
   createdAt: fromInstant(r.createdAt),
 });
 const approvalToDb = (e: Approval): Prisma.ApprovalUncheckedCreateInput => ({
@@ -723,6 +724,7 @@ const approvalToDb = (e: Approval): Prisma.ApprovalUncheckedCreateInput => ({
   decidedAt: toInstantOpt(e.decidedAt),
   justification: strNull(e.justification),
   version: e.version ?? 0,
+  revertedAt: toInstantOpt(e.revertedAt),
   createdAt: toInstant(e.createdAt),
 });
 

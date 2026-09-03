@@ -28,6 +28,9 @@ const RECEIVABLE_LABEL: Record<Situation, ReceivableSituation> = {
   hoje: "Hoje",
   atrasado: "Atrasado",
   quitado: "Recebido",
+  // Recebido no dia do vencimento continua "Recebido": a distinção das três
+  // cores é uma regra de Contas a PAGAR; este lado segue como sempre foi.
+  quitado_no_vencimento: "Recebido",
   quitado_atraso: "Recebido em Atraso",
   cancelado: "Cancelado",
 };

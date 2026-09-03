@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTestEnv, type TestEnv } from "@/adapters/memory/test-env";
+import { PASSWORD_RESET_EXEMPT_EMAILS } from "@/core/auth";
 import { verifyPassword } from "@/lib/password";
 import { DEFAULT_PASSWORD_POLICY, validatePassword } from "@/core/password-policy";
-import { inviteUser, setUserActive, updateMembership, type UserAdminDeps } from "../user-admin";
+import {
+  inviteUser,
+  resetUserPassword,
+  setUserActive,
+  updateMembership,
+  type UserAdminDeps,
+} from "../user-admin";
 
 let env: TestEnv;
 let deps: UserAdminDeps;
@@ -242,5 +249,101 @@ describe("setUserActive", () => {
         active: false,
       })
     ).rejects.toThrow(/sem administrador ativo/);
+  });
+});
+
+
+describe("resetUserPassword", () => {
+  /** E-mail autorizado pela exceção nominal (a lista mora em core/auth.ts). */
+  const AUTORIZADO = PASSWORD_RESET_EXEMPT_EMAILS[0];
+
+  it("redefine a senha de outro usuário e devolve uma temporária utilizável", async () => {
+    env.users.admin.email = AUTORIZADO;
+    const alvo = env.users.analyst;
+    const hashAntigo = alvo.passwordHash;
+
+    const result = await resetUserPassword(deps, {
+      companyId: env.company.id,
+      actor: env.actorFor("admin"),
+      actorEmail: AUTORIZADO,
+      userId: alvo.id,
+    });
+
+    // Senha entregue funciona e atende à política (senão a pessoa loga mas não
+    // consegue trocar em Segurança).
+    expect(verifyPassword(result.temporaryPassword, result.user.passwordHash)).toBe(true);
+    expect(validatePassword(DEFAULT_PASSWORD_POLICY, result.temporaryPassword)).toEqual([]);
+    expect(result.user.passwordHash).not.toBe(hashAntigo);
+
+    const registro = env.db.auditRecords.find((a) => a.action === "user.password_reset");
+    expect(registro).toBeDefined();
+    expect(registro?.entityId).toBe(alvo.id);
+    // Nenhum material de senha na trilha.
+    const serializado = JSON.stringify(registro);
+    expect(serializado).not.toContain("passwordHash");
+    expect(serializado).not.toContain(result.temporaryPassword);
+  });
+
+  it("recusa quem não está na lista nominal, mesmo sendo admin", async () => {
+    expect(env.users.admin.email).not.toBe(AUTORIZADO);
+
+    await expect(
+      resetUserPassword(deps, {
+        companyId: env.company.id,
+        actor: env.actorFor("admin"),
+        actorEmail: env.users.admin.email,
+        userId: env.users.analyst.id,
+      })
+    ).rejects.toThrow(/restrito|autorizado/i);
+    expect(env.db.auditRecords.some((a) => a.action === "user.password_reset")).toBe(false);
+  });
+
+  it("recusa redefinir a PRÓPRIA senha (o caminho é Segurança)", async () => {
+    env.users.admin.email = AUTORIZADO;
+
+    await expect(
+      resetUserPassword(deps, {
+        companyId: env.company.id,
+        actor: env.actorFor("admin"),
+        actorEmail: AUTORIZADO,
+        userId: env.users.admin.id,
+      })
+    ).rejects.toThrow(/Segurança/);
+  });
+
+  it("recusa usuário sem vínculo com a empresa", async () => {
+    env.users.admin.email = AUTORIZADO;
+    const forasteiro = {
+      id: "usr_forasteiro",
+      name: "De Outra Empresa",
+      email: "fora@teste.com.br",
+      passwordHash: "x",
+      active: true,
+      createdAt: env.clock.now().toISOString(),
+      updatedAt: env.clock.now().toISOString(),
+    };
+    env.db.users.push(forasteiro);
+
+    await expect(
+      resetUserPassword(deps, {
+        companyId: env.company.id,
+        actor: env.actorFor("admin"),
+        actorEmail: AUTORIZADO,
+        userId: forasteiro.id,
+      })
+    ).rejects.toThrow(/não tem acesso a esta empresa/);
+  });
+
+  it("papel sem user.manage não redefine senha nem estando na lista", async () => {
+    env.users.manager.email = AUTORIZADO;
+
+    await expect(
+      resetUserPassword(deps, {
+        companyId: env.company.id,
+        actor: env.actorFor("manager"),
+        actorEmail: AUTORIZADO,
+        userId: env.users.analyst.id,
+      })
+    ).rejects.toThrow(/permissão/);
   });
 });

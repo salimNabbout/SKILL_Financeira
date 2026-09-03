@@ -191,3 +191,84 @@ export async function reconcilePaymentAction(formData: FormData): Promise<void> 
 
   ok("Conciliação registrada. O título voltou para Contas a pagar já quitado.");
 }
+
+/**
+ * Corrige o VENCIMENTO de um título já conciliado, a partir do card "Conciliados".
+ * Só esse campo — as regras e os bloqueios ficam na skill contas_a_pagar. Em
+ * falha, reabre o formulário na mesma linha preservando o que foi digitado.
+ */
+export async function adjustDueDateAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const payableId = fdString(formData, "payableId");
+  const dueDate = fdString(formData, "dueDate");
+  // A linha do card é identificada pelo PAGAMENTO (um título pode ter dois
+  // conciliados); é essa a chave que reabre o formulário no lugar certo.
+  const paymentId = fdString(formData, "paymentId");
+
+  function failEdit(message: string): never {
+    const qs = new URLSearchParams({ editar: paymentId, erro: message });
+    if (dueDate) qs.set("f_vencimento", dueDate);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!payableId) fail("Título não identificado para alteração.");
+  if (!dueDate) failEdit("Informe a data de vencimento.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "adjust_due_date",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: { payableId, dueDate },
+    });
+  } catch (error) {
+    failEdit(errorMessage(error));
+  }
+
+  if (response.status === "failed") failEdit(flowErrorMessage(response));
+
+  ok("Vencimento corrigido. A situação do título foi reclassificada em Contas a pagar.");
+}
+
+/**
+ * DESFAZ a conciliação de um pagamento: estorna o pagamento (o título volta
+ * para Contas a pagar com o status da regra existente), estorna o lançamento
+ * contábil e marca a aprovação de origem como estornada — ela sai do histórico
+ * de decisões sem ser apagada. Em falha, reabre o pop-up com o motivo.
+ */
+export async function undoReconciliationAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const paymentId = fdString(formData, "paymentId");
+  const reason = fdString(formData, "reason");
+
+  function failUndo(message: string): never {
+    const qs = new URLSearchParams({ excluir: paymentId, erro: message });
+    if (reason) qs.set("f_motivo", reason);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!paymentId) fail("Pagamento não identificado.");
+  // Motivo obrigatório: é o que explica a exclusão na trilha de auditoria.
+  if (!reason) failUndo("Informe o motivo da exclusão.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "undo_reconciliation",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: { paymentId, reason },
+    });
+  } catch (error) {
+    failUndo(errorMessage(error));
+  }
+
+  if (response.status === "failed") failUndo(flowErrorMessage(response));
+
+  ok("Conciliação desfeita. O título voltou para Contas a pagar.");
+}

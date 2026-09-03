@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Button, Field, inputClass } from "@/components/ui";
 import { MoneyInput } from "@/components/money-input";
-import { updatePayableAction } from "../actions";
 import type { CostCenterOption } from "./new-payable-form";
 
 // Espelha os rótulos de frequência do select de NewPayableForm (mesma ordem).
@@ -27,6 +26,9 @@ export interface EditPayableValues {
   supplierCategory: string;
   costClassification: string;
   costCenterId: string;
+  /** Rótulo "CÓDIGO — Nome" do centro de custo, para o modo somente-vencimento
+   *  exibi-lo sem precisar da lista de opções. */
+  costCenterLabel?: string;
   notes: string;
   installmentNumber: number;
   installmentCount: number;
@@ -61,17 +63,34 @@ export interface EditPayablePrefill {
  *
  * Editáveis: Descrição, Valor, Emissão, Vencimento, Categoria, Classificação do
  * CUSTO, Centro de Custo e Observação.
+ *
+ * `mode` escolhe o alcance:
+ *  - "full" (Contas a pagar): tudo acima editável;
+ *  - "dueDateOnly" (Conciliados): SÓ o Vencimento. Serve para corrigir um
+ *    vencimento digitado errado depois da conciliação — o título já está pago e
+ *    a skill recusa alterar qualquer outro campo dele.
+ *
+ * `action` é a server action de destino, passada pelo chamador: cada tela
+ * redireciona e revalida a SUA própria rota.
  */
 export function EditPayableForm({
   payable,
-  categories,
-  costCenters,
+  action,
+  mode = "full",
+  categories = [],
+  costCenters = [],
   prefill,
   cancelHref,
+  hiddenFields,
 }: {
   payable: EditPayableValues;
-  categories: string[];
-  costCenters: CostCenterOption[];
+  action: (formData: FormData) => Promise<void>;
+  /** Campos ocultos extras que a tela chamadora precisa devolver na action
+   *  (ex.: o id do pagamento, para reabrir a linha certa em caso de erro). */
+  hiddenFields?: Record<string, string>;
+  mode?: "full" | "dueDateOnly";
+  categories?: string[];
+  costCenters?: CostCenterOption[];
   prefill?: EditPayablePrefill;
   cancelHref: string;
 }) {
@@ -79,6 +98,14 @@ export function EditPayableForm({
   // `disabled` (e não `readOnly`) para o navegador não submeter o valor — a
   // action ignora estes nomes de qualquer forma.
   const readOnlyClass = `${inputClass} cursor-not-allowed text-[var(--ink-muted)] opacity-70`;
+  // Modo restrito: os campos que a skill não aceita alterar num título baixado
+  // são renderizados DESABILITADOS (mesma aparência dos já bloqueados), em vez
+  // de escondidos — o colaborador continua vendo o título inteiro.
+  const soVencimento = mode === "dueDateOnly";
+  const CUSTO_LABEL: Record<string, string> = {
+    fixed: "Custo Fixo",
+    variable: "Custo Variável",
+  };
   const isRecorrente = Boolean(payable.recurrenceFrequency);
   const posicaoLabel = isRecorrente ? "Ocorrência" : "Parcela";
   const cardBase = "flex items-start gap-2 rounded-lg border p-3 text-sm";
@@ -99,11 +126,11 @@ export function EditPayableForm({
           "linear-gradient(135deg, #dc2626 0%, #f87171 30%, #7f1d1d 65%, #ef4444 100%)",
       }}
     >
-      <form
-        action={updatePayableAction}
-        className="grid gap-4 rounded-md bg-slate-50 p-3 md:grid-cols-4"
-      >
+      <form action={action} className="grid gap-4 rounded-md bg-slate-50 p-3 md:grid-cols-4">
         <input type="hidden" name="payableId" value={payable.id} />
+        {Object.entries(hiddenFields ?? {}).map(([k, v]) => (
+          <input key={k} type="hidden" name={k} value={v} />
+        ))}
 
         <Field label="Fornecedor">
           <input value={payable.supplierName} disabled className={readOnlyClass} />
@@ -112,22 +139,30 @@ export function EditPayableForm({
           </span>
         </Field>
         <Field label="Descrição">
-          <input
-            name="description"
-            required
-            defaultValue={prefill?.description ?? payable.description}
-            className={inputClass}
-            placeholder="Ex.: NF 1234 — insumos"
-          />
+          {soVencimento ? (
+            <input value={payable.description} disabled className={readOnlyClass} />
+          ) : (
+            <input
+              name="description"
+              required
+              defaultValue={prefill?.description ?? payable.description}
+              className={inputClass}
+              placeholder="Ex.: NF 1234 — insumos"
+            />
+          )}
         </Field>
         <Field label="Valor (R$)">
-          <MoneyInput
-            name="amount"
-            required
-            defaultValue={prefill?.amount ?? payable.amount}
-            className={inputClass}
-            placeholder="1.234,56"
-          />
+          {soVencimento ? (
+            <input value={payable.amount} disabled className={readOnlyClass} />
+          ) : (
+            <MoneyInput
+              name="amount"
+              required
+              defaultValue={prefill?.amount ?? payable.amount}
+              className={inputClass}
+              placeholder="1.234,56"
+            />
+          )}
         </Field>
         <Field label="Nº do Doc. (opcional)">
           <input value={payable.documentNumber ?? "—"} disabled className={readOnlyClass} />
@@ -138,62 +173,90 @@ export function EditPayableForm({
         <Field label="Emissão">
           <input
             type="date"
-            name="issueDate"
-            required
+            name={soVencimento ? undefined : "issueDate"}
+            required={!soVencimento}
+            disabled={soVencimento}
             defaultValue={prefill?.issueDate ?? payable.issueDate}
-            className={inputClass}
+            className={soVencimento ? readOnlyClass : inputClass}
           />
         </Field>
+        {/* Vencimento: o único campo editável no modo restrito. */}
         <Field label="Vencimento">
           <input
             type="date"
             name="dueDate"
             required
+            autoFocus={soVencimento}
+            min={payable.issueDate}
             defaultValue={prefill?.dueDate ?? payable.dueDate}
             className={inputClass}
           />
         </Field>
         <Field label="Categoria">
-          <select
-            name="supplierCategory"
-            defaultValue={prefill?.supplierCategory ?? payable.supplierCategory}
-            className={inputClass}
-          >
-            <option value="">— selecione —</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          {soVencimento ? (
+            <input
+              value={payable.supplierCategory || "—"}
+              disabled
+              className={readOnlyClass}
+            />
+          ) : (
+            <select
+              name="supplierCategory"
+              defaultValue={prefill?.supplierCategory ?? payable.supplierCategory}
+              className={inputClass}
+            >
+              <option value="">— selecione —</option>
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
         <Field label="Classificação do CUSTO">
-          <select
-            name="costClassification"
-            defaultValue={prefill?.costClassification ?? payable.costClassification}
-            className={inputClass}
-          >
-            <option value="">— selecione —</option>
-            <option value="fixed">Custo Fixo</option>
-            <option value="variable">Custo Variável</option>
-          </select>
+          {soVencimento ? (
+            <input
+              value={CUSTO_LABEL[payable.costClassification] ?? "—"}
+              disabled
+              className={readOnlyClass}
+            />
+          ) : (
+            <select
+              name="costClassification"
+              defaultValue={prefill?.costClassification ?? payable.costClassification}
+              className={inputClass}
+            >
+              <option value="">— selecione —</option>
+              <option value="fixed">Custo Fixo</option>
+              <option value="variable">Custo Variável</option>
+            </select>
+          )}
         </Field>
         {/* A lista recebida já inclui o centro de custo atual do título, mesmo
             inativo ou de outro destino, para a edição não trocar em silêncio o
             que foi lançado. */}
         <Field label="Centro de Custo">
-          <select
-            name="costCenterId"
-            defaultValue={prefill?.costCenterId ?? payable.costCenterId}
-            className={inputClass}
-          >
-            <option value="">— selecione —</option>
-            {costCenters.map((cc) => (
-              <option key={cc.id} value={cc.id}>
-                {cc.label}
-              </option>
-            ))}
-          </select>
+          {soVencimento ? (
+            <input
+              value={payable.costCenterLabel ?? "—"}
+              disabled
+              className={readOnlyClass}
+            />
+          ) : (
+            <select
+              name="costCenterId"
+              defaultValue={prefill?.costCenterId ?? payable.costCenterId}
+              className={inputClass}
+            >
+              <option value="">— selecione —</option>
+              {costCenters.map((cc) => (
+                <option key={cc.id} value={cc.id}>
+                  {cc.label}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
 
         {/* TIPO DE LANÇAMENTO — espelha o bloco do Novo título, em leitura. O tipo
@@ -259,18 +322,30 @@ export function EditPayableForm({
         <div className="md:col-span-4">
           <Field label="Observação">
             <textarea
-              name="notes"
+              name={soVencimento ? undefined : "notes"}
               rows={3}
+              disabled={soVencimento}
               defaultValue={prefill?.notes ?? payable.notes}
-              className={inputClass}
+              className={soVencimento ? readOnlyClass : inputClass}
               placeholder="Anotações sobre este título (opcional)."
             />
           </Field>
         </div>
 
+        {soVencimento ? (
+          <p className="md:col-span-4 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            Título já baixado: só o vencimento pode ser corrigido. Mudá-lo
+            reclassifica a situação em Contas a pagar — <strong>Pago</strong> (antes
+            do vencimento), <strong>Pago no Vencimento</strong> (no dia) ou{" "}
+            <strong>Pago Atrasado</strong> (depois) —, comparando a data do
+            pagamento com o novo vencimento. Valor, baixa e lançamentos contábeis
+            não são afetados.
+          </p>
+        ) : null}
+
         <div className="flex flex-wrap items-end gap-2 md:col-span-4">
           <Button variant="warn" type="submit">
-            Salvar alterações
+            {soVencimento ? "Salvar vencimento" : "Salvar alterações"}
           </Button>
           <Link
             href={cancelHref}

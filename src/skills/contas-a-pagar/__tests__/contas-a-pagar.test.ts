@@ -15,6 +15,7 @@ import {
   type DetectDuplicatesData,
   type ForecastDisbursementsData,
   type GenerateRecurringData,
+  type AdjustDueDateData,
   type ListDueData,
   type ReconcilePaymentData,
   type ReversePaymentData,
@@ -1288,5 +1289,100 @@ describe("contas_a_pagar — estorno de pagamento executado", () => {
     // Nada mudou: o título continua quitado.
     expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
     expect(env.db.payments.find((p) => p.id === scheduled.payment.id)?.status).toBe("executed");
+  });
+});
+
+
+describe("contas_a_pagar — ajuste de vencimento de título baixado", () => {
+  /** Deixa um título conciliado (pago) e devolve o payable semeado. */
+  async function conciliado(env: TestEnv, over: Record<string, unknown> = {}) {
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000, ...over });
+    const { data: scheduled } = await schedule(env, payable.id);
+    await decide(env, scheduled.payment.id, "approved");
+    await reconcile(env, scheduled.payment.id);
+    return payable;
+  }
+
+  function ajustar(
+    env: TestEnv,
+    payableId: string,
+    dueDate: string,
+    role: "manager" | "viewer" = "manager"
+  ) {
+    return runSkill(contasAPagarSkill, env.ctx(env.actorFor(role)), {
+      action: "adjust_due_date",
+      payableId,
+      dueDate,
+    });
+  }
+
+  it("corrige o vencimento de um título já conciliado", async () => {
+    const env = createTestEnv();
+    const payable = await conciliado(env);
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
+
+    const res = await ajustar(env, payable.id, "2026-08-31");
+    const data = res.data as AdjustDueDateData;
+
+    expect(res.status).toBe("success");
+    expect(data.payable.dueDate).toBe("2026-08-31");
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.dueDate).toBe("2026-08-31");
+    // Nada além do vencimento muda.
+    expect(stored?.status).toBe("paid");
+    expect(stored?.paidCents).toBe(50_000);
+    expect(env.db.auditRecords.some((a) => a.action === "payable.due_date_adjusted")).toBe(true);
+  });
+
+  it("recusa vencimento anterior à emissão", async () => {
+    const env = createTestEnv();
+    const payable = await conciliado(env); // emissão semeada em 2026-08-01
+
+    const res = await ajustar(env, payable.id, "2026-07-31");
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toContain("Verificar a Data da Emissão");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.dueDate).toBe("2026-08-20");
+  });
+
+  it("recusa título SEM baixa — esse é caso da edição normal", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedBankAccount(env);
+    const payable = seedPayable(env, { amountCents: 50_000 });
+
+    const res = await ajustar(env, payable.id, "2026-08-31");
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toContain("não possui baixa registrada");
+  });
+
+  it("papel sem payable.create não ajusta vencimento", async () => {
+    const env = createTestEnv();
+    const payable = await conciliado(env);
+
+    const res = await ajustar(env, payable.id, "2026-08-31", "viewer");
+
+    expect(res.status).toBe("error");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.dueDate).toBe("2026-08-20");
+  });
+
+  it("update_payable CONTINUA recusando título pago (a ação nova não afrouxou a antiga)", async () => {
+    const env = createTestEnv();
+    const payable = await conciliado(env);
+
+    const res = await runSkill(contasAPagarSkill, env.ctx(env.actorFor("manager")), {
+      action: "update_payable",
+      payableId: payable.id,
+      description: "tentativa",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-31",
+      amountCents: 50_000,
+    });
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toMatch(/não pode ser editado/);
   });
 });

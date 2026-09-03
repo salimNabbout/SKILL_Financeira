@@ -16,7 +16,10 @@ export type Situation =
   | "a_vencer"
   | "hoje"
   | "atrasado"
+  /** Quitado ANTES do vencimento (ou sem data de liquidação conhecida). */
   | "quitado"
+  /** Quitado exatamente NA data do vencimento — em dia, mas no limite. */
+  | "quitado_no_vencimento"
   | "quitado_atraso"
   | "cancelado";
 
@@ -37,9 +40,10 @@ export interface SituationInput {
 
 /**
  * Precedência (idêntica à que Contas a Pagar já usava):
- *   cancelado                                → "cancelado"
- *   quitado + data de liquidação > vencimento → "quitado_atraso"
- *   quitado                                  → "quitado"
+ *   cancelado                                 → "cancelado"
+ *   quitado + data de liquidação > vencimento  → "quitado_atraso"
+ *   quitado + data de liquidação = vencimento  → "quitado_no_vencimento"
+ *   quitado                                   → "quitado"
  *   vencimento  <  hoje                      → "atrasado"
  *   vencimento === hoje                      → "hoje"
  *   vencimento  >  hoje                      → "a_vencer"
@@ -49,8 +53,10 @@ export function deriveSituation(input: SituationInput, today: ISODate): Situatio
 
   if (input.status === "settled") {
     // Datas ISO comparam lexicograficamente. Quitado no dia do vencimento NÃO é
-    // atraso (só depois dele).
+    // atraso — mas é um caso próprio, sinalizado à parte (foi no limite do
+    // prazo). Sem data de liquidação conhecida, não se afirma atraso: "quitado".
     if (input.settledAt && input.settledAt > input.dueDate) return "quitado_atraso";
+    if (input.settledAt && input.settledAt === input.dueDate) return "quitado_no_vencimento";
     return "quitado";
   }
 

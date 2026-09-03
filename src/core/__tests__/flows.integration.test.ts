@@ -507,6 +507,74 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     ).rejects.toThrow(/[Ss]egregação/);
   });
 
+  it("desfazer a conciliação devolve o título, estorna a contabilidade e tira a aprovação do histórico", async () => {
+    const payableId = await createPayable();
+    const agendado = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("analyst"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+    const approvalId = agendado.approval!.id;
+    await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId,
+      decision: "approved",
+      actor: env.actorFor("approver"),
+    });
+    const aprovados = await env.repos.payments.listByStatus(env.company.id, ["approved"]);
+    const paymentId = aprovados[0].id;
+
+    // Concilia (é o que baixa o título e gera o lançamento contábil).
+    await orch.execute({
+      flow: "reconcile_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId, paymentDate: "2026-08-18" },
+    });
+    expect((await env.repos.payables.getById(env.company.id, payableId))?.status).toBe("paid");
+    const doPagamento = (await env.repos.accountingEntries.listAll(env.company.id)).filter(
+      (e) => e.sourceType === "payment" && e.sourceId === paymentId
+    );
+    expect(doPagamento.length).toBeGreaterThanOrEqual(1);
+
+    // Desfaz.
+    const desfeito = await orch.execute({
+      flow: "undo_reconciliation",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { paymentId, reason: "conciliado com a data errada" },
+    });
+    expect(desfeito.status).toBe("completed");
+
+    // 1) título volta para Contas a pagar pela regra existente
+    const payable = await env.repos.payables.getById(env.company.id, payableId);
+    expect(payable?.status).toBe("open");
+    expect(payable?.paidCents).toBe(0);
+    expect(
+      (await env.repos.payments.getById(env.company.id, paymentId))?.status
+    ).toBe("canceled");
+
+    // 2) lançamento inverso criado, e a soma com o original zera
+    const inversos = (await env.repos.accountingEntries.listAll(env.company.id)).filter(
+      (e) => e.sourceType === "adjustment" && e.sourceId === `rev:${paymentId}`
+    );
+    expect(inversos).toHaveLength(doPagamento.length);
+    expect(inversos[0].debitAccount).toBe(doPagamento[0].creditAccount);
+    expect(inversos[0].creditAccount).toBe(doPagamento[0].debitAccount);
+    expect(inversos[0].amountCents).toBe(doPagamento[0].amountCents);
+
+    // 3) aprovação sai do histórico mas CONTINUA existindo (auditoria e
+    //    controles internos dependem dela)
+    const approval = await env.repos.approvals.getById(env.company.id, approvalId);
+    expect(approval).not.toBeNull();
+    expect(approval?.revertedAt).toBeTruthy();
+    expect(approval?.decidedBy).toBe("usr_approver");
+    const audit = await env.repos.audit.list(env.company.id);
+    expect(audit.map((a) => a.action)).toContain("approval.reverted");
+    expect(verifyChain(audit).valid).toBe(true);
+  });
+
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {
     const payableId = await createPayable();
     const res = await orch.execute({

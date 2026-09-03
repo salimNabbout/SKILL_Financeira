@@ -519,6 +519,27 @@ const cancelReceivableFlow: FlowDefinition = {
 };
 
 /**
+ * Ajuste do vencimento de título já baixado. Fluxo de um único passo — a skill
+ * exige payable.create, aceita só título com baixa registrada (o sem baixa é
+ * caso do update_payable) e altera exclusivamente o vencimento.
+ * payload: { payableId, dueDate }
+ */
+const adjustDueDateFlow: FlowDefinition = {
+  name: "adjust_due_date",
+  description:
+    "Corrige o vencimento de um título já baixado, sem tocar em valor, baixa ou contabilidade. A situação (Pago / Pago no Vencimento / Pago Atrasado) é reclassificada pela nova data.",
+  requiredPermission: "payable.create",
+  steps: [
+    {
+      id: "ap_adjust_due_date",
+      skill: "contas_a_pagar",
+      description: "Ajustar vencimento de título baixado",
+      buildInput: (f) => ({ action: "adjust_due_date", ...f.payload }),
+    },
+  ],
+};
+
+/**
  * Conciliação de pagamento aprovado. Fluxo de um único passo — a skill exige
  * payment.execute, aceita só pagamento aprovado, grava a data real do pagamento
  * como executedAt e baixa o título, que volta para Contas a pagar como pago
@@ -575,6 +596,52 @@ const reconcilePaymentFlow: FlowDefinition = {
 };
 
 /**
+ * DESFAZER a conciliação de um pagamento (botão Excluir do card "Conciliados").
+ * Estorna o pagamento — o título volta para Contas a pagar com o status da
+ * regra existente —, estorna o lançamento contábil gerado na conciliação e
+ * atualiza o caixa. A aprovação que originou a conciliação é marcada como
+ * estornada pela própria skill (sai do histórico, sem ser apagada).
+ * payload: { paymentId, reason }
+ */
+const undoReconciliationFlow: FlowDefinition = {
+  name: "undo_reconciliation",
+  description:
+    "Desfaz a conciliação de um pagamento: estorna o pagamento (o título volta para Contas a pagar), lança o estorno contábil e atualiza o caixa. Nada é apagado — tudo fica registrado na auditoria.",
+  requiredPermission: "payment.execute",
+  steps: [
+    {
+      id: "ap_reverse",
+      skill: "contas_a_pagar",
+      description: "Estornar o pagamento e devolver o título",
+      buildInput: (f) => ({ action: "reverse_payment", ...f.payload }),
+    },
+    // Espelha o accounting_prepare do reconcile_payment: o que a conciliação
+    // lançou, o desfazer estorna. Sem este passo sobraria despesa estornada
+    // dentro do DRE. continueOnError: uma falha contábil não deve impedir a
+    // devolução do título, que é o efeito principal e já commitou.
+    {
+      id: "accounting_reverse",
+      skill: "integracao_contabil_fiscal",
+      description: "Estornar o lançamento contábil do pagamento",
+      buildInput: (f) => ({
+        action: "reverse_entries",
+        sourceType: "payment",
+        sourceId: (f.payload as { paymentId?: string }).paymentId,
+        reason: (f.payload as { reason?: string }).reason,
+      }),
+      continueOnError: true,
+    },
+    {
+      id: "treasury_refresh",
+      skill: "tesouraria_fluxo_caixa",
+      description: "Atualizar posição e projeção de caixa",
+      buildInput: () => ({ action: "refresh_projection", horizonDays: 90 }),
+      continueOnError: true,
+    },
+  ],
+};
+
+/**
  * Estorno de pagamento executado. Fluxo de um único passo — a skill exige
  * payment.execute, valida que o pagamento está executado, devolve o valor ao
  * saldo do título (que volta para Contas a pagar) e registra a trilha. O
@@ -602,8 +669,10 @@ export const BUILTIN_FLOWS: FlowDefinition[] = [
   updatePayable,
   cancelPayableFlow,
   cancelReceivableFlow,
+  adjustDueDateFlow,
   reconcilePaymentFlow,
   reversePaymentFlow,
+  undoReconciliationFlow,
   bankStatementImport,
   bankSync,
   customerInvoiceIntake,

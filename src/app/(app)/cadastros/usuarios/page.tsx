@@ -1,24 +1,38 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
-import { hasPermission } from "@/core/auth";
+import { canResetOthersPassword, hasPermission } from "@/core/auth";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { ROLE_LABELS, formatBRL } from "@/lib/format";
 import { ASSIGNABLE_ROLES } from "@/lib/user-admin";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
-import { inviteUserAction, toggleUserActiveAction, updateMembershipAction } from "./actions";
+import {
+  inviteUserAction,
+  resetPasswordAction,
+  toggleUserActiveAction,
+  updateMembershipAction,
+} from "./actions";
 import { FLASH_SECRET_COOKIE } from "./flash";
 
 export default async function UsuariosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ ok?: string; erro?: string }>;
+  searchParams: Promise<{
+    ok?: string;
+    erro?: string;
+    /** Usuário com o pop-up de redefinição de senha aberto. */
+    redefinir?: string;
+  }>;
 }) {
   const session = await requireSession();
   const { repos } = await getContainer();
-  const { ok, erro } = await searchParams;
+  const sp = await searchParams;
+  const { ok, erro } = sp;
   const canManage = hasPermission(session.membership.role, "user.manage");
+  // Redefinir senha de outra pessoa exige, ALÉM de user.manage, estar na lista
+  // nominal — ser admin não basta (ver core/auth.ts).
+  const canResetPassword = canManage && canResetOthersPassword(session.user.email);
 
   // Segredo de uso único (senha temporária do convite mock) — cookie de 60s,
   // nunca via querystring, exibido apenas na empresa onde o convite foi feito.
@@ -37,10 +51,18 @@ export default async function UsuariosPage({
 
   const memberships = await repos.memberships.listByCompany(session.company.id);
   const users = await Promise.all(memberships.map((m) => repos.users.getById(m.userId)));
+  // Alvo do pop-up de redefinição: só monta para usuário DESTA empresa e nunca
+  // para a própria pessoa (a própria senha se troca em Segurança).
+  const redefinirId = sp.redefinir?.trim() || undefined;
   const rows = memberships
     .map((m, i) => ({ membership: m, user: users[i] }))
     .filter((r) => r.user !== null)
     .sort((a, b) => (a.user!.name ?? "").localeCompare(b.user!.name ?? "", "pt-BR"));
+
+  const redefinirAlvo =
+    canResetPassword && redefinirId && redefinirId !== session.user.id
+      ? rows.find(({ user }) => user!.id === redefinirId)?.user
+      : undefined;
 
   return (
     <div>
@@ -148,13 +170,25 @@ export default async function UsuariosPage({
                             (você — peça a outro admin)
                           </span>
                         ) : (
-                          <form action={toggleUserActiveAction}>
-                            <input type="hidden" name="userId" value={user!.id} />
-                            <input type="hidden" name="active" value={user!.active ? "0" : "1"} />
-                            <Button variant={user!.active ? "danger" : "secondary"}>
-                              {user!.active ? "Desativar" : "Reativar"}
-                            </Button>
-                          </form>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <form action={toggleUserActiveAction}>
+                              <input type="hidden" name="userId" value={user!.id} />
+                              <input type="hidden" name="active" value={user!.active ? "0" : "1"} />
+                              <Button variant={user!.active ? "danger" : "secondary"}>
+                                {user!.active ? "Desativar" : "Reativar"}
+                              </Button>
+                            </form>
+                            {/* Redefinir senha: GET que abre o pop-up de
+                                confirmação — o botão não redefine nada. */}
+                            {canResetPassword ? (
+                              <form method="get" action="/cadastros/usuarios" className="inline">
+                                <input type="hidden" name="redefinir" value={user!.id} />
+                                <Button variant="secondary" type="submit">
+                                  🔑 Redefinir senha
+                                </Button>
+                              </form>
+                            ) : null}
+                          </div>
                         )}
                       </Td>
                     </>
@@ -188,6 +222,40 @@ export default async function UsuariosPage({
         auditoria. Atenção: desativar um usuário bloqueia o login dele em <em>todas</em> as
         empresas em que atua (o cadastro é global).
       </p>
+      {/* POP-UP de confirmação da redefinição de senha. Mesmo padrão do estorno
+          em Aprovações: sobreposição no servidor, aberta por ?redefinir=<id>.
+          Confirmar gera a senha temporária, exibida UMA vez no banner. */}
+      {redefinirAlvo ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card w-full max-w-lg p-4 shadow-xl">
+            <h2 className="text-base font-semibold">Redefinir senha</h2>
+            <p className="mt-2 text-sm">
+              Uma senha temporária será gerada para{" "}
+              <strong>{redefinirAlvo.name}</strong> ({redefinirAlvo.email}).
+            </p>
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+              A senha atual dessa pessoa deixa de funcionar imediatamente. A temporária
+              aparece <strong>uma única vez</strong> nesta tela — copie e entregue por um
+              canal seguro. Peça a troca em Segurança no primeiro acesso. A ação fica
+              registrada na Auditoria com o seu nome.
+            </p>
+            <form action={resetPasswordAction} className="mt-3">
+              <input type="hidden" name="userId" value={redefinirAlvo.id} />
+              <div className="flex items-center gap-2">
+                <Button variant="danger" type="submit">
+                  Confirmar redefinição
+                </Button>
+                <Link
+                  href="/cadastros/usuarios"
+                  className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+                >
+                  Voltar
+                </Link>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -60,8 +60,9 @@ const SITUACAO_TONE: Record<PayableSituation, "neutral" | "ok" | "warn" | "crit"
   Atrasado: "crit",
   Hoje: "warn",
   "A Vencer": "neutral",
-  Pago: "ok",
-  "Pago Atrasado": "crit", // quitado, mas fora do prazo — vermelho
+  Pago: "ok", // quitado ANTES do vencimento — verde
+  "Pago no Vencimento": "warn", // quitado no dia do vencimento — amarelo
+  "Pago Atrasado": "crit", // quitado depois do vencimento — vermelho
   Cancelado: "neutral", // apagado
 };
 
@@ -712,6 +713,7 @@ export default async function ContasAPagarPage({
                           recurrenceFrequency: editingRecurrenceFrequency,
                           scheduled: p.status === "scheduled",
                         }}
+                        action={updatePayableAction}
                         categories={categoryOptions}
                         costCenters={editCostCenterOptions}
                         prefill={editPrefill}
