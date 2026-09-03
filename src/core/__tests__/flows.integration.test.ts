@@ -9,6 +9,7 @@ import { createTestEnv, type TestEnv } from "@/adapters/memory/test-env";
 import { buildRegistry } from "@/skills";
 import { verifyChain } from "../audit";
 import { hashPayload } from "../ids";
+import { SELF_APPROVAL_EXEMPT_EMAILS } from "../auth";
 import type { Orchestrator, OrchestratorResponse } from "../orchestrator/orchestrator";
 
 let env: TestEnv;
@@ -451,6 +452,59 @@ describe("fluxo integrado: pagamento com aprovação humana (4 skills)", () => {
     expect(res.approval!.id).not.toBe(primeira.approval!.id);
     const pendentes = await env.repos.approvals.listByStatus(env.company.id, ["pending"]);
     expect(pendentes).toHaveLength(1);
+  });
+
+  it("exceção nominal: usuário isento aprova a própria solicitação", async () => {
+    // O e-mail do admin de teste entra na lista de isentos (a lista é nominal:
+    // vale para a PESSOA, não para o papel).
+    env.users.admin.email = SELF_APPROVAL_EXEMPT_EMAILS[0];
+
+    const payableId = await createPayable();
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("admin"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+    expect(res.status).toBe("awaiting_approval");
+
+    // Mesmo usuário que solicitou aprova — permitido só para ele.
+    const resumed = (await orch.decideApproval({
+      companyId: env.company.id,
+      approvalId: res.approval!.id,
+      decision: "approved",
+      actor: env.actorFor("admin"),
+    })) as OrchestratorResponse;
+
+    expect(resumed.status).toBe("completed");
+    const aprovados = await env.repos.payments.listByStatus(env.company.id, ["approved"]);
+    expect(aprovados).toHaveLength(1);
+    // A trilha mantém solicitante e aprovador visíveis (mesma pessoa).
+    const aprovacao = await env.repos.approvals.getById(env.company.id, res.approval!.id);
+    expect(aprovacao?.requestedBy).toBe("usr_admin");
+    expect(aprovacao?.decidedBy).toBe("usr_admin");
+  });
+
+  it("quem NÃO está na lista continua barrado na própria solicitação", async () => {
+    // Mesmo papel de admin, e-mail fora da lista: a segregação continua valendo.
+    expect(env.users.admin.email).not.toBe(SELF_APPROVAL_EXEMPT_EMAILS[0]);
+
+    const payableId = await createPayable();
+    const res = await orch.execute({
+      flow: "schedule_payment",
+      companyId: env.company.id,
+      actor: env.actorFor("admin"),
+      payload: { payableId, bankAccountId: "ba_1", scheduledDate: "2026-08-20", method: "pix" },
+    });
+
+    await expect(
+      orch.decideApproval({
+        companyId: env.company.id,
+        approvalId: res.approval!.id,
+        decision: "approved",
+        actor: env.actorFor("admin"),
+      })
+    ).rejects.toThrow(/[Ss]egregação/);
   });
 
   it("rejeição cancela o pagamento e o título volta a aberto", async () => {

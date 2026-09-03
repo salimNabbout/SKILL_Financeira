@@ -784,8 +784,15 @@ async function resumePaymentDecision(ctx: SkillContext): Promise<SkillResult<Sch
   const payableBefore = { ...payable };
 
   if (decision.status === "approved") {
-    // Segregação de funções também na skill (defesa em profundidade).
-    assertSegregation(payment.requestedBy, decision.decidedBy);
+    // Segregação de funções também na skill (defesa em profundidade). O e-mail
+    // do aprovador entra por causa da exceção nominal (ver auth.ts); sem ele,
+    // esta segunda barreira barraria a autoaprovação que o orquestrador liberou.
+    // Só consulta quando aprovador e solicitante são a mesma pessoa.
+    const approverEmail =
+      payment.requestedBy === decision.decidedBy
+        ? (await ctx.repos.users.getById(decision.decidedBy))?.email
+        : undefined;
+    assertSegregation(payment.requestedBy, decision.decidedBy, approverEmail);
 
     // Revalida o saldo já na aprovação: aprovar um valor que não cabe mais no
     // título só adiaria o erro para a conciliação (que revalida de novo).

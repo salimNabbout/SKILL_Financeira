@@ -258,7 +258,15 @@ export class Orchestrator {
     }
 
     // Alçada + segregação de funções: regras determinísticas, sempre auditadas.
-    assertSegregation(approval.requestedBy, actor.id);
+    // O e-mail do aprovador entra na checagem por causa da exceção nominal
+    // (SELF_APPROVAL_EXEMPT_EMAILS): a dispensa é de pessoas identificadas, não
+    // de um papel. Só é buscado quando aprovador e solicitante são o mesmo — no
+    // caminho normal não há consulta extra.
+    const approverEmail =
+      approval.requestedBy === actor.id
+        ? (await this.env.repos.users.getById(actor.id))?.email
+        : undefined;
+    assertSegregation(approval.requestedBy, actor.id, approverEmail);
     if (actor.type !== "user") {
       throw new PermissionError("Apenas usuários humanos podem decidir aprovações.");
     }
