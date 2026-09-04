@@ -1173,29 +1173,30 @@ async function reverseReceipt(
   receivable.status = receivable.receivedCents > 0 ? "partially_received" : "open";
   receivable.updatedAt = nowIso;
 
-  // Atômico: estorno do recebimento e devolução do saldo commitam juntos.
+  // Atômico: estorno do recebimento, devolução do saldo e a trilha commitam
+  // juntos — auditoria fora da transação deixaria a baixa desfeita sem rastro.
   await ctx.repos.withTransaction(async (tx) => {
     await tx.receipts.update(receipt);
     await tx.receivables.update(receivable);
-  });
-
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "receipt.reversed",
-    entityType: "receipt",
-    entityId: receipt.id,
-    before: receiptBefore,
-    after: { ...receipt, reverseReason: input.reason },
-    correlationId: ctx.correlationId,
-  });
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "receivable.updated",
-    entityType: "receivable",
-    entityId: receivable.id,
-    before: receivableBefore,
-    after: receivable,
-    correlationId: ctx.correlationId,
+    const audit = ctx.audit.withTx(tx);
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "receipt.reversed",
+      entityType: "receipt",
+      entityId: receipt.id,
+      before: receiptBefore,
+      after: { ...receipt, reverseReason: input.reason },
+      correlationId: ctx.correlationId,
+    });
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "receivable.updated",
+      entityType: "receivable",
+      entityId: receivable.id,
+      before: receivableBefore,
+      after: receivable,
+      correlationId: ctx.correlationId,
+    });
   });
   await ctx.events.publish({
     companyId: ctx.companyId,

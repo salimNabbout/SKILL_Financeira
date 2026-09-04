@@ -1906,6 +1906,24 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     async append(record: AuditRecord) {
       await prisma.auditRecord.create({ data: auditToDb(record) });
     },
+    // Append + head numa unidade só. Fora de transação, abre uma; DENTRO de uma
+    // (cliente sem $transaction, vindo de withTransaction), as duas escritas já
+    // pertencem ao escopo do chamador e não se aninha nada.
+    async appendWithHead(record: AuditRecord) {
+      const escrever = async (client: PrismaLike) => {
+        await client.auditRecord.create({ data: auditToDb(record) });
+        await client.auditHead.upsert({
+          where: { companyId: record.companyId },
+          create: { companyId: record.companyId, seq: record.seq, hash: record.hash },
+          update: { seq: record.seq, hash: record.hash },
+        });
+      };
+      if (typeof (prisma as PrismaClient).$transaction !== "function") {
+        await escrever(prisma);
+        return;
+      }
+      await (prisma as PrismaClient).$transaction(async (tx) => escrever(tx as PrismaLike));
+    },
     async last(companyId: ID) {
       const row = await prisma.auditRecord.findFirst({
         where: { companyId },

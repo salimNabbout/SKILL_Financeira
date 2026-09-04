@@ -259,6 +259,15 @@ export interface AuditHead {
 /** Trilha de auditoria: append-only. Não há update nem delete. */
 export interface AuditRepo {
   append(record: AuditRecord): Promise<void>;
+  /**
+   * Append + âncora do head numa unidade só. Um crash entre as duas escritas
+   * deixava a cadeia íntegra mas o head atrasado, e `verifyChain` acusava
+   * truncamento do fim que nunca houve (falso positivo).
+   *
+   * Dentro de uma transação (repos transacionais), as duas escritas já entram
+   * no escopo do chamador — a implementação não abre transação aninhada.
+   */
+  appendWithHead(record: AuditRecord): Promise<void>;
   last(companyId: ID): Promise<AuditRecord | null>;
   list(companyId: ID, filter?: { entityType?: string; entityId?: ID }): Promise<AuditRecord[]>;
   /**

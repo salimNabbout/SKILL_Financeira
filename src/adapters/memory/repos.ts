@@ -518,6 +518,11 @@ class MemAuditRepo implements AuditRepo {
     }
     this.items.push(clone(record));
   }
+  /** Append + head juntos (single-thread: o append valida antes de ancorar). */
+  async appendWithHead(record: AuditRecord) {
+    await this.append(record);
+    await this.setHead({ companyId: record.companyId, seq: record.seq, hash: record.hash });
+  }
   async last(companyId: ID) {
     const filtered = this.items.filter((r) => r.companyId === companyId);
     if (filtered.length === 0) return null;

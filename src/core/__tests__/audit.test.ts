@@ -114,6 +114,9 @@ describe("trilha de auditoria", () => {
         }
         items.push(record);
       },
+      async appendWithHead(record) {
+        await repo.append(record);
+      },
       async last(companyId) {
         lastCalls += 1;
         const filtered = items.filter((r) => r.companyId === companyId);

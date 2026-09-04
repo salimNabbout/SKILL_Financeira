@@ -22,6 +22,15 @@ export interface AuditEntry {
 
 export interface AuditTrail {
   record(companyId: ID, entry: AuditEntry): Promise<AuditRecord>;
+  /**
+   * Trilha ligada aos repositórios TRANSACIONAIS de um `withTransaction`.
+   *
+   * Sem isto, o `record` roda fora da transação: a escrita financeira commita e,
+   * se o registro falhar (ele desiste depois de 5 colisões de seq), a
+   * movimentação fica sem rastro. Com `audit.withTx(tx)`, negócio e auditoria
+   * commitam juntos ou não acontecem.
+   */
+  withTx(repos: { audit: AuditRepo }): AuditTrail;
 }
 
 export function computeAuditHash(prevHash: string, record: Omit<AuditRecord, "hash">): string {
@@ -78,9 +87,9 @@ export class HashChainAuditTrail implements AuditTrail {
       };
       const record: AuditRecord = { ...partial, hash: computeAuditHash(prevHash, partial) };
       try {
-        await this.repo.append(record);
-        // Âncora o head (seq/hash) para detectar truncamento do fim depois.
-        await this.repo.setHead({ companyId, seq: record.seq, hash: record.hash });
+        // Append + âncora do head juntos: separados, um crash entre os dois
+        // deixava o head atrasado e a verificação acusava truncamento do fim.
+        await this.repo.appendWithHead(record);
         return record;
       } catch (error) {
         lastError = error;
@@ -90,6 +99,10 @@ export class HashChainAuditTrail implements AuditTrail {
     throw lastError instanceof Error
       ? lastError
       : new Error("Falha ao registrar auditoria após múltiplas tentativas.");
+  }
+
+  withTx(repos: { audit: AuditRepo }): AuditTrail {
+    return new HashChainAuditTrail(repos.audit, this.clock, this.ids);
   }
 }
 

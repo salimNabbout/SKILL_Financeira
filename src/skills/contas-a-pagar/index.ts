@@ -1534,30 +1534,31 @@ async function reconcilePayment(
   payable.status = payable.paidCents >= payable.amountCents ? "paid" : "partially_paid";
   payable.updatedAt = nowIso;
 
-  // Atômico: baixa do pagamento e do título commitam juntos — um crash entre os
-  // dois não deixa pagamento executado com título em aberto.
+  // Atômico: baixa do pagamento, baixa do título E a trilha commitam juntos.
+  // Com a auditoria fora daqui, uma falha no registro (ele desiste após 5
+  // colisões de seq) deixava a movimentação commitada e sem rastro.
   await ctx.repos.withTransaction(async (tx) => {
     await tx.payments.update(payment);
     await tx.payables.update(payable);
-  });
-
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "payment.executed",
-    entityType: "payment",
-    entityId: payment.id,
-    before: paymentBefore,
-    after: payment,
-    correlationId: ctx.correlationId,
-  });
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "payable.updated",
-    entityType: "payable",
-    entityId: payable.id,
-    before: payableBefore,
-    after: payable,
-    correlationId: ctx.correlationId,
+    const audit = ctx.audit.withTx(tx);
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "payment.executed",
+      entityType: "payment",
+      entityId: payment.id,
+      before: paymentBefore,
+      after: payment,
+      correlationId: ctx.correlationId,
+    });
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "payable.updated",
+      entityType: "payable",
+      entityId: payable.id,
+      before: payableBefore,
+      after: payable,
+      correlationId: ctx.correlationId,
+    });
   });
   await ctx.events.publish({
     companyId: ctx.companyId,
@@ -1681,31 +1682,30 @@ async function reversePayment(
     payable.paidCents > 0 ? "partially_paid" : stillReserved ? "scheduled" : "open";
   payable.updatedAt = nowIso;
 
-  // Atômico, como na execução: estorno do pagamento e devolução do saldo do
-  // título commitam juntos — um crash no meio não deixa título baixado sem
-  // pagamento correspondente.
+  // Atômico, como na execução: estorno do pagamento, devolução do saldo do
+  // título e a trilha commitam juntos.
   await ctx.repos.withTransaction(async (tx) => {
     await tx.payments.update(payment);
     await tx.payables.update(payable);
-  });
-
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "payment.reversed",
-    entityType: "payment",
-    entityId: payment.id,
-    before: paymentBefore,
-    after: { ...payment, reverseReason: input.reason },
-    correlationId: ctx.correlationId,
-  });
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "payable.updated",
-    entityType: "payable",
-    entityId: payable.id,
-    before: payableBefore,
-    after: payable,
-    correlationId: ctx.correlationId,
+    const audit = ctx.audit.withTx(tx);
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "payment.reversed",
+      entityType: "payment",
+      entityId: payment.id,
+      before: paymentBefore,
+      after: { ...payment, reverseReason: input.reason },
+      correlationId: ctx.correlationId,
+    });
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "payable.updated",
+      entityType: "payable",
+      entityId: payable.id,
+      before: payableBefore,
+      after: payable,
+      correlationId: ctx.correlationId,
+    });
   });
   await ctx.events.publish({
     companyId: ctx.companyId,
