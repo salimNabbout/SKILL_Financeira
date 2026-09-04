@@ -1076,6 +1076,24 @@ describe("fluxo integrado: régua de cobrança com aprovação", () => {
   });
 });
 
+describe("bank_sync — auditoria embutida", () => {
+  it("roda a auditoria depois do casamento, sem derrubar a sincronização", async () => {
+    const r = await orch.execute({
+      flow: "bank_sync",
+      companyId: env.company.id,
+      actor: env.actorFor("manager"),
+      payload: { bankAccountId: "ba_1" },
+    });
+
+    const audit = r.results.find((s) => s.stepId === "audit");
+    expect(audit).toBeDefined();
+    // Vem depois do casamento: auditar antes acusaria o que o auto_match
+    // acabaria de conciliar.
+    const ordem = r.results.map((s) => s.stepId);
+    expect(ordem.indexOf("audit")).toBeGreaterThan(ordem.indexOf("match"));
+  });
+});
+
 describe("fluxos de relatório", () => {
   it("daily_summary e monthly_close executam e consolidam", async () => {
     const daily = await orch.execute({
@@ -1086,6 +1104,13 @@ describe("fluxos de relatório", () => {
     });
     expect(daily.status).toBe("completed");
     expect(daily.results.find((r) => r.stepId === "report")?.result.status).not.toBe("error");
+
+    // D3: skills não chamam skills. Os totais da auditoria chegam ao resumo
+    // porque o FLUXO os repassa do passo anterior.
+    const auditoria = daily.results.find((r) => r.stepId === "reconciliation_audit");
+    expect(auditoria?.result.status).toBe("success");
+    const resumo = daily.results.find((r) => r.stepId === "report");
+    expect((resumo?.result.data as { reconciliation?: unknown }).reconciliation).toBeDefined();
 
     const close = await orch.execute({
       flow: "monthly_close",

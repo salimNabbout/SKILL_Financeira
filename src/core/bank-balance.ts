@@ -13,6 +13,13 @@
  * - **Extrato do banco**: `BankTransaction` com `reconciled = true`, que só
  *   acontece pela conciliação de extrato importado.
  *
+ * ATENÇÃO, e é onde todo mundo tropeça: transação NÃO conciliada fica de FORA
+ * do saldo. Enquanto houver linha do extrato pendente de conciliação, este
+ * número não bate com o saldo que o banco informa — e a diferença é
+ * exatamente a soma delas. Quem compara os dois (a auditoria de conciliação)
+ * precisa somar esse termo de volta antes de chamar a diferença de
+ * divergência.
+ *
  * Somar os dois às cegas contaria o mesmo dinheiro duas vezes quando uma
  * transação do extrato é casada com um pagamento. Por isso a transação só entra
  * quando NÃO está casada com algo já contado — o que sobra é justamente o que o

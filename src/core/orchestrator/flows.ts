@@ -7,7 +7,7 @@
 
 import type { Permission } from "../auth";
 import type { CompanyConfig } from "../config";
-import type { ISODate } from "../dates";
+import { monthOf, type ISODate } from "../dates";
 import type { ID } from "../entities";
 import type { Repositories } from "../repositories";
 import type { SkillName } from "../skill";
@@ -267,6 +267,18 @@ const bankSync: FlowDefinition = {
       buildInput: (f) => ({ action: "auto_match", bankAccountId: f.payload.bankAccountId }),
     },
     {
+      id: "audit",
+      skill: "conciliacao_bancaria",
+      description: "Auditoria de conciliação do mês corrente (extrato × baixas)",
+      buildInput: (f) => ({
+        action: "reconciliation_audit",
+        period: monthOf(f.today),
+        bankAccountId: f.payload.bankAccountId,
+      }),
+      // Auditoria é diagnóstico: falhar nela não pode derrubar a sincronização.
+      continueOnError: true,
+    },
+    {
       id: "treasury_refresh",
       skill: "tesouraria_fluxo_caixa",
       description: "Atualizar posição de caixa",
@@ -375,10 +387,24 @@ const dailySummary: FlowDefinition = {
       continueOnError: true,
     },
     {
+      id: "reconciliation_audit",
+      skill: "conciliacao_bancaria",
+      description: "Auditoria de conciliação do mês corrente, todas as contas",
+      buildInput: (f) => ({ action: "reconciliation_audit", period: monthOf(f.today) }),
+      continueOnError: true,
+    },
+    {
       id: "report",
       skill: "relatorios_gerenciais",
       description: "Resumo diário consolidado",
-      buildInput: () => ({ action: "daily_summary" }),
+      // Skills não chamam skills neste repo: quem compõe é o fluxo. Os totais
+      // da auditoria chegam por aqui, do resultado do passo anterior.
+      buildInput: (f) => ({
+        action: "daily_summary",
+        reconciliationTotals: (
+          f.results.reconciliation_audit?.data as { totals?: unknown } | undefined
+        )?.totals,
+      }),
     },
   ],
 };

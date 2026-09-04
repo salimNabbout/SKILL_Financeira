@@ -31,6 +31,7 @@ export type EventType =
   | "reconciliation.auto_matched"
   | "reconciliation.suggested"
   | "reconciliation.confirmed"
+  | "reconciliation.audited"
   | "reconciliation.rejected"
   | "collection.message_drafted"
   | "collection.message_sent"

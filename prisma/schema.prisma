@@ -35,6 +35,7 @@ model Company {
   recurringTemplates RecurringTemplate[]
   bankAccounts       BankAccount[]
   bankTransactions   BankTransaction[]
+  statementImports   StatementImport[]
   payables           Payable[]
   receivables        Receivable[]
   payments           Payment[]
@@ -151,7 +152,7 @@ model SupplierCategory {
 }
 
 model RecurringTemplate {
-  id                 String   @id
+  id                 String    @id
   companyId          String
   kind               String // payable | receivable
   counterpartyId     String // fornecedor (payable) ou cliente (receivable)
@@ -160,12 +161,12 @@ model RecurringTemplate {
   dueDay             Int // 1-31 (dias inexistentes caem no último dia do mês)
   category           String? // categoria de fornecedor (payable)
   costClassification String? // fixed | variable (payable)
-  startDate          DateTime @db.Date
+  startDate          DateTime  @db.Date
   endDate            DateTime? @db.Date
-  status             String   @default("active") // active | paused | ended
+  status             String    @default("active") // active | paused | ended
   createdBy          String
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   company Company @relation(fields: [companyId], references: [id])
 
@@ -188,12 +189,43 @@ model BankAccount {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  company      Company           @relation(fields: [companyId], references: [id])
-  transactions BankTransaction[]
-  payments     Payment[]
-  receipts     Receipt[]
+  company          Company           @relation(fields: [companyId], references: [id])
+  transactions     BankTransaction[]
+  statementImports StatementImport[]
+  payments         Payment[]
+  receipts         Receipt[]
 
   @@index([companyId])
+}
+
+/// Lote de importação de extrato.
+///
+/// Existe para responder duas perguntas que as transações sozinhas não
+/// respondem: QUANDO cada arquivo entrou, e qual o saldo que o BANCO declarava
+/// naquele momento (<LEDGERBAL> do OFX). O saldo do banco é a única referência
+/// externa para conferir o saldo calculado pelo app — antes desta tabela, o
+/// parser lia e descartava.
+///
+/// O `id` é o mesmo valor gravado em BankTransaction.importBatchId, então dá
+/// para ir do lançamento ao lote sem coluna nova na tabela de transações.
+model StatementImport {
+  id                 String    @id
+  companyId          String
+  bankAccountId      String
+  format             String // ofx | csv | cnab240 | sync
+  source             String // ofx | csv | cnab240 | sync
+  imported           Int
+  duplicates         Int
+  warnings           String[]
+  ledgerBalanceCents BigInt? // ausente: arquivo sem saldo declarado
+  ledgerBalanceDate  DateTime? @db.Date
+  createdBy          String // userId ou "system"
+  createdAt          DateTime  @default(now())
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id])
+
+  @@index([companyId, bankAccountId, createdAt])
 }
 
 model BankTransaction {
@@ -205,6 +237,9 @@ model BankTransaction {
   currency      String   @default("BRL")
   description   String
   externalId    String? // FITID do OFX ou hash determinístico (dedupe)
+  // Aponta para StatementImport.id, mas SEM foreign key de propósito: os
+  // lotes anteriores à migração 0019 não têm linha lá, e uma FK exigiria
+  // backfill ou quebraria a migração. A referência fica solta.
   importBatchId String?
   source        String // ofx | csv | api_mock | manual
   reconciled    Boolean  @default(false)
@@ -223,29 +258,29 @@ model BankTransaction {
 // ---------------------------------------------------------------------------
 
 model Payable {
-  id                String    @id
-  companyId         String
-  supplierId        String
-  documentId        String?
-  description       String
-  issueDate         DateTime  @db.Date
-  dueDate           DateTime  @db.Date
-  amountCents       BigInt
-  paidCents         BigInt    @default(0)
-  currency          String    @default("BRL")
-  status            String // open | scheduled | partially_paid | paid | canceled
-  categoryId        String?
-  costCenterId      String?
-  supplierCategory  String? // categoria de fornecedor (texto) espelhada na entrada
+  id                 String    @id
+  companyId          String
+  supplierId         String
+  documentId         String?
+  description        String
+  issueDate          DateTime  @db.Date
+  dueDate            DateTime  @db.Date
+  amountCents        BigInt
+  paidCents          BigInt    @default(0)
+  currency           String    @default("BRL")
+  status             String // open | scheduled | partially_paid | paid | canceled
+  categoryId         String?
+  costCenterId       String?
+  supplierCategory   String? // categoria de fornecedor (texto) espelhada na entrada
   costClassification String? // fixed | variable — espelho do fornecedor na entrada
-  installmentNumber Int       @default(1)
-  installmentCount  Int       @default(1)
-  originKey         String // chave de idempotência: fornecedor+documento+parcela
-  notes             String?
-  canceledAt        DateTime?
-  createdBy         String
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  installmentNumber  Int       @default(1)
+  installmentCount   Int       @default(1)
+  originKey          String // chave de idempotência: fornecedor+documento+parcela
+  notes              String?
+  canceledAt         DateTime?
+  createdBy          String
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   company    Company            @relation(fields: [companyId], references: [id])
   supplier   Supplier           @relation(fields: [supplierId], references: [id])
@@ -325,21 +360,21 @@ model Payment {
 }
 
 model Receipt {
-  id            String   @id
-  companyId     String
-  receivableId  String
-  bankAccountId String?
-  amountCents   BigInt
-  receivedDate  DateTime @db.Date
-  method        String // pix | boleto | card | transfer | cash
+  id             String    @id
+  companyId      String
+  receivableId   String
+  bankAccountId  String?
+  amountCents    BigInt
+  receivedDate   DateTime  @db.Date
+  method         String // pix | boleto | card | transfer | cash
   /// registered | canceled (estorno lógico — nada é apagado)
-  status        String   @default("registered")
-  canceledAt    DateTime?
+  status         String    @default("registered")
+  canceledAt     DateTime?
   /// Parte do valor que baixou o SALDO do título (amountCents inclui encargos).
   /// Nulo nas linhas anteriores ao estorno existir.
   principalCents BigInt?
-  registeredBy  String // usuário ou "system" (baixa automática via conciliação)
-  createdAt     DateTime @default(now())
+  registeredBy   String // usuário ou "system" (baixa automática via conciliação)
+  createdAt      DateTime  @default(now())
 
   company     Company      @relation(fields: [companyId], references: [id])
   receivable  Receivable   @relation(fields: [receivableId], references: [id])

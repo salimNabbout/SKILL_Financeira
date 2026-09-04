@@ -62,7 +62,8 @@ erDiagram
 | `User` / `Membership` | Usuário global + papel e **limite de alçada** por empresa | `role`, `approvalLimitCents` |
 | `Customer` / `Supplier` | Cadastros; fornecedor guarda dados bancários **mascarados** | `document`, `bankInfoMasked`, `pixKeyMasked` |
 | `BankAccount` | Conta bancária com saldo inicial e número mascarado | `openingBalanceCents/Date` |
-| `BankTransaction` | Linha de extrato importada (assinada: crédito +, débito −) | `externalId` (FITID/hash), `reconciled`, `source` |
+| `BankTransaction` | Linha de extrato importada (assinada: crédito +, débito −) | `externalId` (FITID/hash), `reconciled`, `source`, `importBatchId` (aponta para `StatementImport.id` **sem FK**: lotes anteriores à 0019 não têm linha) |
+| `StatementImport` | Lote de importação de extrato: quando entrou, quantas vieram, quantas eram duplicadas e **qual saldo o banco declarava** (`<LEDGERBAL>` do OFX) | `id` = o `importBatchId` das transações; `ledgerBalanceCents`/`ledgerBalanceDate` ausentes em CSV, CNAB240 e sync |
 | `Payable` / `Receivable` | Títulos com parcelas, categoria, centro de custo, status e `originKey` | `status`, `paidCents`/`receivedCents`, `installmentNumber/Count` |
 | `Payment` | Intenção→execução de pagamento; **nunca `executed` sem `approvalId`** | `status`, `approvalId`, `requestedBy`, `executedBy` |
 | `Receipt` | Baixa de recebível (manual ou `registeredBy: "system"` via conciliação) | `method`, `receivedDate` |

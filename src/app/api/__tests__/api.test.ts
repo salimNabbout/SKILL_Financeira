@@ -43,6 +43,7 @@ import {
   type ApiSession,
 } from "../_lib/handlers";
 import { runReport } from "../_lib/reports";
+import { buildRegistry } from "@/skills";
 import {
   errorResponse,
   json,
@@ -968,6 +969,93 @@ describe("reports", () => {
       expect(out.result.skill).toBe("relatorios_gerenciais");
       expect(out.result.status).toBe("success");
       expect(out.result.data).toMatchObject({ action: "daily_summary", ok: true });
+    }
+  });
+
+  it("reconciliation_audit vem da skill de CONCILIAÇÃO, não da de relatórios", async () => {
+    const env = createTestEnv();
+    // Registry REAL: o que se prova aqui é que o mapa de despacho acha a skill
+    // certa. Com o registry de dublês, qualquer nome "funcionaria".
+    const deps = buildDeps(env, buildRegistry());
+    const session = await sessionFor(env, "viewer");
+
+    const out = await runReport(deps, session, "reconciliation_audit", { period: "2026-08" });
+
+    expect(out.kind).toBe("json");
+    if (out.kind === "json") {
+      // Sem o mapa de despacho, isto morreria na validação da skill errada.
+      expect(out.result.skill).toBe("conciliacao_bancaria");
+      expect(out.result.status).toBe("success");
+      expect(out.result.data).toMatchObject({ period: { start: "2026-08-01", end: "2026-08-31" } });
+    }
+  });
+
+  it("reconciliation_audit exige period", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env, buildRegistry());
+    const session = await sessionFor(env, "viewer");
+
+    await expect(runReport(deps, session, "reconciliation_audit", {})).rejects.toThrow(
+      /exige o parâmetro period/
+    );
+  });
+
+  it("reconciliation_audit exporta UMA LINHA POR DIVERGÊNCIA, com coluna tipo", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env, buildRegistry());
+    const session = await sessionFor(env, "viewer");
+    const agora = env.clock.now().toISOString();
+
+    env.db.bankAccounts.push({
+      id: "ba_rel",
+      companyId: env.company.id,
+      name: "Itaú",
+      bankCode: "341",
+      agency: "0001",
+      accountNumberMasked: "****0135",
+      type: "checking",
+      currency: "BRL",
+      openingBalanceCents: 0,
+      openingBalanceDate: "2026-08-01",
+      active: true,
+      createdAt: agora,
+      updatedAt: agora,
+    });
+    env.db.bankTransactions.push({
+      id: "btx_rel",
+      companyId: env.company.id,
+      bankAccountId: "ba_rel",
+      date: "2026-08-14",
+      amountCents: -12_000,
+      currency: "BRL",
+      description: "TARIFA PACOTE SERVICOS",
+      source: "ofx",
+      reconciled: false,
+      createdAt: agora,
+    });
+
+    const csv = await runReport(deps, session, "reconciliation_audit", {
+      period: "2026-08",
+      format: "csv",
+    });
+
+    expect(csv.kind).toBe("csv");
+    if (csv.kind === "csv") {
+      expect(csv.filename).toBe("reconciliation_audit-2026-08.csv");
+      // O CSV sai com BOM UTF-8 e separador ";" (padrao do exportador).
+      expect(csv.content.replace(/^﻿/, "").startsWith("tipo;data;descricao")).toBe(true);
+      expect(csv.content).toContain("Extrato sem explicação");
+      expect(csv.content).toContain("TARIFA PACOTE SERVICOS");
+    }
+
+    const xlsx = await runReport(deps, session, "reconciliation_audit", {
+      period: "2026-08",
+      format: "xlsx",
+    });
+    expect(xlsx.kind).toBe("xlsx");
+    if (xlsx.kind === "xlsx") {
+      expect(xlsx.filename).toBe("reconciliation_audit-2026-08.xlsx");
+      expect(xlsx.bytes.byteLength).toBeGreaterThan(0);
     }
   });
 

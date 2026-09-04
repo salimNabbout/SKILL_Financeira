@@ -17,6 +17,7 @@ import type {
   AuditRecord,
   BankAccount,
   BankTransaction,
+  StatementImport,
   Budget,
   BudgetLine,
   Category,
@@ -139,12 +140,37 @@ export interface BankTransactionRepo extends BaseRepo<BankTransaction> {
   ): Promise<Page<BankTransaction>>;
 }
 
+export interface StatementImportRepo extends BaseRepo<StatementImport> {
+  /** Ordem: createdAt desc. */
+  listByAccount(companyId: ID, bankAccountId: ID): Promise<StatementImport[]>;
+  /**
+   * Lote mais recente COM saldo do banco cuja data-base seja <= `date`. É a
+   * referência contra a qual o saldo calculado é conferido; lotes sem saldo
+   * (CSV, CNAB240, sync) são ignorados.
+   */
+  latestWithBalanceBefore(
+    companyId: ID,
+    bankAccountId: ID,
+    date: ISODate
+  ): Promise<StatementImport | null>;
+}
+
 // --- Títulos e liquidações --------------------------------------------------
 
 export interface PayableRepo extends BaseRepo<Payable> {
   findByOriginKey(companyId: ID, originKey: string): Promise<Payable | null>;
   listByStatus(companyId: ID, statuses: PayableStatus[]): Promise<Payable[]>;
   listDueBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Payable[]>;
+  /**
+   * Títulos com baixa (paidCents > 0) cuja ÚLTIMA alteração caiu no intervalo.
+   * Filtro no banco, não `listAll` peneirado em memória.
+   *
+   * `updatedAt` é uma aproximação da data da baixa: o título não guarda quando
+   * foi pago. Serve para a auditoria de conciliação varrer um período; um
+   * título editado depois de pago entra pela data da edição — documentado na
+   * `formula` da auditoria.
+   */
+  listPaidBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Payable[]>;
   /**
    * Ordem: vencimento asc, id asc. Filtros de status, fornecedor e intervalo
    * de vencimento (dueFrom/dueTo, inclusivos) são aplicados no banco — a
@@ -373,6 +399,7 @@ export interface Repositories {
   recurringTemplates: RecurringTemplateRepo;
   bankAccounts: BankAccountRepo;
   bankTransactions: BankTransactionRepo;
+  statementImports: StatementImportRepo;
   payables: PayableRepo;
   receivables: ReceivableRepo;
   payments: PaymentRepo;

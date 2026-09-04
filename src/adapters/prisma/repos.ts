@@ -56,6 +56,7 @@ import type {
   AuditRecord,
   BankAccount,
   BankTransaction,
+  StatementImport,
   Budget,
   BudgetLine,
   Category,
@@ -96,6 +97,7 @@ import type {
   AuditRepo,
   BankAccountRepo,
   BankTransactionRepo,
+  StatementImportRepo,
   BudgetLineRepo,
   BudgetRepo,
   CategoryRepo,
@@ -383,6 +385,51 @@ const bankAccountToDb = (e: BankAccount): Prisma.BankAccountUncheckedCreateInput
   active: e.active,
   createdAt: toInstant(e.createdAt),
   updatedAt: toInstant(e.updatedAt),
+});
+
+type StatementImportRow = {
+  id: string;
+  companyId: string;
+  bankAccountId: string;
+  format: string;
+  source: string;
+  imported: number;
+  duplicates: number;
+  warnings: string[];
+  ledgerBalanceCents: bigint | null;
+  ledgerBalanceDate: Date | null;
+  createdBy: string;
+  createdAt: Date;
+};
+
+const statementImportToDomain = (r: StatementImportRow): StatementImport => ({
+  id: r.id,
+  companyId: r.companyId,
+  bankAccountId: r.bankAccountId,
+  format: r.format,
+  source: r.source as StatementImport["source"],
+  imported: r.imported,
+  duplicates: r.duplicates,
+  warnings: r.warnings,
+  ledgerBalanceCents: fromCentsOpt(r.ledgerBalanceCents),
+  ledgerBalanceDate: fromDbDateOpt(r.ledgerBalanceDate),
+  createdBy: r.createdBy,
+  createdAt: r.createdAt.toISOString(),
+});
+
+const statementImportToDb = (e: StatementImport) => ({
+  id: e.id,
+  companyId: e.companyId,
+  bankAccountId: e.bankAccountId,
+  format: e.format,
+  source: e.source,
+  imported: e.imported,
+  duplicates: e.duplicates,
+  warnings: e.warnings,
+  ledgerBalanceCents: toCentsOpt(e.ledgerBalanceCents),
+  ledgerBalanceDate: toDbDateOpt(e.ledgerBalanceDate),
+  createdBy: e.createdBy,
+  createdAt: new Date(e.createdAt),
 });
 
 const bankTransactionToDomain = (r: DbBankTransaction): BankTransaction => ({
@@ -1287,6 +1334,56 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     },
   };
 
+  // Lote de importação: guarda o saldo que o BANCO declarou, para a auditoria
+  // de conciliação conferir contra o saldo calculado pelo app.
+  const statementImports: StatementImportRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.statementImport.findFirst({ where: { id, companyId } });
+      return row ? statementImportToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.statementImport.findMany({
+        where: { companyId },
+        orderBy: { createdAt: "desc" },
+      });
+      return rows.map(statementImportToDomain);
+    },
+    async create(entity: StatementImport) {
+      const row = await prisma.statementImport.create({ data: statementImportToDb(entity) });
+      return statementImportToDomain(row);
+    },
+    async update(entity: StatementImport) {
+      const row = await prisma.statementImport.update({
+        where: { id: entity.id },
+        data: statementImportToDb(entity),
+      });
+      return statementImportToDomain(row);
+    },
+    async listByAccount(companyId: ID, bankAccountId: ID) {
+      const rows = await prisma.statementImport.findMany({
+        where: { companyId, bankAccountId },
+        orderBy: { createdAt: "desc" },
+      });
+      return rows.map(statementImportToDomain);
+    },
+    async latestWithBalanceBefore(companyId: ID, bankAccountId: ID, date: ISODate) {
+      // Lotes sem saldo declarado (CSV, CNAB240, sync) não servem de referência.
+      const row = await prisma.statementImport.findFirst({
+        where: {
+          companyId,
+          bankAccountId,
+          ledgerBalanceCents: { not: null },
+          ledgerBalanceDate: { not: null, lte: toDbDate(date) },
+        },
+        // Data-base primeiro: o arquivo importado por último pode declarar um
+        // saldo MAIS ANTIGO que o de um arquivo importado antes. Desempate por
+        // createdAt para o caso de dois lotes com a mesma data-base.
+        orderBy: [{ ledgerBalanceDate: "desc" }, { createdAt: "desc" }],
+      });
+      return row ? statementImportToDomain(row) : null;
+    },
+  };
+
   const bankTransactions: BankTransactionRepo = {
     async getById(companyId: ID, id: ID) {
       const row = await prisma.bankTransaction.findFirst({ where: { id, companyId } });
@@ -1390,6 +1487,22 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       const rows = await prisma.payable.findMany({
         where: { companyId, status: { in: statuses } },
         orderBy: { dueDate: "asc" },
+      });
+      return rows.map(payableToDomain);
+    },
+    async listPaidBetween(companyId: ID, start: ISODate, end: ISODate) {
+      // updatedAt é timestamp: o fim do intervalo vai até o último instante do
+      // dia, senão baixas da tarde do último dia ficariam de fora.
+      const rows = await prisma.payable.findMany({
+        where: {
+          companyId,
+          paidCents: { gt: 0 },
+          updatedAt: {
+            gte: new Date(`${start}T00:00:00.000Z`),
+            lte: new Date(`${end}T23:59:59.999Z`),
+          },
+        },
+        orderBy: { updatedAt: "asc" },
       });
       return rows.map(payableToDomain);
     },
@@ -2225,6 +2338,7 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     recurringTemplates,
     bankAccounts,
     bankTransactions,
+    statementImports,
     payables,
     receivables,
     payments,

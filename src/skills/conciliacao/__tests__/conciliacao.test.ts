@@ -205,6 +205,197 @@ async function run(env: TestEnv, input: unknown, actorKey: Parameters<TestEnv["a
   return runSkill(conciliacaoSkill, env.ctx(env.actorFor(actorKey)), input);
 }
 
+// Mesmo arquivo, com o saldo declarado pelo banco no fim.
+/** OFX com saldo declarado e FITIDs próprios (para não deduplicar entre lotes). */
+function comSaldo(base: string, valor: string, dtasof: string, prefixo: string): string {
+  return base
+    .replace(/FIT-00(\d)/g, `${prefixo}-$1`)
+    .replace(
+      "</BANKTRANLIST>",
+      `</BANKTRANLIST>
+<LEDGERBAL>
+<BALAMT>${valor}
+<DTASOF>${dtasof}
+</LEDGERBAL>`
+    );
+}
+
+const OFX_COM_SALDO = OFX_SAMPLE.replace(
+  "</BANKTRANLIST>",
+  `</BANKTRANLIST>
+<LEDGERBAL>
+<BALAMT>4200,50
+<DTASOF>20260817
+</LEDGERBAL>`
+);
+
+describe("conciliacao_bancaria — lote de importação (StatementImport)", () => {
+  it("grava o lote com o saldo que o banco declarou", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    const res = await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: OFX_COM_SALDO,
+    });
+    const data = res.data as ImportStatementData;
+
+    expect(env.db.statementImports).toHaveLength(1);
+    const lote = env.db.statementImports[0];
+    // O id do lote é o mesmo importBatchId gravado nas transações: dá para ir
+    // do lançamento ao lote sem coluna nova.
+    expect(lote.id).toBe(data.importBatchId);
+    expect(env.db.bankTransactions.every((t) => t.importBatchId === lote.id)).toBe(true);
+    expect(lote).toMatchObject({
+      bankAccountId: "ba_1",
+      format: "ofx",
+      source: "ofx",
+      imported: 3,
+      duplicates: 0,
+      ledgerBalanceCents: 420_050,
+      ledgerBalanceDate: "2026-08-17",
+    });
+  });
+
+  it("arquivo sem LEDGERBAL: lote sem saldo, e isso não é erro", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: OFX_SAMPLE,
+    });
+
+    const lote = env.db.statementImports[0];
+    expect(lote.ledgerBalanceCents).toBeUndefined();
+    expect(lote.ledgerBalanceDate).toBeUndefined();
+    expect(lote.warnings).toEqual([]);
+  });
+
+  it("reimportar não duplica transações, MAS registra o novo lote", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+    const input = {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: OFX_COM_SALDO,
+    };
+
+    await run(env, input);
+    await run(env, input);
+
+    // As transações continuam idempotentes...
+    expect(env.db.bankTransactions).toHaveLength(3);
+    // ...mas os dois lotes existem: o saldo do banco pode ter mudado entre eles,
+    // e a auditoria precisa do mais recente.
+    expect(env.db.statementImports).toHaveLength(2);
+    expect(env.db.statementImports[1]).toMatchObject({ imported: 0, duplicates: 3 });
+  });
+
+  it("escolhe pela DATA-BASE, não pela ordem de importação", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    // Ordem invertida de propósito: primeiro entra o arquivo com a data-base
+    // MAIS NOVA, depois o com a data-base mais velha. Ordenar por createdAt
+    // devolveria o segundo — e o saldo conferido seria o desatualizado.
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "9999,00", "20260831", "FIT-A"),
+    });
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "1111,00", "20260810", "FIT-B"),
+    });
+
+    expect(env.db.statementImports).toHaveLength(2);
+    // O último importado é o de data-base mais velha...
+    expect(env.db.statementImports[1].ledgerBalanceCents).toBe(111_100);
+
+    // ...mas a referência tem de ser a data-base mais recente.
+    const achado = await env.repos.statementImports.latestWithBalanceBefore(
+      env.company.id,
+      "ba_1",
+      "2026-09-30"
+    );
+    expect(achado?.ledgerBalanceCents).toBe(999_900);
+    expect(achado?.ledgerBalanceDate).toBe("2026-08-31");
+  });
+
+  it("mesma data-base em dois lotes: vence o importado por último", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "500,00", "20260831", "FIT-C"),
+    });
+    // O relógio do ambiente de teste é fixo: sem avançá-lo, os dois lotes
+    // teriam o MESMO createdAt e não haveria desempate para exercitar.
+    env.clock.set("2026-08-18T16:00:00Z");
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "700,00", "20260831", "FIT-D"),
+    });
+
+    const achado = await env.repos.statementImports.latestWithBalanceBefore(
+      env.company.id,
+      "ba_1",
+      "2026-09-30"
+    );
+    // Empate na data-base: o desempate é por createdAt, então o arquivo mais
+    // recente corrige o saldo do anterior.
+    expect(achado?.ledgerBalanceCents).toBe(700_00);
+  });
+
+  it("latestWithBalanceBefore ignora lote sem saldo e respeita a data-base", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    // Primeiro um arquivo COM saldo, depois um SEM (o mais recente).
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: OFX_COM_SALDO,
+    });
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: OFX_SAMPLE.replace("FIT-001", "FIT-901"),
+    });
+
+    const achado = await env.repos.statementImports.latestWithBalanceBefore(
+      env.company.id,
+      "ba_1",
+      "2026-08-31"
+    );
+    expect(achado?.ledgerBalanceCents).toBe(420_050);
+
+    // Data-base anterior ao saldo: nenhuma referência disponível.
+    const antes = await env.repos.statementImports.latestWithBalanceBefore(
+      env.company.id,
+      "ba_1",
+      "2026-08-16"
+    );
+    expect(antes).toBeNull();
+  });
+});
+
 describe("conciliacao_bancaria — import_statement", () => {
   it("importa OFX, deduplica por FITID e publica statement.imported", async () => {
     const env = createTestEnv();

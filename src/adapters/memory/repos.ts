@@ -8,6 +8,7 @@ import type {
   ApprovalStatus,
   AuditRecord,
   BankTransaction,
+  StatementImport,
   BudgetLine,
   CollectionMessage,
   CollectionMessageStatus,
@@ -41,6 +42,7 @@ import type {
   AuditHead,
   AuditRepo,
   BankTransactionRepo,
+  StatementImportRepo,
   BaseRepo,
   BudgetLineRepo,
   CollectionMessageRepo,
@@ -206,6 +208,36 @@ class MemDocumentRepo extends MemBase<FinancialDocument> implements FinancialDoc
   }
 }
 
+class MemStatementImportRepo extends MemBase<StatementImport> implements StatementImportRepo {
+  async listByAccount(companyId: ID, bankAccountId: ID) {
+    return clone(
+      this.items
+        .filter((i) => i.companyId === companyId && i.bankAccountId === bankAccountId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    );
+  }
+  async latestWithBalanceBefore(companyId: ID, bankAccountId: ID, date: ISODate) {
+    // Lotes sem saldo declarado (CSV, CNAB240, sync) não servem de referência.
+    const candidatos = this.items
+      .filter(
+        (i) =>
+          i.companyId === companyId &&
+          i.bankAccountId === bankAccountId &&
+          i.ledgerBalanceCents !== undefined &&
+          i.ledgerBalanceDate !== undefined &&
+          i.ledgerBalanceDate <= date
+      )
+      // Data-base desc, desempate por createdAt desc. O comparador anterior
+      // nunca devolvia 0, então datas iguais davam ordem arbitrária.
+      .sort(
+        (a, b) =>
+          b.ledgerBalanceDate!.localeCompare(a.ledgerBalanceDate!) ||
+          b.createdAt.localeCompare(a.createdAt)
+      );
+    return candidatos[0] ? clone(candidatos[0]) : null;
+  }
+}
+
 class MemBankTransactionRepo extends MemBase<BankTransaction> implements BankTransactionRepo {
   async findByExternalId(companyId: ID, bankAccountId: ID, externalId: string) {
     const found = this.items.find(
@@ -255,6 +287,17 @@ class MemPayableRepo extends MemBase<Payable> implements PayableRepo {
   async listByStatus(companyId: ID, statuses: PayableStatus[]) {
     return clone(
       this.items.filter((p) => p.companyId === companyId && statuses.includes(p.status))
+    );
+  }
+  async listPaidBetween(companyId: ID, start: ISODate, end: ISODate) {
+    return clone(
+      this.items.filter(
+        (p) =>
+          p.companyId === companyId &&
+          p.paidCents > 0 &&
+          p.updatedAt.slice(0, 10) >= start &&
+          p.updatedAt.slice(0, 10) <= end
+      )
     );
   }
   async listDueBetween(companyId: ID, start: ISODate, end: ISODate) {
@@ -701,6 +744,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     recurringTemplates: new MemRecurringTemplateRepo(db.recurringTemplates),
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),
+    statementImports: new MemStatementImportRepo(db.statementImports),
     payables: new MemPayableRepo(db.payables),
     receivables: new MemReceivableRepo(db.receivables),
     payments: new MemPaymentRepo(db.payments),

@@ -91,8 +91,15 @@ revisão humana; histórico completo de correspondências.
 | `auto_match` | Pontua candidatos (valor, data, similaridade de nome); ≥ limiar → conciliação automática com baixa; abaixo → sugestão para revisão |
 | `confirm_match` / `reject_match` | Decisão humana sobre sugestões |
 | `reconciliation_status` | Visão geral: não conciliadas, sugestões pendentes, conciliadas no mês |
+| `reconciliation_audit` | Auditoria do período: extrato sem explicação, **baixas sem lastro no extrato**, conciliações com valor divergente e saldo do app × saldo do banco. 100% leitura — não corrige nada |
 
-**Publica:** `statement.imported`, `reconciliation.auto_matched/suggested/confirmed/rejected`.
+A auditoria olha na direção contrária das demais ações: elas vão do extrato para
+os títulos; ela pergunta o que foi baixado no app **sem** contrapartida bancária.
+Baixa recente demais para o extrato importado não é divergência: entra em
+`pendingCoverageCount` e aguarda a importação.
+
+**Publica:** `statement.imported`, `reconciliation.auto_matched/suggested/confirmed/rejected`,
+`reconciliation.audited`.
 
 ## 6. `cobranca_inadimplencia` — Cobrança e Inadimplência
 **Pasta:** `src/skills/cobranca` · **Fontes:** receivables, customers, receipts, collection_messages

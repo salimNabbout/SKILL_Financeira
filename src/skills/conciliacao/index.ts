@@ -17,13 +17,22 @@
 import { z } from "zod";
 import { persistAlert } from "@/core/alerts";
 import { assertPermission } from "@/core/auth";
-import { addDays, diffDays, endOfMonth, monthOf, startOfMonth, type ISODate } from "@/core/dates";
+import {
+  addDays,
+  diffDays,
+  endOfMonth,
+  monthOf,
+  startOfMonth,
+  todayInTz,
+  type ISODate,
+} from "@/core/dates";
 import type {
   AccountingEntry,
   BankTransaction,
   ID,
   Receipt,
   ReconciliationMatch,
+  ReconciliationStatus,
   ReconciliationTargetType,
 } from "@/core/entities";
 // Plano de contas compartilhado com a skill contábil: a despesa bancária usa as
@@ -31,7 +40,13 @@ import type {
 import { ACCOUNT_CASH, ACCOUNT_DEFAULT_EXPENSE } from "@/skills/contabil";
 import { NotFoundError, ValidationError } from "@/core/errors";
 import { hashPayload } from "@/core/ids";
-import { formatBRL, payableRemainingCents, receivableRemainingCents } from "@/core/money";
+import { computeBankPeriodBalance } from "@/core/bank-balance";
+import {
+  formatBRL,
+  payableRemainingCents,
+  receiptIsActive,
+  receivableRemainingCents,
+} from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 import { normalizeText, parseCnab240, parseCsvStatement, parseOfx } from "@/lib/importers";
@@ -79,6 +94,15 @@ const reconciliationStatusSchema = z.object({
   action: z.literal("reconciliation_status"),
 });
 
+const reconciliationAuditSchema = z.object({
+  action: z.literal("reconciliation_audit"),
+  period: z.union([
+    z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Período deve ser YYYY-MM (mês 01-12)"),
+    z.object({ start: z.string(), end: z.string() }),
+  ]),
+  bankAccountId: z.string().min(1).optional(),
+});
+
 export const conciliacaoInputSchema = z.discriminatedUnion("action", [
   importStatementSchema,
   syncBankSchema,
@@ -86,8 +110,10 @@ export const conciliacaoInputSchema = z.discriminatedUnion("action", [
   confirmMatchSchema,
   rejectMatchSchema,
   reconciliationStatusSchema,
+  reconciliationAuditSchema,
 ]);
 
+export type ReconciliationAuditInput = z.infer<typeof reconciliationAuditSchema>;
 export type ImportStatementInput = z.infer<typeof importStatementSchema>;
 export type SyncBankInput = z.infer<typeof syncBankSchema>;
 export type AutoMatchInput = z.infer<typeof autoMatchSchema>;
@@ -171,7 +197,8 @@ export type ConciliacaoData =
   | AutoMatchData
   | ConfirmMatchData
   | RejectMatchData
-  | ReconciliationStatusData;
+  | ReconciliationStatusData
+  | ReconciliationAuditData;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -604,6 +631,23 @@ async function importStatement(
 
   // Auditoria em nível de lote (uma entrada por importação, com os ids criados,
   // para não inflar a trilha com centenas de registros por arquivo).
+  // Lote de importação. Guarda o saldo que o BANCO declarou (só o OFX traz);
+  // é a referência externa contra a qual a auditoria confere o saldo do app.
+  await ctx.repos.statementImports.create({
+    id: importBatchId,
+    companyId: ctx.companyId,
+    bankAccountId: input.bankAccountId,
+    format: input.format,
+    source: input.format,
+    imported: created.length,
+    duplicates,
+    warnings: parsed.warnings,
+    ledgerBalanceCents: parsed.ledgerBalance?.amountCents,
+    ledgerBalanceDate: parsed.ledgerBalance?.date,
+    createdBy: ctx.actor.id,
+    createdAt: nowIso,
+  });
+
   await ctx.audit.record(ctx.companyId, {
     actor: ctx.actor,
     action: "statement.imported",
@@ -745,6 +789,21 @@ async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillR
     await ctx.repos.bankTransactions.create(tx);
     created.push(tx);
   }
+
+  // Mesmo registro de lote da importação por arquivo. Sem saldo: o provedor
+  // (mock, e os reais da v1.2) não declara saldo contábil.
+  await ctx.repos.statementImports.create({
+    id: importBatchId,
+    companyId: ctx.companyId,
+    bankAccountId: account.id,
+    format: provider.provider,
+    source: "sync",
+    imported: created.length,
+    duplicates,
+    warnings: [],
+    createdBy: ctx.actor.id,
+    createdAt: nowIso,
+  });
 
   await ctx.audit.record(ctx.companyId, {
     actor: ctx.actor,
@@ -1729,6 +1788,576 @@ async function rejectMatch(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Auditoria de conciliação — extrato × baixas
+// ---------------------------------------------------------------------------
+
+export interface ReconciliationAuditData {
+  period: { start: ISODate; end: ISODate };
+  bankAccountId?: ID;
+  unexplainedBankTransactions: Array<{
+    id: ID;
+    bankAccountId: ID;
+    date: ISODate;
+    amountCents: number;
+    description: string;
+    hasSuggestion: boolean;
+  }>;
+  settlementsWithoutBank: Array<{
+    kind: "payment" | "receipt" | "payable_paid_without_payment";
+    id: ID;
+    /** Ausente em `payable_paid_without_payment`: o título não tem conta. */
+    bankAccountId?: ID;
+    date: ISODate;
+    amountCents: number;
+    counterparty: string;
+    description: string;
+    registeredBy?: ID;
+  }>;
+  amountMismatches: Array<{
+    matchId: ID;
+    bankTransactionId: ID;
+    targetType: ReconciliationTargetType;
+    targetId?: ID;
+    bankAmountCents: number;
+    appliedCents: number;
+    expectedCents: number;
+    diffCents: number;
+  }>;
+  /** Até onde o extrato importado enxerga, por conta. Alimenta o estado vazio da tela. */
+  coverage: Array<{
+    bankAccountId: ID;
+    bankName: string;
+    /** Ausente: conta sem nenhum extrato importado. */
+    coverageDate?: ISODate;
+  }>;
+  balanceChecks: Array<{
+    bankAccountId: ID;
+    bankName: string;
+    asOf: ISODate;
+    ledgerBalanceCents: number;
+    computedBalanceCents: number;
+    diffCents: number;
+    /** Parte da diferença explicada por extrato não conciliado e baixas sem lastro. */
+    explainedCents: number;
+    /** O que sobra sem explicação — é ISTO que dispara alerta. */
+    residualCents: number;
+    importId: ID;
+  }>;
+  totals: {
+    unexplainedCount: number;
+    unexplainedCents: number;
+    settlementsWithoutBankCount: number;
+    settlementsWithoutBankCents: number;
+    amountMismatchCount: number;
+    pendingCoverageCount: number;
+    balanceMismatchCount: number;
+  };
+  formula: string;
+}
+
+/** Um match "aplicado" é o que já vale como conciliação decidida. */
+const APLICADOS: ReconciliationStatus[] = ["confirmed", "auto_confirmed"];
+
+function resolvePeriod(
+  period: ReconciliationAuditInput["period"]
+): { start: ISODate; end: ISODate } {
+  if (typeof period === "string") {
+    const mes = period as ReturnType<typeof monthOf>;
+    return { start: startOfMonth(mes), end: endOfMonth(mes) };
+  }
+  const start = period.start as ISODate;
+  const end = period.end as ISODate;
+  if (start > end) {
+    throw new ValidationError(`Período inválido: início (${start}) posterior ao fim (${end}).`);
+  }
+  return { start, end };
+}
+
+/**
+ * Auditoria de conciliação: quatro perguntas que a conciliação normal, que só
+ * olha extrato → títulos, não responde.
+ *
+ * 100% leitura + alertas. NÃO corrige nada: não estorna baixa, não cria
+ * lançamento, não altera título. A skill registra fatos e recomenda.
+ */
+async function reconciliationAudit(
+  ctx: SkillContext,
+  input: ReconciliationAuditInput
+): Promise<SkillResult<ReconciliationAuditData>> {
+  assertPermission(ctx.actor, "report.view");
+
+  const period = resolvePeriod(input.period);
+  const { start, end } = period;
+  const tolerancia = ctx.config.reconciliationAmountToleranceCents;
+
+  const contas = await ctx.repos.bankAccounts.listAll(ctx.companyId);
+  const contasAlvo = input.bankAccountId
+    ? contas.filter((c) => c.id === input.bankAccountId)
+    : contas;
+  if (input.bankAccountId && contasAlvo.length === 0) {
+    throw new NotFoundError("Conta bancária", input.bankAccountId);
+  }
+  const idsAlvo = new Set(contasAlvo.map((c) => c.id));
+
+  // --- Cobertura do extrato ------------------------------------------------
+  // Até onde o extrato importado enxerga, por conta. Sem isto a auditoria
+  // acusaria como "sem lastro" todo pagamento feito DEPOIS do último extrato
+  // importado — que é o estado normal de quem paga hoje e importa amanhã.
+  const extratoPorConta = new Map<ID, BankTransaction[]>();
+  const coberturaPorConta = new Map<ID, ISODate | undefined>();
+  const loteDeSaldoPorConta = new Map<ID, Awaited<
+    ReturnType<typeof ctx.repos.statementImports.latestWithBalanceBefore>
+  >>();
+  for (const c of contasAlvo) {
+    const txs = await ctx.repos.bankTransactions.listByAccount(ctx.companyId, c.id);
+    extratoPorConta.set(c.id, txs);
+    const lote = await ctx.repos.statementImports.latestWithBalanceBefore(ctx.companyId, c.id, end);
+    loteDeSaldoPorConta.set(c.id, lote);
+    // A data mais recente que o extrato alcança: o último lançamento importado
+    // ou a data-base do saldo declarado, o que for maior.
+    const maiorTx = txs.reduce<ISODate | undefined>(
+      (maior, t) => (!maior || t.date > maior ? t.date : maior),
+      undefined
+    );
+    const dataDoSaldo = lote?.ledgerBalanceDate;
+    const cobertura =
+      maiorTx && dataDoSaldo ? (maiorTx > dataDoSaldo ? maiorTx : dataDoSaldo) : (maiorTx ?? dataDoSaldo);
+    coberturaPorConta.set(c.id, cobertura);
+  }
+
+  /**
+   * A baixa ainda não podia aparecer no extrato? Então não é divergência.
+   *
+   * A tolerância de dias da empresa entra aqui: o banco pode levar alguns dias
+   * para publicar o lançamento, então a fronteira recua por esse tanto. Conta
+   * sem nenhuma importação não cobre data nenhuma.
+   */
+  function foraDaCobertura(data: ISODate, bankAccountId?: ID): boolean {
+    // Título não tem conta: só é divergência se TODAS as contas já cobrem a
+    // data — o dinheiro pode ter saído por qualquer uma delas.
+    const coberturas = bankAccountId
+      ? [coberturaPorConta.get(bankAccountId)]
+      : contasAlvo.map((c) => coberturaPorConta.get(c.id));
+    if (coberturas.length === 0 || coberturas.some((c) => c === undefined)) return true;
+    const menor = (coberturas as ISODate[]).reduce((a, b) => (a < b ? a : b));
+    return data > addDays(menor, -ctx.config.reconciliationDateToleranceDays);
+  }
+
+  const [transacoes, pagamentos, recibos, matches, fornecedores, clientes, titulosPagos] =
+    await Promise.all([
+      ctx.repos.bankTransactions.listByDateRange(ctx.companyId, start, end),
+      ctx.repos.payments.listAll(ctx.companyId),
+      ctx.repos.receipts.listAll(ctx.companyId),
+      ctx.repos.reconciliations.listByStatus(ctx.companyId, [
+        "confirmed",
+        "auto_confirmed",
+        "suggested",
+      ]),
+      ctx.repos.suppliers.listAll(ctx.companyId),
+      ctx.repos.customers.listAll(ctx.companyId),
+      ctx.repos.payables.listPaidBetween(ctx.companyId, start, end),
+    ]);
+
+  const nomeFornecedor = new Map(fornecedores.map((f) => [f.id, f.name]));
+  const nomeCliente = new Map(clientes.map((c) => [c.id, c.name]));
+  const sugeridasPorTx = new Set(
+    matches.filter((m) => m.status === "suggested").map((m) => m.bankTransactionId)
+  );
+  const aplicados = matches.filter((m) => APLICADOS.includes(m.status));
+  const alvoAplicado = new Set(
+    aplicados.filter((m) => m.targetId).map((m) => `${m.targetType}:${m.targetId}`)
+  );
+
+  const alerts: SkillAlert[] = [];
+  const pendingItems: PendingItem[] = [];
+  const assumptions: string[] = [];
+
+  // --- 1. Extrato sem explicação ------------------------------------------
+  const semExplicacao = transacoes
+    .filter((t) => !t.reconciled && idsAlvo.has(t.bankAccountId))
+    .map((t) => ({
+      id: t.id,
+      bankAccountId: t.bankAccountId,
+      date: t.date,
+      amountCents: t.amountCents,
+      description: t.description,
+      hasSuggestion: sugeridasPorTx.has(t.id),
+    }));
+  for (const t of semExplicacao) {
+    pendingItems.push({
+      code: "reconciliation_unexplained_transaction",
+      description: `Lançamento do extrato sem conciliação: ${t.description} (${formatBRL(t.amountCents)} em ${t.date}).`,
+      entityType: "bank_transaction",
+      entityId: t.id,
+      suggestedAction: t.hasSuggestion
+        ? "Há sugestão pendente: revise com confirm_match ou reject_match."
+        : "Concilie manualmente ou rode auto_match.",
+    });
+  }
+
+  // --- 2. Baixas sem lastro no extrato -------------------------------------
+  // O caso que motiva a auditoria: "alguém marcou como pago, mas o dinheiro
+  // não saiu". Nenhum destes é corrigido automaticamente.
+  const semLastro: ReconciliationAuditData["settlementsWithoutBank"] = [];
+  /**
+   * Baixas excusadas pela cobertura. Não são divergência, mas DESLOCAM o saldo
+   * calculado tanto quanto as outras — se ficassem de fora da decomposição, o
+   * bloco de saldo reacusaria exatamente o que a cobertura acabou de excusar.
+   */
+  const pendentesDeCobertura: Array<{
+    date: ISODate;
+    amountCents: number;
+    entrada: boolean;
+    /** Ausente no título pago: não tem conta. */
+    bankAccountId?: ID;
+  }> = [];
+  const titulos = new Map((await ctx.repos.payables.listAll(ctx.companyId)).map((p) => [p.id, p]));
+
+  for (const p of pagamentos) {
+    if (p.status !== "executed" || !p.executedAt) continue;
+    if (!idsAlvo.has(p.bankAccountId)) continue;
+    const data = todayInTz(new Date(p.executedAt), ctx.config.timezone);
+    if (data < start || data > end) continue;
+    if (alvoAplicado.has(`payment:${p.id}`)) continue;
+    if (foraDaCobertura(data, p.bankAccountId)) {
+      pendentesDeCobertura.push({
+        date: data,
+        amountCents: p.amountCents,
+        entrada: false,
+        bankAccountId: p.bankAccountId,
+      });
+      continue;
+    }
+    const titulo = titulos.get(p.payableId);
+    semLastro.push({
+      kind: "payment",
+      id: p.id,
+      bankAccountId: p.bankAccountId,
+      date: data,
+      amountCents: p.amountCents,
+      counterparty: titulo ? (nomeFornecedor.get(titulo.supplierId) ?? titulo.supplierId) : "—",
+      description: titulo?.description ?? `Pagamento ${p.id}`,
+      registeredBy: p.executedBy,
+    });
+  }
+
+  let recibosSemConta = 0;
+  let baixasManuaisForaDoFiltro = 0;
+  const recebiveis = new Map(
+    (await ctx.repos.receivables.listAll(ctx.companyId)).map((r) => [r.id, r])
+  );
+  for (const r of recibos) {
+    if (!receiptIsActive(r)) continue;
+    if (r.receivedDate < start || r.receivedDate > end) continue;
+    if (!r.bankAccountId) {
+      // Dinheiro/caixa não passa por conta bancária: não é divergência.
+      recibosSemConta++;
+      continue;
+    }
+    if (!idsAlvo.has(r.bankAccountId)) continue;
+    if (alvoAplicado.has(`receipt:${r.id}`)) continue;
+    if (foraDaCobertura(r.receivedDate, r.bankAccountId)) {
+      pendentesDeCobertura.push({
+        date: r.receivedDate,
+        amountCents: r.amountCents,
+        entrada: true,
+        bankAccountId: r.bankAccountId,
+      });
+      continue;
+    }
+    const tit = recebiveis.get(r.receivableId);
+    semLastro.push({
+      kind: "receipt",
+      id: r.id,
+      bankAccountId: r.bankAccountId,
+      date: r.receivedDate,
+      amountCents: r.amountCents,
+      counterparty: tit ? (nomeCliente.get(tit.customerId) ?? tit.customerId) : "—",
+      description: tit?.description ?? `Recebimento ${r.id}`,
+      registeredBy: r.registeredBy,
+    });
+  }
+  if (recibosSemConta > 0) {
+    assumptions.push(
+      `${recibosSemConta} recebimento(s) sem conta bancária (dinheiro/caixa) foram ignorados: não passam pelo extrato e não são divergência.`
+    );
+  }
+
+  // Baixa manual: título pago SEM Payment executado e SEM match confirmado.
+  const pagamentosPorTitulo = new Set(
+    pagamentos.filter((p) => p.status === "executed").map((p) => p.payableId)
+  );
+  for (const t of titulosPagos) {
+    if (pagamentosPorTitulo.has(t.id)) continue;
+    if (alvoAplicado.has(`payable:${t.id}`)) continue;
+    // O título não tem bankAccountId: não há como atribuí-lo a uma conta, então
+    // ele fica fora quando a auditoria é filtrada. Contado para a suposição.
+    if (input.bankAccountId) {
+      baixasManuaisForaDoFiltro++;
+      continue;
+    }
+    const dataDaBaixa = t.updatedAt.slice(0, 10) as ISODate;
+    if (foraDaCobertura(dataDaBaixa)) {
+      // paidCents não participa do saldo calculado: entra na contagem, não na
+      // decomposição (mesmo motivo do payable_paid_without_payment).
+      pendentesDeCobertura.push({ date: dataDaBaixa, amountCents: 0, entrada: false });
+      continue;
+    }
+    semLastro.push({
+      kind: "payable_paid_without_payment",
+      id: t.id,
+      date: dataDaBaixa,
+      amountCents: t.paidCents,
+      counterparty: nomeFornecedor.get(t.supplierId) ?? t.supplierId,
+      description: t.description,
+    });
+  }
+
+  if (pendentesDeCobertura.length > 0) {
+    const coberturas = contasAlvo
+      .map((c) => coberturaPorConta.get(c.id))
+      .filter((d): d is ISODate => d !== undefined);
+    const ate =
+      coberturas.length === contasAlvo.length && coberturas.length > 0
+        ? coberturas.reduce((a, b) => (a < b ? a : b))
+        : "nenhuma data (conta sem extrato importado)";
+    assumptions.push(
+      `${pendentesDeCobertura.length} baixa(s) após ${ate} aguardam importação do extrato: ainda não podiam aparecer nele, e não são divergência.`
+    );
+  }
+  if (baixasManuaisForaDoFiltro > 0) {
+    assumptions.push(
+      `${baixasManuaisForaDoFiltro} baixa(s) manual(is) de título ficaram fora: o título não tem conta bancária, e a auditoria foi filtrada por conta. Rode sem filtro para vê-las.`
+    );
+  }
+
+  for (const d of semLastro) {
+    const entityType =
+      d.kind === "payment" ? "payment" : d.kind === "receipt" ? "receipt" : "payable";
+    alerts.push({
+      severity: "warning",
+      code: "reconciliation_settlement_without_bank",
+      message: `Baixa sem lastro no extrato: ${d.counterparty} — ${formatBRL(d.amountCents)} em ${d.date} (${d.description}).`,
+      entityType,
+      entityId: d.id,
+    });
+    pendingItems.push({
+      code: "reconciliation_settlement_without_bank",
+      description: `${d.counterparty}: ${formatBRL(d.amountCents)} baixado em ${d.date} sem transação bancária correspondente.`,
+      entityType,
+      entityId: d.id,
+      suggestedAction: "Localize a transação no extrato e concilie, ou estorne a baixa.",
+    });
+  }
+
+  // --- 3. Conciliações com valor divergente --------------------------------
+  const txPorId = new Map(transacoes.map((t) => [t.id, t]));
+  const pagamentoPorId = new Map(pagamentos.map((p) => [p.id, p]));
+  const reciboPorId = new Map(recibos.map((r) => [r.id, r]));
+  const mismatches: ReconciliationAuditData["amountMismatches"] = [];
+
+  for (const m of aplicados) {
+    // Tarifa e transferência não têm título do outro lado: nada a comparar.
+    if (m.targetType === "bank_fee" || m.targetType === "transfer") continue;
+    if (!m.targetId) continue;
+    const tx = txPorId.get(m.bankTransactionId);
+    if (!tx || !idsAlvo.has(tx.bankAccountId)) continue;
+
+    const aplicado = m.amountCents ?? Math.abs(tx.amountCents);
+    let esperado: number | undefined;
+    if (m.targetType === "payment") esperado = pagamentoPorId.get(m.targetId)?.amountCents;
+    else if (m.targetType === "receipt") esperado = reciboPorId.get(m.targetId)?.amountCents;
+    else if (m.targetType === "payable") {
+      const t = titulos.get(m.targetId);
+      esperado = t ? payableRemainingCents(t) : undefined;
+    } else if (m.targetType === "receivable") {
+      const r = recebiveis.get(m.targetId);
+      esperado = r ? receivableRemainingCents(r) : undefined;
+    }
+    if (esperado === undefined) continue;
+
+    const diff = aplicado - esperado;
+    if (Math.abs(diff) <= tolerancia) continue;
+    mismatches.push({
+      matchId: m.id,
+      bankTransactionId: m.bankTransactionId,
+      targetType: m.targetType,
+      targetId: m.targetId,
+      bankAmountCents: tx.amountCents,
+      appliedCents: aplicado,
+      expectedCents: esperado,
+      diffCents: diff,
+    });
+    pendingItems.push({
+      code: "reconciliation_amount_mismatch",
+      description: `Conciliação com valor divergente: aplicado ${formatBRL(aplicado)} contra ${formatBRL(esperado)} esperado (diferença ${formatBRL(diff)}).`,
+      entityType: "reconciliation_match",
+      entityId: m.id,
+      suggestedAction: "Confira o valor do título e, se necessário, rejeite a conciliação e refaça.",
+    });
+  }
+
+  // --- 4. Saldo do app × saldo do banco ------------------------------------
+  // O saldo calculado exclui transações não conciliadas por construção, e o
+  // LEDGERBAL do banco inclui tudo. Comparar cru geraria uma diferença quase
+  // toda explicável — e alerta crítico permanente. Por isso a diferença é
+  // DECOMPOSTA e o alerta olha só o resíduo (decisão D1 da spec).
+  const balanceChecks: ReconciliationAuditData["balanceChecks"] = [];
+  const semReferencia: string[] = [];
+
+  for (const conta of contasAlvo) {
+    const lote = loteDeSaldoPorConta.get(conta.id);
+    if (lote?.ledgerBalanceCents === undefined || lote.ledgerBalanceDate === undefined) {
+      semReferencia.push(conta.name);
+      continue;
+    }
+    const asOf = lote.ledgerBalanceDate;
+    const ledger = lote.ledgerBalanceCents;
+
+    // Saldo do app na data-base: do começo dos tempos até asOf, para o saldo
+    // inicial da conta entrar por inteiro (ver bank-balance.ts).
+    const extratoDaConta = extratoPorConta.get(conta.id) ?? [];
+    const janela = { from: "0001-01-01" as ISODate, to: asOf };
+    const calculado = computeBankPeriodBalance({
+      account: conta,
+      payments: pagamentos,
+      receipts: recibos,
+      transactions: extratoDaConta,
+      matches: aplicados,
+      period: janela,
+      timeZone: ctx.config.timezone,
+    }).balanceCents;
+
+    const diff = calculado - ledger;
+
+    // Decomposição, com a álgebra dos sinais explícita:
+    //   computado = inicial − pagamentos + recebimentos + (conciliadas não casadas)
+    //   ledger    = inicial + Σ(todas as transações)
+    //   diff      = (−pag_sem_lastro + receb_sem_lastro) − Σ(não conciliadas)
+    //
+    // O extrato NÃO conciliado fica fora do saldo calculado (bank-balance
+    // ignora reconciled=false), então entra aqui com o sinal invertido. A baixa
+    // sem lastro entra no saldo sem ter saído do banco: pagamento subtrai,
+    // recebimento soma.
+    //
+    // `payable_paid_without_payment` NÃO entra: o paidCents do título não
+    // participa de bank-balance (só Payment participa), logo não desloca o
+    // saldo calculado e não explica diferença nenhuma.
+    const naoConciliadasAteAsOf = extratoDaConta
+      .filter((t) => !t.reconciled && t.date <= asOf)
+      .reduce((acc, t) => acc + t.amountCents, 0);
+    // Filtro por CONTA além da data: a decomposição é desta conta, e uma baixa
+    // de outra conta não desloca este saldo. Sem isso, numa empresa com duas
+    // contas o resíduo sairia errado nas duas.
+    const semLastroAteAsOf = semLastro
+      .filter(
+        (d) =>
+          d.date <= asOf &&
+          d.kind !== "payable_paid_without_payment" &&
+          d.bankAccountId === conta.id
+      )
+      .reduce((acc, d) => acc + (d.kind === "payment" ? -d.amountCents : d.amountCents), 0);
+    // As excusadas pela cobertura contam igual: elas deslocam o saldo do app
+    // sem ter saído do banco, exatamente como as sem lastro.
+    const pendentesAteAsOf = pendentesDeCobertura
+      .filter((d) => d.date <= asOf && d.bankAccountId === conta.id)
+      .reduce((acc, d) => acc + (d.entrada ? d.amountCents : -d.amountCents), 0);
+    const explicado = semLastroAteAsOf + pendentesAteAsOf - naoConciliadasAteAsOf;
+    const residuo = diff - explicado;
+
+    balanceChecks.push({
+      bankAccountId: conta.id,
+      bankName: conta.name,
+      asOf,
+      ledgerBalanceCents: ledger,
+      computedBalanceCents: calculado,
+      diffCents: diff,
+      explainedCents: explicado,
+      residualCents: residuo,
+      importId: lote.id,
+    });
+
+    // Resíduo dentro da tolerância da empresa é ruído de arredondamento, não
+    // divergência: não alerta. Acima de 100x a tolerância, é crítico.
+    if (Math.abs(residuo) > tolerancia) {
+      alerts.push({
+        severity: Math.abs(residuo) > tolerancia * 100 ? "critical" : "warning",
+        code: "reconciliation_balance_mismatch",
+        message: `Saldo divergente em ${conta.name} (base ${asOf}): banco ${formatBRL(ledger)}, app ${formatBRL(calculado)}, diferença ${formatBRL(diff)} — ${formatBRL(residuo)} sem explicação.`,
+        entityType: "bank_account",
+        entityId: conta.id,
+      });
+      pendingItems.push({
+        code: "reconciliation_balance_mismatch",
+        description: `${conta.name}: ${formatBRL(residuo)} de diferença sem explicação entre o saldo do banco e o do app em ${asOf}.`,
+        entityType: "bank_account",
+        entityId: conta.id,
+        suggestedAction:
+          "Confira se o extrato do período foi importado por inteiro e se as baixas do app têm lastro.",
+      });
+    }
+  }
+  if (semReferencia.length > 0) {
+    assumptions.push(
+      `Sem saldo de referência para: ${semReferencia.join(", ")}. Importe um OFX com <LEDGERBAL> para conferir o saldo dessas contas.`
+    );
+  }
+
+  // --- Alertas, evento e resultado -----------------------------------------
+  // persistAlert deduplica por code + entityId entre os alertas ABERTOS:
+  // reexecutar a auditoria não infla a central de pendências.
+  for (const a of alerts) {
+    await persistAlert(ctx, a, SKILL);
+  }
+
+  const totals = {
+    unexplainedCount: semExplicacao.length,
+    unexplainedCents: semExplicacao.reduce((acc, t) => acc + Math.abs(t.amountCents), 0),
+    settlementsWithoutBankCount: semLastro.length,
+    settlementsWithoutBankCents: semLastro.reduce((acc, d) => acc + d.amountCents, 0),
+    amountMismatchCount: mismatches.length,
+    /** Baixas recentes demais para o extrato importado: aguardam, não divergem. */
+    pendingCoverageCount: pendentesDeCobertura.length,
+    balanceMismatchCount: balanceChecks.filter(
+      (b) => Math.abs(b.residualCents) > ctx.config.reconciliationAmountToleranceCents
+    ).length,
+  };
+
+  await ctx.events.publish({
+    type: "reconciliation.audited",
+    companyId: ctx.companyId,
+    payload: { period, bankAccountId: input.bankAccountId, totals },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL,
+    ctx,
+    {
+      period,
+      bankAccountId: input.bankAccountId,
+      coverage: contasAlvo.map((c) => ({
+        bankAccountId: c.id,
+        bankName: c.name,
+        coverageDate: coberturaPorConta.get(c.id),
+      })),
+      unexplainedBankTransactions: semExplicacao,
+      settlementsWithoutBank: semLastro,
+      amountMismatches: mismatches,
+      balanceChecks,
+      totals,
+      formula:
+        "extrato sem explicação = transações do período com reconciled=false; " +
+        "baixas sem lastro = Payment executado, Receipt ativo com conta bancária, ou título pago sem Payment, nenhum deles com match confirmado (recebimento em dinheiro fica fora), e SOMENTE dentro da cobertura do extrato: cobertura = maior entre a data do último lançamento importado e a data-base do saldo, recuada pela tolerância de dias da empresa; baixa posterior a isso conta em pendingCoverageCount, não é divergência; " +
+        "valores divergentes = |aplicado − esperado| > tolerância da empresa, onde aplicado = match.amountCents ou |valor da transação|, e esperado = valor do pagamento/recebimento ou o SALDO ATUAL do título (não o histórico do momento da conciliação); " +
+        "saldo = saldo calculado por core/bank-balance (o MESMO da tela de Conciliação) menos o <LEDGERBAL> do último extrato importado até a data, DECOMPOSTO com sinal: explicado = (−pagamentos + recebimentos) sem lastro E aguardando cobertura − Σ(transações não conciliadas até a data); resíduo = diferença − explicado, e alerta só quando |resíduo| > tolerância (crítico acima de 100x). Baixa manual de título não entra no explicado: o paidCents não participa do saldo calculado",
+    },
+    { alerts, assumptions, pendingItems, confidence: 1.0, dataSources: DATA_SOURCES }
+  );
+}
+
 async function reconciliationStatus(
   ctx: SkillContext
 ): Promise<SkillResult<ReconciliationStatusData>> {
@@ -1794,6 +2423,7 @@ export const conciliacaoSkill: SkillDefinition<ConciliacaoInput, ConciliacaoData
     "reconciliation.suggested",
     "reconciliation.confirmed",
     "reconciliation.rejected",
+    "reconciliation.audited",
   ],
   dataSources: DATA_SOURCES,
   async execute(ctx, input) {
@@ -1808,6 +2438,8 @@ export const conciliacaoSkill: SkillDefinition<ConciliacaoInput, ConciliacaoData
         return confirmMatch(ctx, input);
       case "reject_match":
         return rejectMatch(ctx, input);
+      case "reconciliation_audit":
+        return reconciliationAudit(ctx, input);
       case "reconciliation_status":
         return reconciliationStatus(ctx);
     }

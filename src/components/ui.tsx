@@ -26,13 +26,16 @@ export function Card({
   title,
   children,
   className = "",
+  id,
 }: {
   title?: string;
   children: ReactNode;
   className?: string;
+  /** Âncora para links internos da página (ex.: "Localizar no extrato"). */
+  id?: string;
 }) {
   return (
-    <section className={`card p-4 ${className}`}>
+    <section id={id} className={`card p-4 ${className}`}>
       {title ? (
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--ink-muted)]">
           {title}

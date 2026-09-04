@@ -1014,21 +1014,27 @@ paths:
       tags: [relatórios]
       summary: Gera relatório gerencial (json, csv, xlsx ou pdf)
       description: >
-        Executa a skill `relatorios_gerenciais` diretamente. `monthly_close`
-        exige `period`. `format=json` devolve o envelope SkillResult; `csv`,
-        `xlsx` (Excel) e `pdf` usam a ação `export_data` da skill (linhas
-        metrica/valor/unidade/fonte) e respondem como download.
+        Cada relatório é produzido pela skill responsável por ele:
+        `daily_summary`, `monthly_close` e `executive_overview` pela
+        `relatorios_gerenciais`; `reconciliation_audit` pela
+        `conciliacao_bancaria`. `monthly_close` e `reconciliation_audit` exigem
+        `period`. `format=json` devolve o envelope SkillResult.
+
+        Para download: os três primeiros usam a ação `export_data` da skill de
+        relatórios (linhas metrica/valor/unidade/fonte). O
+        `reconciliation_audit` tem formato próprio — uma linha por DIVERGÊNCIA,
+        com as colunas tipo/data/descrição/contraparte/valor/observação/referência.
       parameters:
         - name: report
           in: path
           required: true
-          schema: { type: string, enum: [daily_summary, monthly_close, executive_overview] }
+          schema: { type: string, enum: [daily_summary, monthly_close, executive_overview, reconciliation_audit] }
         - name: format
           in: query
           schema: { type: string, enum: [json, csv, xlsx, pdf], default: json }
         - name: period
           in: query
-          description: Obrigatório para monthly_close
+          description: Obrigatório para monthly_close e reconciliation_audit
           schema: { type: string, pattern: "^\\d{4}-(0[1-9]|1[0-2])$", example: "2026-07" }
       responses:
         "200":
