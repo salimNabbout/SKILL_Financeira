@@ -50,6 +50,7 @@ model Company {
   alerts             Alert[]
   skillExecutions    SkillExecution[]
   auditRecords       AuditRecord[]
+  activityEvents     ActivityEvent[]
   invoices           Invoice[]
   collectionMsgs     CollectionMessage[]
   accountingEntries  AccountingEntry[]
@@ -589,6 +590,34 @@ model AuditHead {
   companyId String @id
   seq       Int
   hash      String
+}
+
+// Telemetria de atividade do usuário: cliques, navegação e requisições HTTP.
+// Alto volume e SEM cadeia de hash (difere de AuditRecord): pode ser podada
+// por política de retenção sem afetar a trilha imutável de negócio.
+model ActivityEvent {
+  id          String   @id
+  companyId   String
+  userId      String?
+  origin      String // frontend | backend
+  eventType   String // clique | submissao | navegacao | requisicao
+  screen      String? // rota da tela no app (frontend)
+  method      String? // método HTTP (backend)
+  path        String? // rota da API (backend)
+  status      Int? // status HTTP da resposta (backend)
+  durationMs  Int?
+  ip          String?
+  userAgent   String?
+  label       String? // rótulo visível do elemento interativo (frontend)
+  elementId   String? // id/name/data-action do elemento (frontend)
+  detailsJson Json? // complemento já mascarado — nunca senhas/tokens/cartões
+  timestamp   DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, timestamp]) // filtro por período na tela de Auditoria
+  @@index([companyId, userId]) // filtro por usuário
+  @@index([companyId, eventType]) // filtro por tipo de evento
 }
 
 // ---------------------------------------------------------------------------

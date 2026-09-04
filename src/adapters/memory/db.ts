@@ -5,6 +5,7 @@
 
 import type {
   AccountingEntry,
+  ActivityEvent,
   Alert,
   Approval,
   AuditRecord,
@@ -62,6 +63,7 @@ export class MemoryDb {
   alerts: Alert[] = [];
   skillExecutions: SkillExecution[] = [];
   auditRecords: AuditRecord[] = [];
+  activityEvents: ActivityEvent[] = [];
   invoices: Invoice[] = [];
   collectionMessages: CollectionMessage[] = [];
   accountingEntries: AccountingEntry[] = [];

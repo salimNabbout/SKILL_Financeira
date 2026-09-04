@@ -12,6 +12,7 @@
 
 import type {
   AccountingEntry as DbAccountingEntry,
+  ActivityEvent as DbActivityEvent,
   Alert as DbAlert,
   Approval as DbApproval,
   AuditRecord as DbAuditRecord,
@@ -48,6 +49,7 @@ import { Prisma } from "@prisma/client";
 import type { ISODate } from "@/core/dates";
 import type {
   AccountingEntry,
+  ActivityEvent,
   Alert,
   Approval,
   ApprovalStatus,
@@ -87,6 +89,7 @@ import type {
 } from "@/core/entities";
 import type {
   AccountingEntryRepo,
+  ActivityEventRepo,
   AlertRepo,
   ApprovalRepo,
   AuditHead,
@@ -867,6 +870,43 @@ const auditToDb = (e: AuditRecord): Prisma.AuditRecordUncheckedCreateInput => ({
   timestamp: toInstant(e.timestamp),
   prevHash: e.prevHash,
   hash: e.hash,
+});
+
+const activityToDomain = (r: DbActivityEvent): ActivityEvent => ({
+  id: r.id,
+  companyId: r.companyId,
+  userId: strOpt(r.userId),
+  origin: r.origin as ActivityEvent["origin"],
+  eventType: r.eventType,
+  screen: strOpt(r.screen),
+  method: strOpt(r.method),
+  path: strOpt(r.path),
+  status: r.status ?? undefined,
+  durationMs: r.durationMs ?? undefined,
+  ip: strOpt(r.ip),
+  userAgent: strOpt(r.userAgent),
+  label: strOpt(r.label),
+  elementId: strOpt(r.elementId),
+  details: fromJsonOpt(r.detailsJson),
+  timestamp: fromInstant(r.timestamp),
+});
+const activityToDb = (e: ActivityEvent): Prisma.ActivityEventUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  userId: strNull(e.userId),
+  origin: e.origin,
+  eventType: e.eventType,
+  screen: strNull(e.screen),
+  method: strNull(e.method),
+  path: strNull(e.path),
+  status: e.status ?? null,
+  durationMs: e.durationMs ?? null,
+  ip: strNull(e.ip),
+  userAgent: strNull(e.userAgent),
+  label: strNull(e.label),
+  elementId: strNull(e.elementId),
+  detailsJson: toJsonOpt(e.details),
+  timestamp: toInstant(e.timestamp),
 });
 
 const invoiceToDomain = (r: DbInvoice): Invoice => ({
@@ -1917,6 +1957,58 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     },
   };
 
+  // Telemetria de atividade — sem cadeia de hash; retenção é permitida.
+  const activityEvents: ActivityEventRepo = {
+    async append(event: ActivityEvent) {
+      await prisma.activityEvent.create({ data: activityToDb(event) });
+    },
+    async listPage(companyId, query) {
+      // Mesma semântica de período do repositório de auditoria: from/to
+      // "YYYY-MM-DD" cobrem o dia inteiro.
+      const q = query.q?.trim();
+      const where: Prisma.ActivityEventWhereInput = {
+        companyId,
+        ...(query.userId ? { userId: query.userId } : {}),
+        ...(query.eventType ? { eventType: query.eventType } : {}),
+        ...(query.origin ? { origin: query.origin } : {}),
+        ...(query.screen ? { screen: query.screen } : {}),
+        ...(query.from || query.to
+          ? {
+              timestamp: {
+                ...(query.from ? { gte: new Date(`${query.from}T00:00:00.000Z`) } : {}),
+                ...(query.to ? { lte: new Date(`${query.to}T23:59:59.999Z`) } : {}),
+              },
+            }
+          : {}),
+        ...(q
+          ? {
+              OR: [
+                { label: { contains: q, mode: "insensitive" } },
+                { screen: { contains: q, mode: "insensitive" } },
+                { path: { contains: q, mode: "insensitive" } },
+                { elementId: { contains: q, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+      };
+      const { skip, take } = pageArgs(query);
+      const [rows, total] = await Promise.all([
+        prisma.activityEvent.findMany({ where, orderBy: { timestamp: "desc" }, skip, take }),
+        prisma.activityEvent.count({ where }),
+      ]);
+      return { items: rows.map(activityToDomain), total, offset: skip, limit: take };
+    },
+    async listEventTypes(companyId: ID) {
+      const rows = await prisma.activityEvent.findMany({
+        where: { companyId },
+        distinct: ["eventType"],
+        select: { eventType: true },
+        orderBy: { eventType: "asc" },
+      });
+      return rows.map((r) => r.eventType);
+    },
+  };
+
   const invoices: InvoiceRepo = {
     async getById(companyId: ID, id: ID) {
       const row = await prisma.invoice.findFirst({ where: { id, companyId } });
@@ -2115,6 +2207,7 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     events,
     skillExecutions,
     audit,
+    activityEvents,
     invoices,
     collectionMessages,
     accountingEntries,
