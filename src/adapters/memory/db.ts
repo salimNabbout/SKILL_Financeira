@@ -11,6 +11,7 @@ import type {
   AuditRecord,
   BankAccount,
   BankTransaction,
+  StatementImport,
   Budget,
   BudgetLine,
   Category,
@@ -47,6 +48,7 @@ export class MemoryDb {
   recurringTemplates: RecurringTemplate[] = [];
   bankAccounts: BankAccount[] = [];
   bankTransactions: BankTransaction[] = [];
+  statementImports: StatementImport[] = [];
   payables: Payable[] = [];
   receivables: Receivable[] = [];
   payments: Payment[] = [];

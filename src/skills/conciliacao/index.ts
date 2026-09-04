@@ -604,6 +604,23 @@ async function importStatement(
 
   // Auditoria em nível de lote (uma entrada por importação, com os ids criados,
   // para não inflar a trilha com centenas de registros por arquivo).
+  // Lote de importação. Guarda o saldo que o BANCO declarou (só o OFX traz);
+  // é a referência externa contra a qual a auditoria confere o saldo do app.
+  await ctx.repos.statementImports.create({
+    id: importBatchId,
+    companyId: ctx.companyId,
+    bankAccountId: input.bankAccountId,
+    format: input.format,
+    source: input.format,
+    imported: created.length,
+    duplicates,
+    warnings: parsed.warnings,
+    ledgerBalanceCents: parsed.ledgerBalance?.amountCents,
+    ledgerBalanceDate: parsed.ledgerBalance?.date,
+    createdBy: ctx.actor.id,
+    createdAt: nowIso,
+  });
+
   await ctx.audit.record(ctx.companyId, {
     actor: ctx.actor,
     action: "statement.imported",
@@ -745,6 +762,21 @@ async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillR
     await ctx.repos.bankTransactions.create(tx);
     created.push(tx);
   }
+
+  // Mesmo registro de lote da importação por arquivo. Sem saldo: o provedor
+  // (mock, e os reais da v1.2) não declara saldo contábil.
+  await ctx.repos.statementImports.create({
+    id: importBatchId,
+    companyId: ctx.companyId,
+    bankAccountId: account.id,
+    format: provider.provider,
+    source: "sync",
+    imported: created.length,
+    duplicates,
+    warnings: [],
+    createdBy: ctx.actor.id,
+    createdAt: nowIso,
+  });
 
   await ctx.audit.record(ctx.companyId, {
     actor: ctx.actor,

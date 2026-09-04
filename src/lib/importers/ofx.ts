@@ -49,11 +49,44 @@ function parseOfxDate(raw: string | undefined): ISODate | null {
   return isISODate(iso) ? iso : null;
 }
 
+/**
+ * Corpo do agregado <LEDGERBAL>. Recortado ANTES de ler os campos porque
+ * <AVAILBAL> tem <BALAMT> e <DTASOF> com os mesmos nomes — ler no arquivo
+ * inteiro pegaria o saldo disponível no lugar do contábil. Tolera fechamento
+ * ausente: corta no </LEDGERBAL> ou no <AVAILBAL>, o que vier primeiro.
+ */
+function extractLedgerBalBlock(content: string): string | undefined {
+  const i = content.search(/<LEDGERBAL>/i);
+  if (i < 0) return undefined;
+  const rest = content.slice(i + "<LEDGERBAL>".length);
+  const fim = rest.search(/<\/LEDGERBAL>|<AVAILBAL>/i);
+  return fim < 0 ? rest : rest.slice(0, fim);
+}
+
 export function parseOfx(content: string): ParsedStatement {
   const warnings: string[] = [];
   const transactions: StatementTransaction[] = [];
 
   const accountId = tagValue(content, "ACCTID");
+
+  // Saldo declarado pelo banco. Ausente é o caso normal (CSV/CNAB nem têm, e
+  // nem todo OFX traz) — não gera warning. Presente mas ilegível gera, porque
+  // aí houve perda de informação.
+  let ledgerBalance: ParsedStatement["ledgerBalance"];
+  const blocoSaldo = extractLedgerBalBlock(content);
+  if (blocoSaldo !== undefined) {
+    const bruto = tagValue(blocoSaldo, "BALAMT");
+    const amountCents = bruto ? parseDecimalToCents(bruto) : null;
+    const date = parseOfxDate(tagValue(blocoSaldo, "DTASOF"));
+    if (amountCents !== null && date) {
+      ledgerBalance = { amountCents, date };
+    } else {
+      warnings.push(
+        `Saldo do banco ignorado: <LEDGERBAL> com <BALAMT> ("${bruto ?? ""}") ou <DTASOF> inválido.`
+      );
+    }
+  }
+
   const blocks = extractTransactionBlocks(content);
   if (blocks.length === 0) {
     warnings.push("Nenhum bloco <STMTTRN> encontrado no arquivo OFX.");
@@ -94,5 +127,5 @@ export function parseOfx(content: string): ParsedStatement {
     });
   });
 
-  return { transactions, accountId, warnings };
+  return { transactions, accountId, warnings, ledgerBalance };
 }

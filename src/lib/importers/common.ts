@@ -17,6 +17,13 @@ export interface ParsedStatement {
   transactions: StatementTransaction[];
   accountId?: string;
   warnings: string[];
+  /**
+   * Saldo que o BANCO declara no arquivo, na data-base dele. Só o OFX traz
+   * (`<LEDGERBAL>`); CSV e CNAB240 não têm o campo. É a única referência
+   * externa para conferir o saldo calculado pelo app — por isso é guardado no
+   * lote de importação em vez de descartado.
+   */
+  ledgerBalance?: { amountCents: number; date: ISODate };
 }
 
 /** Remove acentos, baixa caixa e apara — para comparação de cabeçalhos/descrições. */

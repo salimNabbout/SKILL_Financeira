@@ -17,6 +17,7 @@ import type {
   AuditRecord,
   BankAccount,
   BankTransaction,
+  StatementImport,
   Budget,
   BudgetLine,
   Category,
@@ -137,6 +138,21 @@ export interface BankTransactionRepo extends BaseRepo<BankTransaction> {
     companyId: ID,
     query: PageQuery & { bankAccountId?: ID; reconciled?: boolean }
   ): Promise<Page<BankTransaction>>;
+}
+
+export interface StatementImportRepo extends BaseRepo<StatementImport> {
+  /** Ordem: createdAt desc. */
+  listByAccount(companyId: ID, bankAccountId: ID): Promise<StatementImport[]>;
+  /**
+   * Lote mais recente COM saldo do banco cuja data-base seja <= `date`. É a
+   * referência contra a qual o saldo calculado é conferido; lotes sem saldo
+   * (CSV, CNAB240, sync) são ignorados.
+   */
+  latestWithBalanceBefore(
+    companyId: ID,
+    bankAccountId: ID,
+    date: ISODate
+  ): Promise<StatementImport | null>;
 }
 
 // --- Títulos e liquidações --------------------------------------------------
@@ -373,6 +389,7 @@ export interface Repositories {
   recurringTemplates: RecurringTemplateRepo;
   bankAccounts: BankAccountRepo;
   bankTransactions: BankTransactionRepo;
+  statementImports: StatementImportRepo;
   payables: PayableRepo;
   receivables: ReceivableRepo;
   payments: PaymentRepo;

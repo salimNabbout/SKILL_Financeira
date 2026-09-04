@@ -429,6 +429,37 @@ export interface Approval {
   createdAt: string;
 }
 
+/** Origem de um lote de importação de extrato. */
+export type StatementImportSource = "ofx" | "csv" | "cnab240" | "sync";
+
+/**
+ * Um lote de importação de extrato. Existe para responder duas perguntas que
+ * as transações sozinhas não respondem: QUANDO cada arquivo entrou, e qual era
+ * o saldo que o BANCO declarava naquele momento (`<LEDGERBAL>` do OFX).
+ *
+ * O saldo do banco é a única referência externa para conferir o saldo calculado
+ * pelo app — antes disto, o parser lia e descartava.
+ */
+export interface StatementImport {
+  /** É o mesmo valor gravado em `BankTransaction.importBatchId`. */
+  id: ID;
+  companyId: ID;
+  bankAccountId: ID;
+  format: string;
+  source: StatementImportSource;
+  /** Transações efetivamente criadas (já descontadas as duplicadas). */
+  imported: number;
+  /** Transações ignoradas por já existirem (mesmo externalId). */
+  duplicates: number;
+  warnings: string[];
+  /** Ausente quando o arquivo não declara saldo (CSV, CNAB240, OFX sem LEDGERBAL). */
+  ledgerBalanceCents?: number;
+  ledgerBalanceDate?: ISODate;
+  /** userId ou "system" (sincronização automática). */
+  createdBy: ID;
+  createdAt: string;
+}
+
 export type ReconciliationTargetType =
   | "payment"
   | "receipt"

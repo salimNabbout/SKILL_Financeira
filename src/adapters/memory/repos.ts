@@ -8,6 +8,7 @@ import type {
   ApprovalStatus,
   AuditRecord,
   BankTransaction,
+  StatementImport,
   BudgetLine,
   CollectionMessage,
   CollectionMessageStatus,
@@ -41,6 +42,7 @@ import type {
   AuditHead,
   AuditRepo,
   BankTransactionRepo,
+  StatementImportRepo,
   BaseRepo,
   BudgetLineRepo,
   CollectionMessageRepo,
@@ -203,6 +205,30 @@ class MemDocumentRepo extends MemBase<FinancialDocument> implements FinancialDoc
       (d) => d.companyId === companyId && d.contentHash === contentHash
     );
     return found ? clone(found) : null;
+  }
+}
+
+class MemStatementImportRepo extends MemBase<StatementImport> implements StatementImportRepo {
+  async listByAccount(companyId: ID, bankAccountId: ID) {
+    return clone(
+      this.items
+        .filter((i) => i.companyId === companyId && i.bankAccountId === bankAccountId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    );
+  }
+  async latestWithBalanceBefore(companyId: ID, bankAccountId: ID, date: ISODate) {
+    // Lotes sem saldo declarado (CSV, CNAB240, sync) não servem de referência.
+    const candidatos = this.items
+      .filter(
+        (i) =>
+          i.companyId === companyId &&
+          i.bankAccountId === bankAccountId &&
+          i.ledgerBalanceCents !== undefined &&
+          i.ledgerBalanceDate !== undefined &&
+          i.ledgerBalanceDate <= date
+      )
+      .sort((a, b) => (a.ledgerBalanceDate! < b.ledgerBalanceDate! ? 1 : -1));
+    return candidatos[0] ? clone(candidatos[0]) : null;
   }
 }
 
@@ -701,6 +727,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     recurringTemplates: new MemRecurringTemplateRepo(db.recurringTemplates),
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),
+    statementImports: new MemStatementImportRepo(db.statementImports),
     payables: new MemPayableRepo(db.payables),
     receivables: new MemReceivableRepo(db.receivables),
     payments: new MemPaymentRepo(db.payments),
