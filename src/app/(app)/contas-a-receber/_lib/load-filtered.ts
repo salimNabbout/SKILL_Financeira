@@ -9,6 +9,7 @@
 
 import type { Receivable } from "@/core/entities";
 import type { Repositories } from "@/core/repositories";
+import { receiptIsActive } from "@/core/money";
 import type { ReceivableFilters } from "./filters";
 import type { ExportLookups } from "./export-rows";
 
@@ -53,7 +54,9 @@ export async function loadFilteredReceivables(
 
   await Promise.all(
     receivables.map(async (r) => {
-      const recibos = await repos.receipts.listByReceivable(companyId, r.id);
+      const recibos = (
+        await repos.receipts.listByReceivable(companyId, r.id)
+      ).filter(receiptIsActive);
       const comConta = recibos.find((x) => x.bankAccountId);
       if (comConta?.bankAccountId) bankAccountIdByReceivable.set(r.id, comConta.bankAccountId);
 

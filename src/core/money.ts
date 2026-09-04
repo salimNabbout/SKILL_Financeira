@@ -135,3 +135,12 @@ export function computeLateFee(
     formula: `total = principal + principal×${policy.finePercent}% + principal×(${policy.monthlyInterestPercent}%/30)×${days} dias`,
   };
 }
+
+/**
+ * Recebimento que ainda vale — os estornados (`status: "canceled"`) saem de
+ * TODA conta: saldo do título, orçamento, DSO, contabilidade e relatórios.
+ * Linhas anteriores ao estorno existir não têm status e valem.
+ */
+export function receiptIsActive(receipt: { status?: string }): boolean {
+  return receipt.status !== "canceled";
+}

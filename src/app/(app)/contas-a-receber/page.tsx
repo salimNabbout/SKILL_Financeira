@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
+import { receiptIsActive } from "@/core/money";
 import { hasPermission } from "@/core/auth";
 import { formatBR, formatBRL } from "@/lib/format";
 import {
@@ -24,12 +25,16 @@ import {
   type ReceivableSituation,
 } from "@/lib/receivable-situation";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
+import { EditReceivableForm } from "./_lib/edit-receivable-form";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import {
+  adjustReceiptDateAction,
   cancelReceivableAction,
   createReceivableAction,
   issueChargeAction,
   registerReceiptAction,
+  reverseReceiptAction,
+  updateReceivableAction,
 } from "./actions";
 import { MoneyInput } from "@/components/money-input";
 import { filtersToQuery } from "./_lib/filters";
@@ -61,8 +66,9 @@ const SITUACAO_TONE: Record<ReceivableSituation, "neutral" | "ok" | "warn" | "cr
   Atrasado: "crit",
   Hoje: "warn",
   "A Vencer": "neutral",
-  Recebido: "ok",
-  "Recebido em Atraso": "ok", // ok, mas o texto do badge sinaliza o atraso
+  Recebido: "ok", // recebido ANTES do vencimento — verde
+  "Recebido no Vencimento": "warn", // recebido no dia do vencimento — amarelo
+  "Recebido em Atraso": "crit", // recebido depois do vencimento — vermelho
   Cancelado: "neutral", // apagado
 };
 
@@ -95,6 +101,7 @@ export default async function ContasAReceberPage({
     nt_categoria?: string;
     nt_centrocusto?: string;
     nt_metodo?: string;
+    nt_observacao?: string;
     // Reexibição do form de RECEBIMENTO (inline por linha) após falha (rc_).
     rc_id?: string;
     rc_valor?: string;
@@ -104,6 +111,20 @@ export default async function ContasAReceberPage({
     // Cancelamento inline por linha (?excluir=<id>) e motivo preservado em erro.
     excluir?: string;
     f_motivo?: string;
+    /** Edição do título (espelho de Contas a pagar). */
+    editar?: string;
+    f_descricao?: string;
+    f_emissao?: string;
+    f_vencimento?: string;
+    f_valor?: string;
+    f_categoria?: string;
+    f_centrocusto?: string;
+    f_notas?: string;
+    /** Painel de recebimentos de um título. */
+    recebimentos?: string;
+    /** Pop-up de estorno de um recebimento. */
+    estornar?: string;
+    f_motivo_estorno?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -236,12 +257,58 @@ export default async function ContasAReceberPage({
     .sort((a, b) => a.code.localeCompare(b.code, "pt-BR"))
     .map((c) => ({ id: c.id, label: `${c.code} — ${c.name}` }));
 
+  // --- Edição, recebimentos e estorno --------------------------------------
+  // Editável = título sem recebimento e não encerrado (espelha a regra da
+  // skill, que recusa alterar título com dinheiro baixado).
+  const podeEditar = hasPermission(session.membership.role, "receivable.create");
+  const isEditable = (rec: (typeof rows)[number]): boolean =>
+    rec.status !== "received" && rec.status !== "canceled" && rec.receivedCents === 0;
+
+  const editarId = sp.editar?.trim() || undefined;
+  const editandoReceivable = editarId ? rows.find((r) => r.id === editarId) : undefined;
+  // O centro de custo do título pode estar inativo e não constar das opções.
+  // Sem ele na lista, o select abriria em branco e salvar trocaria o vínculo.
+  const editCentroAtual =
+    editandoReceivable?.costCenterId &&
+    !costCenterOptions.some((c) => c.id === editandoReceivable.costCenterId)
+      ? costCenters.find((c) => c.id === editandoReceivable.costCenterId)
+      : undefined;
+  const editCentroOptions = editCentroAtual
+    ? [
+        { id: editCentroAtual.id, label: `${editCentroAtual.code} — ${editCentroAtual.name}` },
+        ...costCenterOptions,
+      ]
+    : costCenterOptions;
+
+  // Painel de recebimentos: só os ATIVOS do título aberto (estornados saem).
+  const recebimentosId = sp.recebimentos?.trim() || undefined;
+  const recebimentosDoTitulo = recebimentosId
+    ? receipts
+        .filter((rec) => rec.receivableId === recebimentosId && receiptIsActive(rec))
+        .sort((a, b) => b.receivedDate.localeCompare(a.receivedDate))
+    : [];
+
+  // Pop-up de estorno: só monta para recebimento ativo desta empresa.
+  const estornarId = sp.estornar?.trim() || undefined;
+  const estornoReceipt = estornarId
+    ? receipts.find((rec) => rec.id === estornarId && receiptIsActive(rec))
+    : undefined;
+  const estornoReceivable = estornoReceipt
+    ? (allReceivables.find((r) => r.id === estornoReceipt.receivableId) ?? undefined)
+    : undefined;
+  const podeEstornar = canCancel;
+
+  // amountCents → "1234,56" (sem símbolo) para o defaultValue do MoneyInput.
+  const centsToInput = (cents: number): string => (cents / 100).toFixed(2).replace(".", ",");
+
   // Data de quitação por título = MAIOR receivedDate dos recebimentos (o que
   // completou o valor). receivedDate JÁ é ISODate local (sem fuso a converter,
   // diferente de Payment.executedAt em Contas a Pagar). Só os títulos da página.
   const receivedAtByReceivable = new Map<string, ISODate>();
   const pageIds = new Set(rows.map((r) => r.id));
   for (const rec of receipts) {
+    // Recebimento estornado não conta para a data de quitação.
+    if (!receiptIsActive(rec)) continue;
     if (!pageIds.has(rec.receivableId)) continue;
     const prev = receivedAtByReceivable.get(rec.receivableId);
     if (!prev || rec.receivedDate > prev) {
@@ -530,12 +597,44 @@ export default async function ContasAReceberPage({
                       <span className="text-xs text-[var(--ink-muted)]">—</span>
                     )}
                   </Td>
-                  {/* Ações: Excluir (🗑) agrupado nesta coluna (Editar virá quando
-                      update_receivable existir). Abre o form inline via GET (?excluir=id).
-                      Só quando cancelável; senão "—". */}
+                  {/* Ações: Editar (✎), Recebimentos (💰) e Excluir (🗑) na MESMA
+                      coluna, ícones compactos. Cada um abre um bloco inline via
+                      GET; nenhum age por si. "—" quando nada se aplica. */}
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
-                    {cancelable ? (
+                    {podeEditar && isEditable(r) ? (
                       <form method="get" action="/contas-a-receber" className="inline">
+                        {Object.entries(extraQuery).map(([k, v]) =>
+                          v ? <input key={k} type="hidden" name={k} value={v} /> : null
+                        )}
+                        {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
+                        <input type="hidden" name="editar" value={editarId === r.id ? "" : r.id} />
+                        <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                          <Button variant="warn" type="submit">
+                            {editarId === r.id ? "Fechar" : "✎"}
+                          </Button>
+                        </span>
+                      </form>
+                    ) : null}
+                    {r.receivedCents > 0 ? (
+                      <form method="get" action="/contas-a-receber" className="ml-1 inline">
+                        {Object.entries(extraQuery).map(([k, v]) =>
+                          v ? <input key={k} type="hidden" name={k} value={v} /> : null
+                        )}
+                        {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
+                        <input
+                          type="hidden"
+                          name="recebimentos"
+                          value={recebimentosId === r.id ? "" : r.id}
+                        />
+                        <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                          <Button variant="secondary" type="submit">
+                            {recebimentosId === r.id ? "Fechar" : "💰"}
+                          </Button>
+                        </span>
+                      </form>
+                    ) : null}
+                    {cancelable ? (
+                      <form method="get" action="/contas-a-receber" className="ml-1 inline">
                         {Object.entries(extraQuery).map(([k, v]) =>
                           v ? <input key={k} type="hidden" name={k} value={v} /> : null
                         )}
@@ -547,11 +646,124 @@ export default async function ContasAReceberPage({
                           </Button>
                         </span>
                       </form>
-                    ) : (
+                    ) : null}
+                    {!(podeEditar && isEditable(r)) && r.receivedCents === 0 && !cancelable ? (
                       <span className="text-xs text-[var(--ink-muted)]">—</span>
-                    )}
+                    ) : null}
                   </Td>
                 </tr>
+                {editandoReceivable && editarId === r.id ? (
+                  <tr>
+                    {/* <td> cru por causa do colSpan, que o Td não expõe. */}
+                    <td className="px-2 py-2 align-middle" colSpan={11}>
+                      <EditReceivableForm
+                        receivable={{
+                          id: r.id,
+                          customerName: customerName.get(r.customerId) ?? r.customerId,
+                          description: r.description,
+                          amount: centsToInput(r.amountCents),
+                          issueDate: r.issueDate,
+                          dueDate: r.dueDate,
+                          categoryId: r.categoryId ?? "",
+                          costCenterId: r.costCenterId ?? "",
+                          notes: r.notes ?? "",
+                          installmentNumber: r.installmentNumber,
+                          installmentCount: r.installmentCount,
+                          fromInvoice: Boolean(r.invoiceId),
+                        }}
+                        categorias={incomeCategories.map((c) => ({ id: c.id, name: c.name }))}
+                        centros={editCentroOptions}
+                        prefill={{
+                          description: sp.f_descricao,
+                          amount: sp.f_valor,
+                          issueDate: sp.f_emissao,
+                          dueDate: sp.f_vencimento,
+                          categoryId: sp.f_categoria,
+                          costCenterId: sp.f_centrocusto,
+                          notes: sp.f_notas,
+                        }}
+                        cancelHref="/contas-a-receber"
+                      />
+                    </td>
+                  </tr>
+                ) : null}
+                {recebimentosId === r.id ? (
+                  <tr>
+                    <td className="px-2 py-2 align-middle" colSpan={11}>
+                      {/* Recebimentos do título: um lugar só para corrigir a data
+                          (que decide Recebido / no Vencimento / em Atraso) e para
+                          estornar. Estornados não aparecem — saíram das contas. */}
+                      <div className="rounded-lg border border-[var(--line)] bg-slate-50 p-3">
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">
+                          Recebimentos deste título
+                        </p>
+                        {recebimentosDoTitulo.length === 0 ? (
+                          <p className="text-sm text-[var(--ink-muted)]">
+                            Nenhum recebimento ativo (os estornados saem desta lista).
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {recebimentosDoTitulo.map((rec) => (
+                              <div
+                                key={rec.id}
+                                className="flex flex-wrap items-end justify-between gap-3 rounded-lg border border-[var(--line)] bg-white p-2"
+                              >
+                                <p className="text-sm">
+                                  <strong className="tabular">{formatBRL(rec.amountCents)}</strong>{" "}
+                                  · {rec.method} ·{" "}
+                                  <span className="text-[var(--ink-muted)]">
+                                    registrado em {formatBR(rec.receivedDate)}
+                                  </span>
+                                </p>
+                                <div className="flex flex-wrap items-end gap-2">
+                                  <form
+                                    action={adjustReceiptDateAction}
+                                    className="flex items-end gap-2"
+                                  >
+                                    <input type="hidden" name="receiptId" value={rec.id} />
+                                    <input type="hidden" name="receivableId" value={r.id} />
+                                    <Field label="Data do recebimento">
+                                      <input
+                                        type="date"
+                                        name="receivedDate"
+                                        required
+                                        min={r.issueDate}
+                                        max={today}
+                                        defaultValue={rec.receivedDate}
+                                        className={`${inputClass} md:w-44`}
+                                      />
+                                    </Field>
+                                    <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                                      <Button variant="warn" type="submit">
+                                        Salvar data
+                                      </Button>
+                                    </span>
+                                  </form>
+                                  {podeEstornar ? (
+                                    <form method="get" action="/contas-a-receber" className="inline">
+                                      <input type="hidden" name="estornar" value={rec.id} />
+                                      <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
+                                        <Button variant="danger" type="submit">
+                                          Estornar
+                                        </Button>
+                                      </span>
+                                    </form>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <p className="mt-2 text-xs text-[var(--ink-muted)]">
+                          Corrigir a data reclassifica a situação do título — Recebido (antes
+                          do vencimento), Recebido no Vencimento (no dia) ou Recebido em
+                          Atraso (depois) — e o realizado do Orçamento acompanha, podendo
+                          mudar de mês.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
                 {excluding && cancelable ? (
                   <tr>
                     {/* Form de cancelamento inline. <td> cru p/ colSpan (o Td compartilhado
@@ -708,6 +920,19 @@ export default async function ContasAReceberPage({
               <option value="cash">Dinheiro</option>
             </select>
           </Field>
+          {/* Observação: a entidade e a skill já aceitavam `notes`; faltava a
+              caixa. Ocupa a linha por ser mais longa que os demais campos. */}
+          <div className="md:col-span-3">
+            <Field label="Observação (opcional)">
+              <textarea
+                name="notes"
+                rows={2}
+                defaultValue={sp.nt_observacao ?? ""}
+                className={inputClass}
+                placeholder="Anotações sobre este título."
+              />
+            </Field>
+          </div>
           <div className="flex items-end">
             <Button>Criar título</Button>
           </div>
@@ -719,6 +944,56 @@ export default async function ContasAReceberPage({
         </>
         )}
       </Card>
+
+      {/* POP-UP de confirmação do estorno. Sobreposição renderizada no servidor
+          (sem estado de cliente), aberta por ?estornar=<receiptId> e fechada
+          voltando para a tela. Motivo obrigatório — é o que explica o estorno
+          na trilha de auditoria. */}
+      {estornoReceipt && estornoReceivable ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="card w-full max-w-lg p-4 shadow-xl">
+            <h2 className="text-base font-semibold text-[var(--crit)]">Estornar recebimento</h2>
+            <p className="mt-2 text-sm">
+              O recebimento de{" "}
+              <strong className="tabular">{formatBRL(estornoReceipt.amountCents)}</strong> de{" "}
+              {customerName.get(estornoReceivable.customerId) ?? estornoReceivable.customerId} será
+              estornado.
+            </p>
+            <p className="mt-1 text-sm text-[var(--ink-muted)]">
+              {estornoReceivable.description} · recebido em {formatBR(estornoReceipt.receivedDate)}
+            </p>
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+              O saldo <strong>volta para o título</strong>, que retorna à fila de cobrança, e o
+              lançamento contábil é estornado. Nada é apagado: o recebimento fica no histórico
+              como cancelado e sai das contas (orçamento, DSO, contabilidade e relatórios).
+            </p>
+            <form action={reverseReceiptAction} className="mt-3">
+              <input type="hidden" name="receiptId" value={estornoReceipt.id} />
+              <Field label="Motivo do estorno">
+                <input
+                  name="reason"
+                  required
+                  autoFocus
+                  defaultValue={sp.f_motivo_estorno ?? ""}
+                  className={inputClass}
+                  placeholder="Ex.: baixa lançada no título errado"
+                />
+              </Field>
+              <div className="mt-3 flex items-center gap-2">
+                <Button variant="danger" type="submit">
+                  Confirmar estorno
+                </Button>
+                <Link
+                  href="/contas-a-receber"
+                  className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+                >
+                  Voltar
+                </Link>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

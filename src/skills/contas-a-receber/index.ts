@@ -22,7 +22,7 @@ import type { Receipt, Receivable } from "@/core/entities";
 import { dueDateForMonth, shouldGenerateFor } from "@/core/recurrence";
 import type { ChargeResult } from "@/core/integrations";
 import { hashPayload } from "@/core/ids";
-import { ValidationError } from "@/core/errors";
+import { NotFoundError, PermissionError, ValidationError } from "@/core/errors";
 import { errorResult, makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -94,6 +94,38 @@ const cancelReceivableSchema = z.object({
   reason: z.string().min(1),
 });
 
+// Edição de título: só campos que NÃO afetam idempotência (originKey) nem a
+// identidade da obrigação. Cliente, fatura e parcela ficam DE FORA de propósito
+// (mudá-los é outro título — cancele e recrie).
+const updateReceivableSchema = z.object({
+  action: z.literal("update_receivable"),
+  receivableId: z.string().min(1),
+  description: z.string().min(1),
+  issueDate: isoDateSchema,
+  dueDate: isoDateSchema,
+  amountCents: z.number().int().positive(),
+  categoryId: z.string().min(1).nullable().optional(),
+  costCenterId: z.string().min(1).nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+// Estorno de recebimento JÁ registrado: devolve o saldo e o título volta para a
+// fila. Nada é apagado — o recebimento fica "canceled" e a trilha guarda o
+// antes/depois com o motivo.
+const reverseReceiptSchema = z.object({
+  action: z.literal("reverse_receipt"),
+  receiptId: z.string().min(1),
+  reason: z.string().min(1),
+});
+
+// Correção da DATA de um recebimento já registrado. É ela, contra o vencimento,
+// que decide Recebido / Recebido no Vencimento / Recebido em Atraso.
+const adjustReceiptDateSchema = z.object({
+  action: z.literal("adjust_receipt_date"),
+  receiptId: z.string().min(1),
+  receivedDate: isoDateSchema,
+});
+
 const generateRecurringSchema = z.object({
   action: z.literal("generate_recurring"),
 });
@@ -106,6 +138,9 @@ export const contasAReceberInputSchema = z.discriminatedUnion("action", [
   projectionSchema,
   issueChargeSchema,
   cancelReceivableSchema,
+  updateReceivableSchema,
+  reverseReceiptSchema,
+  adjustReceiptDateSchema,
   generateRecurringSchema,
 ]);
 
@@ -117,6 +152,9 @@ export type ListOverdueInput = z.infer<typeof listOverdueSchema>;
 export type RegisterReceiptInput = z.infer<typeof registerReceiptSchema>;
 export type ProjectionInput = z.infer<typeof projectionSchema>;
 export type CancelReceivableInput = z.infer<typeof cancelReceivableSchema>;
+export type UpdateReceivableInput = z.infer<typeof updateReceivableSchema>;
+export type ReverseReceiptInput = z.infer<typeof reverseReceiptSchema>;
+export type AdjustReceiptDateInput = z.infer<typeof adjustReceiptDateSchema>;
 
 // ---------------------------------------------------------------------------
 // Saída
@@ -189,8 +227,26 @@ export interface CancelReceivableData {
   reason: string;
 }
 
+export interface UpdateReceivableData {
+  receivable: Receivable;
+}
+
+export interface ReverseReceiptData {
+  receipt: Receipt;
+  receivable: Receivable;
+  reason: string;
+}
+
+export interface AdjustReceiptDateData {
+  receipt: Receipt;
+  receivable: Receivable;
+}
+
 export type ContasAReceberData =
   | CreateReceivableData
+  | UpdateReceivableData
+  | ReverseReceiptData
+  | AdjustReceiptDateData
   | ListOverdueData
   | RegisterReceiptData
   | ProjectionData
@@ -671,8 +727,11 @@ async function registerReceipt(
     companyId: ctx.companyId,
     receivableId: receivable.id,
     bankAccountId: input.bankAccountId,
-    // Registra o valor TOTAL de fato recebido (principal + encargos).
+    // Registra o valor TOTAL de fato recebido (principal + encargos)…
     amountCents: input.amountCents,
+    // …e, à parte, quanto disso baixou o SALDO: é o que o estorno devolve.
+    principalCents,
+    status: "registered",
     receivedDate: input.receivedDate,
     method: input.method,
     registeredBy: ctx.actor.id,
@@ -817,6 +876,12 @@ export const contasAReceberSkill: SkillDefinition<ContasAReceberInput, ContasARe
         return projection(ctx, input);
       case "issue_charge":
         return issueCharge(ctx, input);
+      case "update_receivable":
+        return updateReceivable(ctx, input);
+      case "reverse_receipt":
+        return reverseReceipt(ctx, input);
+      case "adjust_receipt_date":
+        return adjustReceiptDate(ctx, input);
       case "cancel_receivable":
         return cancelReceivable(ctx, input);
       case "generate_recurring":
@@ -961,6 +1026,286 @@ async function issueCharge(
  * (awaiting_approval/approved) são canceladas junto. A cobrança emitida por
  * issue_charge é mock (sem PSP/banco) — nada real a revogar.
  */
+/**
+ * EDIÇÃO de título a receber. Espelha `update_payable`: só campos que não
+ * afetam a identidade da obrigação. Cliente, fatura e parcela ficam de fora de
+ * propósito — mudá-los é outro título (cancele e recrie).
+ *
+ * Título encerrado ou com recebimento registrado NÃO é editável: mexer no valor
+ * de um título já baixado desalinharia o saldo. Para corrigir, estorne o
+ * recebimento antes (reverse_receipt).
+ */
+async function updateReceivable(
+  ctx: SkillContext,
+  input: UpdateReceivableInput
+): Promise<SkillResult<UpdateReceivableData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "receivable.create")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode editar títulos a receber.`
+      );
+    }
+  }
+
+  const receivable = await ctx.repos.receivables.getById(ctx.companyId, input.receivableId);
+  if (!receivable) throw new NotFoundError("Título a receber", input.receivableId);
+
+  if (receivable.status === "received" || receivable.status === "canceled") {
+    throw new ValidationError(
+      `Título ${receivable.id} está ${receivable.status} e não pode ser editado.`
+    );
+  }
+  if (receivable.receivedCents > 0) {
+    throw new ValidationError(
+      `Título ${receivable.id} já possui recebimento registrado (${formatBRL(receivable.receivedCents)}) e não pode ser editado. Estorne o recebimento para alterá-lo.`
+    );
+  }
+  if (input.dueDate < input.issueDate) {
+    throw new ValidationError(
+      `Verificar a Data da Emissão (vencimento ${formatBR(input.dueDate)} é anterior à emissão ${formatBR(input.issueDate)}).`
+    );
+  }
+  if (input.categoryId) {
+    const categoria = await ctx.repos.categories.getById(ctx.companyId, input.categoryId);
+    if (!categoria) throw new NotFoundError("Categoria", input.categoryId);
+  }
+  if (input.costCenterId) {
+    const centro = await ctx.repos.costCenters.getById(ctx.companyId, input.costCenterId);
+    if (!centro) throw new NotFoundError("Centro de custo", input.costCenterId);
+  }
+
+  const before = { ...receivable };
+  // Opcional com null limpa; undefined mantém — mesma semântica do lado pagar.
+  const applyOptional = <T>(incoming: T | null | undefined, current: T | undefined): T | undefined =>
+    incoming === undefined ? current : incoming ?? undefined;
+
+  receivable.description = input.description;
+  receivable.issueDate = input.issueDate;
+  receivable.dueDate = input.dueDate;
+  receivable.amountCents = input.amountCents;
+  receivable.categoryId = applyOptional(input.categoryId, receivable.categoryId);
+  receivable.costCenterId = applyOptional(input.costCenterId, receivable.costCenterId);
+  receivable.notes = applyOptional(input.notes, receivable.notes);
+  receivable.updatedAt = ctx.clock.now().toISOString();
+  await ctx.repos.receivables.update(receivable);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receivable.updated",
+    entityType: "receivable",
+    entityId: receivable.id,
+    before,
+    after: receivable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "receivable.updated",
+    payload: { id: receivable.id, amountCents: receivable.amountCents, dueDate: receivable.dueDate },
+    source: SKILL_NAME,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(SKILL_NAME, ctx, { receivable }, {
+    assumptions: [
+      "Edição registrada na trilha com estado anterior e novo. Cliente, fatura e parcela não são editáveis (preservam a chave de idempotência).",
+    ],
+    dataSources: ["receivables"],
+  });
+}
+
+/**
+ * ESTORNO de um recebimento já registrado. Devolve o saldo e o título volta
+ * para a fila de cobrança.
+ *
+ * Até aqui um recebimento lançado errado era IRREVERSÍVEL: não dava para
+ * corrigir valor, data, método ou conta, e o título ficava travado — não
+ * aceitava cancelamento (tem recebimento) nem novo recebimento (está quitado).
+ * Duas mensagens de erro no código já prometiam este estorno.
+ *
+ * Exige `receivable.cancel`, não `receivable.settle`: desfazer dinheiro
+ * recebido não fica na mão de quem lança. Nada é apagado — o recebimento fica
+ * "canceled" e a trilha guarda o antes/depois com o motivo.
+ */
+async function reverseReceipt(
+  ctx: SkillContext,
+  input: ReverseReceiptInput
+): Promise<SkillResult<ReverseReceiptData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "receivable.cancel")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode estornar recebimentos.`
+      );
+    }
+  }
+
+  const receipt = await ctx.repos.receipts.getById(ctx.companyId, input.receiptId);
+  if (!receipt) throw new NotFoundError("Recebimento", input.receiptId);
+  const receivable = await ctx.repos.receivables.getById(ctx.companyId, receipt.receivableId);
+  if (!receivable) throw new NotFoundError("Título a receber", receipt.receivableId);
+
+  // Idempotência: estorno repetido não devolve o valor duas vezes.
+  if (receipt.status === "canceled") {
+    return makeResult(SKILL_NAME, ctx, { receipt, receivable, reason: input.reason }, {
+      assumptions: ["Recebimento já estava estornado; nenhuma alteração adicional foi feita."],
+      dataSources: ["receivables", "receipts"],
+    });
+  }
+  if (receivable.status === "canceled") {
+    throw new ValidationError(
+      `Título ${receivable.id} está cancelado; não é possível devolvê-lo para a fila pelo estorno.`
+    );
+  }
+
+  // amountCents é o TOTAL recebido (pode incluir multa/juros); quem baixou o
+  // saldo foi só o principal. Nas linhas antigas, sem principalCents gravado,
+  // o mínimo entre o total e o já baixado é exato sempre que não houve encargo.
+  const principal = receipt.principalCents ?? Math.min(receipt.amountCents, receivable.receivedCents);
+
+  const nowIso = ctx.clock.now().toISOString();
+  const receiptBefore = { ...receipt };
+  const receivableBefore = { ...receivable };
+
+  receipt.status = "canceled";
+  receipt.canceledAt = nowIso;
+
+  receivable.receivedCents = Math.max(0, receivable.receivedCents - principal);
+  receivable.status = receivable.receivedCents > 0 ? "partially_received" : "open";
+  receivable.updatedAt = nowIso;
+
+  // Atômico: estorno do recebimento e devolução do saldo commitam juntos.
+  await ctx.repos.withTransaction(async (tx) => {
+    await tx.receipts.update(receipt);
+    await tx.receivables.update(receivable);
+  });
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receipt.reversed",
+    entityType: "receipt",
+    entityId: receipt.id,
+    before: receiptBefore,
+    after: { ...receipt, reverseReason: input.reason },
+    correlationId: ctx.correlationId,
+  });
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receivable.updated",
+    entityType: "receivable",
+    entityId: receivable.id,
+    before: receivableBefore,
+    after: receivable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "receivable.updated",
+    payload: {
+      id: receivable.id,
+      receiptId: receipt.id,
+      principalCents: principal,
+      status: receivable.status,
+      reason: input.reason,
+    },
+    source: SKILL_NAME,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(SKILL_NAME, ctx, { receipt, receivable, reason: input.reason }, {
+    assumptions: [
+      `Recebimento ${receipt.id} estornado (${formatBRL(principal)} de principal devolvido); título ${receivable.id} volta para "${receivable.status}".`,
+      "O recebimento fica como cancelado e sai das contas (orçamento, DSO, contabilidade e relatórios); a trilha preserva o registro anterior.",
+    ],
+    dataSources: ["receivables", "receipts"],
+  });
+}
+
+/**
+ * CORREÇÃO DA DATA de um recebimento já registrado. É essa data, contra o
+ * vencimento, que decide "Recebido" / "Recebido no Vencimento" / "Recebido em
+ * Atraso" — digitada errada, não havia como corrigir.
+ *
+ * Não mexe em valor, saldo nem status do título. O lançamento contábil é
+ * realinhado pelo passo seguinte do fluxo (restate_entries).
+ */
+async function adjustReceiptDate(
+  ctx: SkillContext,
+  input: AdjustReceiptDateInput
+): Promise<SkillResult<AdjustReceiptDateData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "receivable.settle")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode corrigir a data de recebimentos.`
+      );
+    }
+  }
+
+  const receipt = await ctx.repos.receipts.getById(ctx.companyId, input.receiptId);
+  if (!receipt) throw new NotFoundError("Recebimento", input.receiptId);
+  const receivable = await ctx.repos.receivables.getById(ctx.companyId, receipt.receivableId);
+  if (!receivable) throw new NotFoundError("Título a receber", receipt.receivableId);
+
+  if (receipt.status === "canceled") {
+    throw new ValidationError(
+      `Recebimento ${receipt.id} está estornado; não há data a corrigir.`
+    );
+  }
+  if (input.receivedDate > ctx.today()) {
+    throw new ValidationError(
+      `Data do recebimento (${formatBR(input.receivedDate)}) está no futuro; informe a data em que o dinheiro realmente entrou.`
+    );
+  }
+  if (input.receivedDate < receivable.issueDate) {
+    throw new ValidationError(
+      `Data do recebimento (${formatBR(input.receivedDate)}) é anterior à emissão do título (${formatBR(receivable.issueDate)}).`
+    );
+  }
+  if (input.receivedDate === receipt.receivedDate) {
+    return makeResult(SKILL_NAME, ctx, { receipt, receivable }, {
+      assumptions: ["Data informada é igual à atual; nada foi alterado."],
+      dataSources: ["receipts"],
+    });
+  }
+
+  const before = { ...receipt };
+  const anterior = receipt.receivedDate;
+  receipt.receivedDate = input.receivedDate;
+  await ctx.repos.receipts.update(receipt);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receipt.date_adjusted",
+    entityType: "receipt",
+    entityId: receipt.id,
+    before,
+    after: receipt,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "receivable.updated",
+    payload: { id: receivable.id, receiptId: receipt.id, receivedDate: input.receivedDate },
+    source: SKILL_NAME,
+    correlationId: ctx.correlationId,
+  });
+
+  const emAtraso = input.receivedDate > receivable.dueDate;
+  return makeResult(SKILL_NAME, ctx, { receipt, receivable }, {
+    assumptions: [
+      `Data do recebimento corrigida de ${formatBR(anterior)} para ${formatBR(input.receivedDate)}. Valor e saldo não mudam.`,
+      `Situação do título passa a ser "${
+        emAtraso
+          ? "Recebido em Atraso"
+          : input.receivedDate === receivable.dueDate
+            ? "Recebido no Vencimento"
+            : "Recebido"
+      }" (vencimento ${formatBR(receivable.dueDate)}).`,
+      "O realizado do Orçamento acompanha a nova data e pode mudar de mês.",
+    ],
+    dataSources: ["receivables", "receipts"],
+  });
+}
+
 async function cancelReceivable(
   ctx: SkillContext,
   input: CancelReceivableInput

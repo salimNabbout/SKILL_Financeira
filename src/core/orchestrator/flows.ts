@@ -707,12 +707,111 @@ const reversePaymentFlow: FlowDefinition = {
   ],
 };
 
+/**
+ * Edição de título a receber (espelho do update_payable). Passo único — a skill
+ * recusa título recebido, cancelado ou com recebimento registrado.
+ * payload: { receivableId, description, issueDate, dueDate, amountCents,
+ *            categoryId?, costCenterId?, notes? }
+ */
+const updateReceivableFlow: FlowDefinition = {
+  name: "update_receivable",
+  description:
+    "Edita um título a receber ainda sem recebimento (campos que não afetam a identidade da obrigação) e registra a alteração na auditoria.",
+  requiredPermission: "receivable.create",
+  steps: [
+    {
+      id: "ar_update",
+      skill: "contas_a_receber",
+      description: "Editar título a receber (com bloqueios de segurança)",
+      buildInput: (f) => ({ action: "update_receivable", ...f.payload }),
+    },
+  ],
+};
+
+/**
+ * ESTORNO de recebimento: devolve o saldo, o título volta para a fila e o
+ * lançamento contábil é estornado. Nada é apagado.
+ * payload: { receiptId, reason }
+ */
+const reverseReceiptFlow: FlowDefinition = {
+  name: "reverse_receipt",
+  description:
+    "Estorna um recebimento registrado: devolve o saldo ao título, que volta para a fila de cobrança, e lança o estorno contábil. O recebimento fica no histórico como cancelado.",
+  requiredPermission: "receivable.cancel",
+  steps: [
+    {
+      id: "ar_reverse_receipt",
+      skill: "contas_a_receber",
+      description: "Estornar o recebimento e devolver o saldo",
+      buildInput: (f) => ({ action: "reverse_receipt", ...f.payload }),
+    },
+    // continueOnError: a devolução do saldo já commitou; uma falha contábil não
+    // pode desfazê-la. Recebimento só vira lançamento no fechamento mensal,
+    // então é comum não haver nada a estornar — o handler trata esse caso.
+    {
+      id: "accounting_reverse",
+      skill: "integracao_contabil_fiscal",
+      description: "Estornar o lançamento contábil do recebimento",
+      buildInput: (f) => ({
+        action: "reverse_entries",
+        sourceType: "receipt",
+        sourceId: (f.payload as { receiptId?: string }).receiptId,
+        reason: (f.payload as { reason?: string }).reason,
+      }),
+      continueOnError: true,
+    },
+    {
+      id: "treasury_refresh",
+      skill: "tesouraria_fluxo_caixa",
+      description: "Atualizar posição e projeção de caixa",
+      buildInput: () => ({ action: "refresh_projection", horizonDays: 90 }),
+      continueOnError: true,
+    },
+  ],
+};
+
+/**
+ * Correção da DATA de um recebimento. A data decide a situação do título
+ * (Recebido / Recebido no Vencimento / Recebido em Atraso) e o lançamento
+ * contábil é realinhado junto.
+ * payload: { receiptId, receivedDate }
+ */
+const adjustReceiptDateFlow: FlowDefinition = {
+  name: "adjust_receipt_date",
+  description:
+    "Corrige a data de um recebimento registrado e realinha o lançamento contábil. A situação do título é reclassificada pela nova data; valor e saldo não mudam.",
+  requiredPermission: "receivable.settle",
+  steps: [
+    {
+      id: "ar_adjust_receipt_date",
+      skill: "contas_a_receber",
+      description: "Corrigir a data do recebimento",
+      buildInput: (f) => ({ action: "adjust_receipt_date", ...f.payload }),
+    },
+    {
+      id: "accounting_restate",
+      skill: "integracao_contabil_fiscal",
+      description: "Realinhar o lançamento contábil com a nova data",
+      buildInput: (f) => ({
+        action: "restate_entries",
+        sourceType: "receipt",
+        sourceId: (f.payload as { receiptId?: string }).receiptId,
+        reason: "correção da data de recebimento",
+      }),
+      continueOnError: true,
+    },
+  ],
+};
+
 export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
   updatePayable,
   cancelPayableFlow,
   cancelReceivableFlow,
+  updateReceivableFlow,
+  reverseReceiptFlow,
+  adjustReceiptDateFlow,
   adjustPaymentDateFlow,
   reconcilePaymentFlow,
   reversePaymentFlow,

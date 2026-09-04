@@ -565,6 +565,43 @@ describe("integracao_contabil_fiscal — tax_summary", () => {
     expect(res.assumptions.length).toBeGreaterThanOrEqual(2);
     expect(res.assumptions.some((a) => a.includes("não substitui o contador"))).toBe(true);
   });
+
+  it("recebimento ESTORNADO sai da base de caixa e do lote contábil", async () => {
+    const env = createTestEnv();
+    seedChart(env);
+    const customer = seedCustomer(env);
+    const r1 = seedReceivable(env, {
+      customerId: customer.id,
+      issueDate: "2026-08-02",
+      amountCents: 300_000,
+    });
+    seedReceipt(env, { receivableId: r1.id, receivedDate: "2026-08-05", amountCents: 100_000 });
+    // Estornado: não pode contar em lugar nenhum.
+    seedReceipt(env, {
+      receivableId: r1.id,
+      receivedDate: "2026-08-06",
+      amountCents: 70_000,
+      status: "canceled",
+      canceledAt: env.clock.now().toISOString(),
+    });
+
+    const resumo = await runSkill(contabilSkill, env.ctx(), {
+      action: "tax_summary",
+      period: "2026-08",
+    });
+    expect((resumo.data as TaxSummaryData).taxableRevenueCashCents).toBe(100_000);
+
+    // E o lote do período gera lançamento só para o recebimento ativo.
+    const lote = await runSkill(contabilSkill, env.ctx(), {
+      action: "prepare_entries",
+      period: "2026-08",
+    });
+    const doRecebimento = (lote.data as PrepareEntriesData).entries.filter(
+      (e) => e.sourceType === "receipt"
+    );
+    expect(doRecebimento).toHaveLength(1);
+    expect(doRecebimento[0].amountCents).toBe(100_000);
+  });
 });
 
 

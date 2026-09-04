@@ -32,14 +32,14 @@ describe("deriveReceivableSituation", () => {
     expect(deriveReceivableSituation(receivable({ dueDate: "2026-08-24" }), TODAY)).toBe("Atrasado");
   });
 
-  it("recebido no dia do vencimento → Recebido (não é atraso)", () => {
+  it("recebido no dia do vencimento → Recebido no Vencimento (não é atraso)", () => {
     expect(
       deriveReceivableSituation(
         receivable({ status: "received", dueDate: "2026-08-25" }),
         TODAY,
         "2026-08-25"
       )
-    ).toBe("Recebido");
+    ).toBe("Recebido no Vencimento");
   });
 
   it("recebido antes do vencimento → Recebido", () => {

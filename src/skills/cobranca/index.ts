@@ -13,13 +13,7 @@ import { z } from "zod";
 import { addDays, addMonths, diffDays, formatBR, type ISODate } from "@/core/dates";
 import type { CollectionMessage, Receivable } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
-import {
-  computeLateFee,
-  formatBRL,
-  percentOf,
-  receivableRemainingCents,
-  splitInstallments,
-} from "@/core/money";
+import { computeLateFee, formatBRL, percentOf, receiptIsActive, receivableRemainingCents, splitInstallments } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { ApprovalRequestData, PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -731,7 +725,9 @@ async function delinquencyIndicators(
 
   // DSO aproximado = (saldo AR / recebimentos dos últimos 90 dias) × 90.
   const dsoStart = addDays(today, -DSO_WINDOW_DAYS);
-  const receipts = await ctx.repos.receipts.listByDateRange(ctx.companyId, dsoStart, today);
+  const receipts = (
+    await ctx.repos.receipts.listByDateRange(ctx.companyId, dsoStart, today)
+  ).filter(receiptIsActive);
   const receiptsCents = receipts.reduce((acc, r) => acc + r.amountCents, 0);
   const dsoDays =
     receiptsCents > 0 ? Math.round((openCents / receiptsCents) * DSO_WINDOW_DAYS * 10) / 10 : null;

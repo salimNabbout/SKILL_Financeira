@@ -331,6 +331,12 @@ model Receipt {
   amountCents   BigInt
   receivedDate  DateTime @db.Date
   method        String // pix | boleto | card | transfer | cash
+  /// registered | canceled (estorno lógico — nada é apagado)
+  status        String   @default("registered")
+  canceledAt    DateTime?
+  /// Parte do valor que baixou o SALDO do título (amountCents inclui encargos).
+  /// Nulo nas linhas anteriores ao estorno existir.
+  principalCents BigInt?
   registeredBy  String // usuário ou "system" (baixa automática via conciliação)
   createdAt     DateTime @default(now())
 
@@ -340,6 +346,7 @@ model Receipt {
 
   @@index([companyId, receivedDate])
   @@index([companyId, receivableId]) // listByReceivable
+  @@index([companyId, status])
 }
 
 model FinancialDocument {
