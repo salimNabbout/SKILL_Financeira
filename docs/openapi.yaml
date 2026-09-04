@@ -922,6 +922,53 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /ui-events:
+    post:
+      tags: [governança]
+      summary: Lote de eventos de atividade do front-end (telemetria de auditoria)
+      description: >
+        Cliques, submissões de formulário e navegação capturados pela UI.
+        Usuário, empresa, IP e user-agent vêm da sessão/requisição — nunca do
+        corpo. Chaves sensíveis em `detalhes` (senha/token/cartão…) são
+        mascaradas antes de gravar. Estas chamadas não geram evento
+        "requisicao" próprio.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eventos]
+              properties:
+                eventos:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [tipo, tela]
+                    properties:
+                      tipo: { type: string, enum: [clique, submissao, navegacao] }
+                      tela: { type: string, example: /contas-a-pagar }
+                      rotulo: { type: string, example: Novo título }
+                      elemento: { type: string, example: nt_abrir }
+                      detalhes: { type: object, additionalProperties: true }
+                      timestamp: { type: string, format: date-time }
+      responses:
+        "202":
+          description: Lote aceito
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      recebidos: { type: integer, example: 2 }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /skills:
     get:
       tags: [orquestrador]
