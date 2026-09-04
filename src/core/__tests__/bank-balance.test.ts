@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { computeBankPeriodBalance } from "../bank-balance";
+import { computeBankPeriodBalance, reconciledInPeriod } from "../bank-balance";
 import type { BankTransaction } from "../entities";
 
 const CONTA = { id: "bnk_1", openingBalanceCents: 100_000 }; // R$ 1.000,00
@@ -121,5 +121,43 @@ describe("computeBankPeriodBalance", () => {
 
     expect(r.inflowCents).toBe(3_000);
     expect(r.reconciledCount).toBe(1);
+  });
+});
+
+describe("reconciledInPeriod", () => {
+  const MISTURA = [
+    tx({ amountCents: 5_000, date: "2026-09-10" }),
+    tx({ amountCents: -2_000, date: "2026-09-02" }),
+    tx({ amountCents: 9_000, date: "2026-08-31" }), // fora do período
+    tx({ amountCents: 7_000, reconciled: false }), // não conciliada
+    tx({ amountCents: 3_000, bankAccountId: "bnk_2" }), // outra conta
+  ];
+
+  it("devolve só o que entra na conta do saldo, ordenado por data", () => {
+    const linhas = reconciledInPeriod(CONTA.id, MISTURA, PERIODO);
+
+    expect(linhas.map((t) => t.date)).toEqual(["2026-09-02", "2026-09-10"]);
+  });
+
+  it("a lista SEMPRE soma o total da caixa — é o mesmo filtro", () => {
+    const linhas = reconciledInPeriod(CONTA.id, MISTURA, PERIODO);
+    const saldo = computeBankPeriodBalance(CONTA, MISTURA, PERIODO);
+
+    const entradas = linhas.filter((t) => t.amountCents > 0);
+    const saidas = linhas.filter((t) => t.amountCents < 0);
+
+    expect(entradas.reduce((a, t) => a + t.amountCents, 0)).toBe(saldo.inflowCents);
+    expect(saidas.reduce((a, t) => a + Math.abs(t.amountCents), 0)).toBe(saldo.outflowCents);
+    expect(linhas.length).toBe(saldo.reconciledCount);
+  });
+
+  it("lançamento de valor zero aparece na lista mas não conta como lançamento", () => {
+    const comZero = [...MISTURA, tx({ amountCents: 0, date: "2026-09-05" })];
+    const linhas = reconciledInPeriod(CONTA.id, comZero, PERIODO);
+    const saldo = computeBankPeriodBalance(CONTA, comZero, PERIODO);
+
+    // A divergência é conhecida e proposital: zero não é entrada nem saída.
+    expect(linhas.length).toBe(3);
+    expect(saldo.reconciledCount).toBe(2);
   });
 });

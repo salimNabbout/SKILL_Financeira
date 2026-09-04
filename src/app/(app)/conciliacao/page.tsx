@@ -5,7 +5,7 @@ import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatBR, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
 import type { ISODate } from "@/core/dates";
-import { computeBankPeriodBalance } from "@/core/bank-balance";
+import { computeBankPeriodBalance, reconciledInPeriod } from "@/core/bank-balance";
 import type { ReconciliationMatch } from "@/core/entities";
 import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
@@ -99,12 +99,15 @@ export default async function ConciliacaoPage({
     contaSelecionada && !filtros.periodoInvalido
       ? await repos.bankTransactions.listByAccount(companyId, contaSelecionada.id)
       : [];
+  const periodo = { from: filtros.from, to: filtros.to };
   const saldo = contaSelecionada
-    ? computeBankPeriodBalance(contaSelecionada, extratoDaConta, {
-        from: filtros.from,
-        to: filtros.to,
-      })
+    ? computeBankPeriodBalance(contaSelecionada, extratoDaConta, periodo)
     : undefined;
+  // Mesmo filtro do total, de propósito: a lista abaixo da caixa SEMPRE soma o
+  // número exibido. Não custa consulta — o extrato da conta já está carregado.
+  const linhasDoPeriodo = contaSelecionada
+    ? reconciledInPeriod(contaSelecionada.id, extratoDaConta, periodo)
+    : [];
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const userName = new Map(users.map((u) => [u.id, u.name]));
@@ -311,6 +314,37 @@ export default async function ConciliacaoPage({
               </p>
               <p>Total de lançamentos conciliados no período: {saldo.reconciledCount}</p>
             </div>
+
+            {/* O extrato que sustenta o número. Sem isto, o saldo é um número
+                sem lastro visível: as conciliadas somem do card 3 no instante
+                em que são conciliadas e não reaparecem em lugar nenhum. */}
+            {linhasDoPeriodo.length > 0 ? (
+              <details className="mt-3">
+                <summary className="cursor-pointer text-sm text-[var(--brand)]">
+                  Ver os {linhasDoPeriodo.length} lançamentos do extrato
+                </summary>
+                <div className="mt-2 overflow-x-auto">
+                  <Table
+                    headers={["Data", "Descrição", "Entrada", "Saída", "Origem"]}
+                    align={["l", "l", "r", "r", "l"]}
+                  >
+                    {linhasDoPeriodo.map((t) => (
+                      <tr key={t.id}>
+                        <Td className="whitespace-nowrap">{formatBR(t.date)}</Td>
+                        <Td>{t.description}</Td>
+                        <Td right className="text-[var(--ok)]">
+                          {t.amountCents > 0 ? formatBRL(t.amountCents) : ""}
+                        </Td>
+                        <Td right className="text-[var(--crit)]">
+                          {t.amountCents < 0 ? formatBRL(Math.abs(t.amountCents)) : ""}
+                        </Td>
+                        <Td>{t.source}</Td>
+                      </tr>
+                    ))}
+                  </Table>
+                </div>
+              </details>
+            ) : null}
             <p className="mt-3 text-xs text-[var(--ink-muted)]">
               Saldo = saldo inicial da conta ({formatBRL(saldo.openingBalanceCents)}, em{" "}
               {formatBR(contaSelecionada.openingBalanceDate)}) + entradas − saídas. O saldo inicial

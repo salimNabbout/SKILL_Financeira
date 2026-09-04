@@ -66,6 +66,31 @@ export interface BankBalancePeriod {
  * que seja o período pedido. É o comportamento especificado — e o mesmo que as
  * demais leituras de saldo do app já fazem.
  */
+/**
+ * Lançamentos que ENTRAM na conta do saldo: da conta, conciliados, no período
+ * (limites inclusivos). Ordenados por data.
+ *
+ * Exportada de propósito: a tela lista exatamente estas linhas embaixo da caixa
+ * "Saldo". Se a lista usasse um filtro próprio, um dia ela deixaria de somar o
+ * total exibido — e ninguém perceberia. Um filtro só, duas leituras.
+ */
+export function reconciledInPeriod(
+  accountId: ID,
+  transactions: readonly BankTransaction[],
+  period: BankBalancePeriod
+): BankTransaction[] {
+  return transactions
+    .filter(
+      (tx) =>
+        tx.bankAccountId === accountId &&
+        tx.reconciled &&
+        // ISODate é "YYYY-MM-DD": a comparação lexicográfica é a cronológica.
+        tx.date >= period.from &&
+        tx.date <= period.to
+    )
+    .sort((a, b) => (a.date === b.date ? a.id.localeCompare(b.id) : a.date.localeCompare(b.date)));
+}
+
 export function computeBankPeriodBalance(
   account: Pick<BankAccount, "id" | "openingBalanceCents">,
   transactions: readonly BankTransaction[],
@@ -76,12 +101,7 @@ export function computeBankPeriodBalance(
   let outflowCents = 0;
   let outflowCount = 0;
 
-  for (const tx of transactions) {
-    if (tx.bankAccountId !== account.id) continue;
-    if (!tx.reconciled) continue;
-    // ISODate é "YYYY-MM-DD": a comparação lexicográfica é a cronológica.
-    if (tx.date < period.from || tx.date > period.to) continue;
-
+  for (const tx of reconciledInPeriod(account.id, transactions, period)) {
     if (tx.amountCents > 0) {
       inflowCents += tx.amountCents;
       inflowCount += 1;
