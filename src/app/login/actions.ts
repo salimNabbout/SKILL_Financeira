@@ -46,7 +46,7 @@ export async function loginAction(formData: FormData): Promise<void> {
       await audit.record(ms[0].companyId, {
         actor: { type: "user", id: u.id },
         action: "auth.login_failed",
-        entityType: "User",
+        entityType: "user",
         entityId: u.id,
         after: { email, reason }, // sem senha — só o identificador tentado e o motivo
       });
@@ -88,7 +88,7 @@ export async function loginAction(formData: FormData): Promise<void> {
   await audit.record(companyId, {
     actor: { type: "user", id: user.id },
     action: "auth.login",
-    entityType: "User",
+    entityType: "user",
     entityId: user.id,
   });
 
@@ -107,7 +107,7 @@ export async function logoutAction(): Promise<void> {
       await audit.record(session.company.id, {
         actor: session.actor,
         action: "auth.logout",
-        entityType: "User",
+        entityType: "user",
         entityId: session.user.id,
       });
     } catch {

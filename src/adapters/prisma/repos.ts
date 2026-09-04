@@ -1948,10 +1948,19 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       // de `to` (senão "Até" no mesmo dia excluiria tudo daquele dia).
       const where = {
         companyId,
-        ...(query.entityType ? { entityType: query.entityType } : {}),
+        // Lista ⇒ `in` (nome canônico + legados; ver core/audit-actions.ts).
+        ...(query.entityType
+          ? {
+              entityType: Array.isArray(query.entityType)
+                ? { in: query.entityType }
+                : query.entityType,
+            }
+          : {}),
         ...(query.entityId ? { entityId: query.entityId } : {}),
         ...(query.actorId ? { actorId: query.actorId } : {}),
-        ...(query.action ? { action: query.action } : {}),
+        ...(query.action
+          ? { action: Array.isArray(query.action) ? { in: query.action } : query.action }
+          : {}),
         ...(query.from || query.to
           ? {
               timestamp: {

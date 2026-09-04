@@ -123,6 +123,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "document.created": "Documento fiscal registrado",
   "payable.created": "Título a pagar criado",
   "payable.updated": "Título a pagar alterado",
+  "payable.due_date_adjusted": "Vencimento do título corrigido",
   "payable.canceled": "Título a pagar cancelado",
   "payable.settled_via_reconciliation": "Título baixado pela conciliação",
   "payment.requested": "Pagamento solicitado",
@@ -153,6 +154,7 @@ export const ACTION_LABELS: Record<string, string> = {
 
   // Empresa
   "company.created": "Empresa criada",
+  "company.updated": "Empresa alterada",
 
   // Conciliação bancária
   "statement.imported": "Extrato importado",
@@ -195,4 +197,5 @@ export const ACTION_LABELS: Record<string, string> = {
   "flow.completed": "Fluxo concluído",
   "flow.failed": "Fluxo interrompido por erro",
   "flow.reaped": "Fluxo travado liberado pelo sistema",
+  "audit.exported": "Trilha de auditoria exportada",
 };

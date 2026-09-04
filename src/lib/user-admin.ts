@@ -133,7 +133,7 @@ export async function inviteUser(
     await audit.record(input.companyId, {
       actor: input.actor,
       action: "user.created",
-      entityType: "User",
+      entityType: "user",
       entityId: user.id,
       after: { name: user.name, email: user.email }, // nunca auditar hash de senha
     });
@@ -149,7 +149,7 @@ export async function inviteUser(
   await audit.record(input.companyId, {
     actor: input.actor,
     action: "membership.created",
-    entityType: "Membership",
+    entityType: "membership",
     entityId: membership.id,
     after: { userId: user.id, role: input.role, approvalLimitCents: input.approvalLimitCents },
   });
@@ -203,7 +203,7 @@ export async function updateMembership(
   await audit.record(input.companyId, {
     actor: input.actor,
     action: "membership.updated",
-    entityType: "Membership",
+    entityType: "membership",
     entityId: membership.id,
     before,
     after: { role: input.role, approvalLimitCents: input.approvalLimitCents },
@@ -252,7 +252,7 @@ export async function setUserActive(deps: UserAdminDeps, input: SetUserActiveInp
   await audit.record(input.companyId, {
     actor: input.actor,
     action: input.active ? "user.reactivated" : "user.deactivated",
-    entityType: "User",
+    entityType: "user",
     entityId: user.id,
     before: { active: user.active },
     after: { active: input.active },
@@ -322,7 +322,7 @@ export async function resetUserPassword(
   await audit.record(input.companyId, {
     actor: input.actor,
     action: "user.password_reset",
-    entityType: "User",
+    entityType: "user",
     entityId: user.id,
     // Nunca auditar hash nem a senha: só quem teve a senha redefinida.
     after: { name: user.name, email: user.email },

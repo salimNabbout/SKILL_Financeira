@@ -278,10 +278,15 @@ export interface AuditRepo {
   listPage(
     companyId: ID,
     query: PageQuery & {
-      entityType?: string;
+      /**
+       * Aceita lista para casar o nome canônico E os legados gravados por
+       * versões anteriores (ver core/audit-actions.ts). A trilha é append-only:
+       * registros antigos não são reescritos, a conciliação é na leitura.
+       */
+      entityType?: string | string[];
       entityId?: ID;
       actorId?: ID;
-      action?: string;
+      action?: string | string[];
       from?: string;
       to?: string;
     }

@@ -54,7 +54,7 @@ export async function changePasswordAction(formData: FormData): Promise<void> {
     await audit.record(session.company.id, {
       actor: session.actor,
       action: "user.password_changed",
-      entityType: "User",
+      entityType: "user",
       entityId: session.user.id,
     });
   } catch (error) {
@@ -117,7 +117,7 @@ export async function confirmTotpAction(formData: FormData): Promise<void> {
     await audit.record(session.company.id, {
       actor: session.actor,
       action: "user.totp_enabled",
-      entityType: "User",
+      entityType: "user",
       entityId: session.user.id,
     });
   } catch (error) {
@@ -150,7 +150,7 @@ export async function disableTotpAction(formData: FormData): Promise<void> {
     await audit.record(session.company.id, {
       actor: session.actor,
       action: "user.totp_disabled",
-      entityType: "User",
+      entityType: "user",
       entityId: session.user.id,
     });
   } catch (error) {

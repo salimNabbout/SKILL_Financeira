@@ -1,4 +1,9 @@
 import Link from "next/link";
+import {
+  actionFilterAliases,
+  canonicalAction,
+  entityFilterAliases,
+} from "@/core/audit-actions";
 import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
@@ -289,13 +294,16 @@ export default async function AuditoriaPage({
 
   // Tabela paginada no repositório (seq desc). Filtros aplicados no banco —
   // NUNCA passados a list()/verifyChain acima (isso quebraria o encadeamento).
+  // Filtrar pelo nome canônico também tem de encontrar os registros gravados
+  // com os nomes antigos (a trilha é append-only: reescrevê-los quebraria a
+  // cadeia de hash, então a conciliação acontece aqui, na leitura).
   const page = await repos.audit.listPage(companyId, {
     offset: pageOffset(params.p),
     limit: PAGE_SIZE,
-    entityType,
+    entityType: entityType ? entityFilterAliases(entityType) : undefined,
     entityId,
     actorId,
-    action,
+    action: action ? actionFilterAliases(action) : undefined,
     from,
     to,
   });
@@ -304,7 +312,8 @@ export default async function AuditoriaPage({
   // Atores para o select: reaproveita `users` já carregado (sem 2ª consulta).
   const actorOptions = userOptions;
   // Ações para o select: derivadas das presentes na trilha (allRecords já em mão).
-  const actionOptions = [...new Set(allRecords.map((r) => r.action))].sort();
+  // Opções do select já normalizadas: o legado não aparece como opção separada.
+  const actionOptions = [...new Set(allRecords.map((r) => canonicalAction(r.action)))].sort();
 
   const anyFilterActive =
     Boolean(entityType) || Boolean(entityId) || Boolean(actorId) || Boolean(action) || Boolean(from) || Boolean(to);
@@ -463,7 +472,9 @@ export default async function AuditoriaPage({
                 <Td>
                   {/* Rótulo em linguagem corrente; o código técnico fica abaixo,
                       apagado (quem investiga um incidente precisa do código exato). */}
-                  <span className="text-sm">{ACTION_LABELS[r.action] ?? r.action}</span>
+                  <span className="text-sm">
+                    {ACTION_LABELS[canonicalAction(r.action)] ?? r.action}
+                  </span>
                   <span className="tabular block text-[11px] text-[var(--ink-muted)]">
                     {r.action}
                   </span>

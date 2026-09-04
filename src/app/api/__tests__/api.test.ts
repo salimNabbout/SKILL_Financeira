@@ -507,7 +507,7 @@ describe("suppliers", () => {
     expect(JSON.stringify(entity)).not.toContain("987654321");
 
     const audit = await env.repos.audit.list(env.company.id, {
-      entityType: "Supplier",
+      entityType: "supplier",
       entityId: entity.id,
     });
     expect(audit.map((a) => a.action)).toContain("supplier.created");
@@ -871,7 +871,7 @@ describe("alerts", () => {
     expect(second.entity.status).toBe("acknowledged");
 
     const audit = await env.repos.audit.list(env.company.id, {
-      entityType: "Alert",
+      entityType: "alert",
       entityId: "alr_1",
     });
     expect(audit.filter((a) => a.action === "alert.acknowledged")).toHaveLength(1);
@@ -899,9 +899,9 @@ describe("audit, skills e import", () => {
     const manager = await sessionFor(env, "manager");
     await createSupplier(deps, manager, { name: "Fornecedor Auditado" });
 
-    const records = await getAuditTrail(deps, manager, { entityType: "Supplier" });
+    const records = await getAuditTrail(deps, manager, { entityType: "supplier" });
     expect(records.items.length).toBeGreaterThan(0);
-    expect(records.items.every((r) => r.entityType === "Supplier")).toBe(true);
+    expect(records.items.every((r) => r.entityType === "supplier")).toBe(true);
     expect(records.total).toBe(records.items.length);
 
     const analyst = await sessionFor(env, "analyst"); // finance_analyst não tem audit.view

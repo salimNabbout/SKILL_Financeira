@@ -143,7 +143,7 @@ export const GET = withAuth(async (req, { session, container }) => {
   await audit.record(companyId, {
     actor: session.actor,
     action: "report.generated",
-    entityType: "AuditExport",
+    entityType: "audit_export",
     entityId: `${format}:${rows.length}`,
     after: { format, registros: rows.length, filtros: filtersLabel },
   });

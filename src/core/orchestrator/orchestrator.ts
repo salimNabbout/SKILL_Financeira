@@ -248,7 +248,7 @@ export class Orchestrator {
     await this.audit.record(request.companyId, {
       actor: request.actor,
       action: "flow.started",
-      entityType: "FlowRun",
+      entityType: "flow_run",
       entityId: flowRun.id,
       after: { flow: request.flow, payload: request.payload },
       correlationId: flowRun.correlationId,
@@ -362,7 +362,7 @@ export class Orchestrator {
         await this.audit.record(companyId, {
           actor,
           action: "approval.partially_approved",
-          entityType: "Approval",
+          entityType: "approval",
           entityId: approval.id,
           before: { approvals: before.length, required: approvalsRequired },
           after: { approvals: finalApprovers.length, required: approvalsRequired, justification },
@@ -404,7 +404,7 @@ export class Orchestrator {
     await this.audit.record(companyId, {
       actor,
       action: `approval.${decision}`,
-      entityType: "Approval",
+      entityType: "approval",
       entityId: approval.id,
       before: { status: approval.status },
       after: { status: decision, justification },
@@ -493,7 +493,7 @@ export class Orchestrator {
         await this.audit.record(flowRun.companyId, {
           actor,
           action: "flow.failed",
-          entityType: "FlowRun",
+          entityType: "flow_run",
           entityId: flowRun.id,
           after: { failedStep: step.id, alerts: result.alerts },
           correlationId: flowRun.correlationId,
@@ -545,7 +545,7 @@ export class Orchestrator {
     await this.audit.record(flowRun.companyId, {
       actor,
       action: "flow.completed",
-      entityType: "FlowRun",
+      entityType: "flow_run",
       entityId: flowRun.id,
       after: { status: flowRun.status, steps: stored.map((s) => s.stepId) },
       correlationId: flowRun.correlationId,
@@ -628,7 +628,7 @@ export class Orchestrator {
     await this.audit.record(flowRun.companyId, {
       actor,
       action: "approval.requested",
-      entityType: "Approval",
+      entityType: "approval",
       entityId: approval.id,
       after: { summary: req.summary, amountCents: req.amountCents, requiredRole: approval.requiredRole },
       correlationId: flowRun.correlationId,
