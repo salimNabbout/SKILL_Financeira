@@ -79,3 +79,62 @@ ORDER BY grantee, privilege_type;
 `AuditRecord` pode barrar uma migration futura que precise reescrever a tabela
 (por exemplo, um backfill de coluna nova). Nesse caso, conceda temporariamente,
 rode a migration e revogue de novo — e registre o porquê.
+
+---
+
+## 3. Âncora externa do head
+
+`scripts/audit-anchor.ts` imprime uma linha JSON por empresa no **stdout**:
+
+```json
+{"companyId":"co_x","seq":128,"hash":"9f2c…","verifiedAt":"2026-09-04T03:00:00.000Z","ok":true}
+```
+
+O `scheduler` a executa **1x/dia** (primeiro tique de cada dia UTC), prefixada
+com `audit-anchor `. O log do provedor passa a guardar uma cópia da âncora que
+ninguém com acesso ao Postgres consegue reescrever. `ok: false` faz o script
+sair com código 1 — a cadeia não fecha e precisa de investigação imediata.
+
+Rodar sob demanda:
+
+```bash
+npx tsx scripts/audit-anchor.ts
+```
+
+### Como comparar a âncora do log com o banco
+
+Diante de suspeita de adulteração:
+
+1. **Pegue a última âncora do log** (no Render, filtre por `audit-anchor` no
+   período de interesse):
+
+   ```
+   audit-anchor {"companyId":"co_x","seq":128,"hash":"9f2c…","verifiedAt":"…","ok":true}
+   ```
+
+2. **Leia a âncora atual do banco**:
+
+   ```sql
+   SELECT "companyId", seq, hash FROM "AuditHead" WHERE "companyId" = 'co_x';
+   ```
+
+3. **Compare**:
+
+   | Situação | Leitura |
+   |---|---|
+   | `seq` do banco **≥** o do log e a cadeia fecha | normal — a trilha só cresceu |
+   | `seq` do banco **<** o do log | **truncamento do fim**: registros que existiam sumiram |
+   | mesmo `seq`, `hash` **diferente** | **adulteração**: o conteúdo daquele ponto mudou |
+   | cadeia não fecha (`ok:false` no script) | adulteração de conteúdo ou remoção no meio |
+
+4. **Localize o ponto**: rodando o script, `brokenAtSeq` diz o primeiro `seq` em
+   que a verificação falhou. Os registros a partir dali são os suspeitos.
+
+5. **Reconstrua o histórico** com a cópia do log: as linhas diárias dão a
+   sequência de `seq`/`hash` ao longo do tempo, e mostram entre quais dias a
+   divergência apareceu.
+
+O log do provedor tem retenção limitada. Se a trilha for exigência regulatória,
+exporte as linhas `audit-anchor` para um armazenamento de retenção longa —
+qualquer lugar fora do banco da aplicação serve, desde que quem administra o
+Postgres não escreva lá.
