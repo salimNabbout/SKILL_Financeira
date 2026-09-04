@@ -57,8 +57,24 @@ const periodSchema = z
   .string()
   .regex(PERIOD_RE, "Período deve estar no formato YYYY-MM (mês 01-12)");
 
+/**
+ * Totais da auditoria de conciliação. Chegam de FORA, do passo anterior do
+ * fluxo `daily_summary` — nenhuma skill deste repo chama outra, e reimplementar
+ * a auditoria aqui duplicaria a lógica. Opcional: quando a auditoria falha
+ * (`continueOnError`) ou o resumo é pedido direto, o bloco não aparece.
+ */
+const reconciliationTotalsSchema = z.object({
+  unexplainedCount: z.number(),
+  unexplainedCents: z.number(),
+  settlementsWithoutBankCount: z.number(),
+  settlementsWithoutBankCents: z.number(),
+  amountMismatchCount: z.number(),
+  balanceMismatchCount: z.number(),
+});
+
 const dailySummarySchema = z.object({
   action: z.literal("daily_summary"),
+  reconciliationTotals: reconciliationTotalsSchema.optional(),
 });
 
 const monthlyCloseSchema = z.object({
@@ -118,6 +134,8 @@ export interface DailySummaryData {
   sources: string[];
   /** Resumo narrativo (IA ou heurística — provider declarado); números oficiais são os do relatório. */
   narrative?: ReportNarrative;
+  /** Ausente quando a auditoria de conciliação não rodou no fluxo. */
+  reconciliation?: z.infer<typeof reconciliationTotalsSchema>;
 }
 
 export interface MonthlyCloseFacts {
@@ -919,10 +937,31 @@ async function registerReportGeneration(
 const NARRATIVE_ASSUMPTION = (provider: string): string =>
   `Resumo narrativo gerado por "${provider}" APENAS a partir dos fatos determinísticos do relatório — os números oficiais são os calculados pela skill, nunca os do texto.`;
 
-async function executeDailySummary(ctx: SkillContext) {
+async function executeDailySummary(ctx: SkillContext, input: DailySummaryInput) {
   const computation = await computeDailySummary(ctx);
   const { data } = computation;
   const assumptions = [...computation.assumptions];
+
+  // Bloco de conciliação: vem pronto do passo anterior do fluxo (ver
+  // flows.ts / daily_summary). Sem ele o resumo segue igual ao de antes.
+  if (input.reconciliationTotals) {
+    data.reconciliation = input.reconciliationTotals;
+    const t = input.reconciliationTotals;
+    if (t.settlementsWithoutBankCount > 0) {
+      data.risks.push(
+        `${t.settlementsWithoutBankCount} baixa(s) sem lastro no extrato, somando ${formatBRL(t.settlementsWithoutBankCents)} — dinheiro dado como movimentado sem transação bancária correspondente.`
+      );
+    }
+    if (t.balanceMismatchCount > 0) {
+      data.risks.push(
+        `${t.balanceMismatchCount} conta(s) com saldo divergente do informado pelo banco, além do que o extrato pendente explica.`
+      );
+    }
+  } else {
+    assumptions.push(
+      "Bloco de conciliação ausente: a auditoria não rodou neste fluxo (pedido direto ou falha no passo anterior)."
+    );
+  }
 
   const envelopeAlerts: SkillAlert[] = [];
   if (data.calculations.projected7dEndingBalanceCents < 0) {
@@ -1292,7 +1331,7 @@ export const relatoriosSkill: SkillDefinition<RelatoriosInput, RelatoriosData> =
   async execute(ctx, input) {
     switch (input.action) {
       case "daily_summary":
-        return executeDailySummary(ctx);
+        return executeDailySummary(ctx, input);
       case "monthly_close":
         return executeMonthlyClose(ctx, input);
       case "executive_overview":
