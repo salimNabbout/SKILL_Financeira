@@ -125,7 +125,12 @@ function transacao(env: TestEnv, over: Partial<BankTransaction> = {}): BankTrans
  * toda baixa como "aguardando importação do extrato" e não acusa nada — que é
  * o comportamento correto, mas atrapalha o teste do resto.
  */
-function cobertura(env: TestEnv, date = "2026-08-31", bankAccountId = "ba_1") {
+function cobertura(
+  env: TestEnv,
+  date = "2026-08-31",
+  bankAccountId = "ba_1",
+  ledgerBalanceCents = 100_000
+) {
   env.db.statementImports.push({
     id: `imp_cob_${++seq}`,
     companyId: env.company.id,
@@ -135,7 +140,7 @@ function cobertura(env: TestEnv, date = "2026-08-31", bankAccountId = "ba_1") {
     imported: 0,
     duplicates: 0,
     warnings: [],
-    ledgerBalanceCents: 100_000,
+    ledgerBalanceCents,
     ledgerBalanceDate: date,
     createdBy: "usr_analyst",
     createdAt: env.clock.now().toISOString(),
@@ -673,6 +678,67 @@ describe("reconciliation_audit — saldo do banco × saldo do app", () => {
     expect(d.settlementsWithoutBank).toHaveLength(1);
     expect(d.balanceChecks[0].explainedCents).toBe(0);
     expect(d.balanceChecks[0].residualCents).toBe(0);
+  });
+});
+
+describe("reconciliation_audit — decomposição é POR CONTA", () => {
+  it("baixa de outra conta não entra na decomposição desta", async () => {
+    const env = createTestEnv();
+    conta(env); // ba_1, saldo inicial R$ 1.000,00
+    conta(env, {
+      id: "ba_2",
+      name: "Nubank",
+      accountNumberMasked: "****9999",
+      openingBalanceCents: 0,
+    });
+    cobertura(env, "2026-08-31", "ba_1");
+    cobertura(env, "2026-08-31", "ba_2", 0);
+
+    // Pagamento de R$ 300 pela conta 2, sem lastro. Ele desloca o saldo da
+    // conta 2, não o da conta 1.
+    const t = titulo(env);
+    pagamento(env, { payableId: t.id, bankAccountId: "ba_2", amountCents: 30_000 });
+
+    const d = await auditar(env);
+
+    const c1 = d.balanceChecks.find((b) => b.bankAccountId === "ba_1")!;
+    const c2 = d.balanceChecks.find((b) => b.bankAccountId === "ba_2")!;
+
+    // Conta 1 não tem movimento nenhum: bate com o banco e nada a explicar.
+    expect(c1.diffCents).toBe(0);
+    expect(c1.explainedCents).toBe(0);
+    expect(c1.residualCents).toBe(0);
+
+    // Conta 2 é quem carrega a baixa — e o resíduo dela fecha em zero.
+    expect(c2.diffCents).toBe(-30_000);
+    expect(c2.explainedCents).toBe(-30_000);
+    expect(c2.residualCents).toBe(0);
+
+    expect(d.totals.balanceMismatchCount).toBe(0);
+  });
+
+  it("pendente de cobertura de outra conta também não vaza", async () => {
+    const env = createTestEnv();
+    conta(env);
+    conta(env, {
+      id: "ba_2",
+      name: "Nubank",
+      accountNumberMasked: "****9999",
+      openingBalanceCents: 0,
+    });
+    // Conta 1 coberta até 31/08; conta 2 só até 05/08, então o pagamento de
+    // 17/08 dela fica pendente de cobertura.
+    cobertura(env, "2026-08-31", "ba_1");
+    cobertura(env, "2026-08-05", "ba_2", 0);
+    const t = titulo(env);
+    pagamento(env, { payableId: t.id, bankAccountId: "ba_2", amountCents: 30_000 });
+
+    const d = await auditar(env);
+
+    expect(d.totals.pendingCoverageCount).toBe(1);
+    const c1 = d.balanceChecks.find((b) => b.bankAccountId === "ba_1")!;
+    expect(c1.explainedCents).toBe(0);
+    expect(c1.residualCents).toBe(0);
   });
 });
 

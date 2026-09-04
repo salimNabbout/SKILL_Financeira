@@ -1806,6 +1806,8 @@ export interface ReconciliationAuditData {
   settlementsWithoutBank: Array<{
     kind: "payment" | "receipt" | "payable_paid_without_payment";
     id: ID;
+    /** Ausente em `payable_paid_without_payment`: o título não tem conta. */
+    bankAccountId?: ID;
     date: ISODate;
     amountCents: number;
     counterparty: string;
@@ -1996,7 +1998,13 @@ async function reconciliationAudit(
    * calculado tanto quanto as outras — se ficassem de fora da decomposição, o
    * bloco de saldo reacusaria exatamente o que a cobertura acabou de excusar.
    */
-  const pendentesDeCobertura: Array<{ date: ISODate; amountCents: number; entrada: boolean }> = [];
+  const pendentesDeCobertura: Array<{
+    date: ISODate;
+    amountCents: number;
+    entrada: boolean;
+    /** Ausente no título pago: não tem conta. */
+    bankAccountId?: ID;
+  }> = [];
   const titulos = new Map((await ctx.repos.payables.listAll(ctx.companyId)).map((p) => [p.id, p]));
 
   for (const p of pagamentos) {
@@ -2006,13 +2014,19 @@ async function reconciliationAudit(
     if (data < start || data > end) continue;
     if (alvoAplicado.has(`payment:${p.id}`)) continue;
     if (foraDaCobertura(data, p.bankAccountId)) {
-      pendentesDeCobertura.push({ date: data, amountCents: p.amountCents, entrada: false });
+      pendentesDeCobertura.push({
+        date: data,
+        amountCents: p.amountCents,
+        entrada: false,
+        bankAccountId: p.bankAccountId,
+      });
       continue;
     }
     const titulo = titulos.get(p.payableId);
     semLastro.push({
       kind: "payment",
       id: p.id,
+      bankAccountId: p.bankAccountId,
       date: data,
       amountCents: p.amountCents,
       counterparty: titulo ? (nomeFornecedor.get(titulo.supplierId) ?? titulo.supplierId) : "—",
@@ -2041,6 +2055,7 @@ async function reconciliationAudit(
         date: r.receivedDate,
         amountCents: r.amountCents,
         entrada: true,
+        bankAccountId: r.bankAccountId,
       });
       continue;
     }
@@ -2048,6 +2063,7 @@ async function reconciliationAudit(
     semLastro.push({
       kind: "receipt",
       id: r.id,
+      bankAccountId: r.bankAccountId,
       date: r.receivedDate,
       amountCents: r.amountCents,
       counterparty: tit ? (nomeCliente.get(tit.customerId) ?? tit.customerId) : "—",
@@ -2224,13 +2240,21 @@ async function reconciliationAudit(
     const naoConciliadasAteAsOf = extratoDaConta
       .filter((t) => !t.reconciled && t.date <= asOf)
       .reduce((acc, t) => acc + t.amountCents, 0);
+    // Filtro por CONTA além da data: a decomposição é desta conta, e uma baixa
+    // de outra conta não desloca este saldo. Sem isso, numa empresa com duas
+    // contas o resíduo sairia errado nas duas.
     const semLastroAteAsOf = semLastro
-      .filter((d) => d.date <= asOf && d.kind !== "payable_paid_without_payment")
+      .filter(
+        (d) =>
+          d.date <= asOf &&
+          d.kind !== "payable_paid_without_payment" &&
+          d.bankAccountId === conta.id
+      )
       .reduce((acc, d) => acc + (d.kind === "payment" ? -d.amountCents : d.amountCents), 0);
     // As excusadas pela cobertura contam igual: elas deslocam o saldo do app
     // sem ter saído do banco, exatamente como as sem lastro.
     const pendentesAteAsOf = pendentesDeCobertura
-      .filter((d) => d.date <= asOf)
+      .filter((d) => d.date <= asOf && d.bankAccountId === conta.id)
       .reduce((acc, d) => acc + (d.entrada ? d.amountCents : -d.amountCents), 0);
     const explicado = semLastroAteAsOf + pendentesAteAsOf - naoConciliadasAteAsOf;
     const residuo = diff - explicado;
