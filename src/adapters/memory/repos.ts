@@ -289,6 +289,17 @@ class MemPayableRepo extends MemBase<Payable> implements PayableRepo {
       this.items.filter((p) => p.companyId === companyId && statuses.includes(p.status))
     );
   }
+  async listPaidBetween(companyId: ID, start: ISODate, end: ISODate) {
+    return clone(
+      this.items.filter(
+        (p) =>
+          p.companyId === companyId &&
+          p.paidCents > 0 &&
+          p.updatedAt.slice(0, 10) >= start &&
+          p.updatedAt.slice(0, 10) <= end
+      )
+    );
+  }
   async listDueBetween(companyId: ID, start: ISODate, end: ISODate) {
     return clone(
       this.items.filter(

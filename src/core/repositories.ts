@@ -162,6 +162,16 @@ export interface PayableRepo extends BaseRepo<Payable> {
   listByStatus(companyId: ID, statuses: PayableStatus[]): Promise<Payable[]>;
   listDueBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Payable[]>;
   /**
+   * Títulos com baixa (paidCents > 0) cuja ÚLTIMA alteração caiu no intervalo.
+   * Filtro no banco, não `listAll` peneirado em memória.
+   *
+   * `updatedAt` é uma aproximação da data da baixa: o título não guarda quando
+   * foi pago. Serve para a auditoria de conciliação varrer um período; um
+   * título editado depois de pago entra pela data da edição — documentado na
+   * `formula` da auditoria.
+   */
+  listPaidBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Payable[]>;
+  /**
    * Ordem: vencimento asc, id asc. Filtros de status, fornecedor e intervalo
    * de vencimento (dueFrom/dueTo, inclusivos) são aplicados no banco — a
    * paginação e o `total` refletem o filtro.

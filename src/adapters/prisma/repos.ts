@@ -1490,6 +1490,22 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       });
       return rows.map(payableToDomain);
     },
+    async listPaidBetween(companyId: ID, start: ISODate, end: ISODate) {
+      // updatedAt é timestamp: o fim do intervalo vai até o último instante do
+      // dia, senão baixas da tarde do último dia ficariam de fora.
+      const rows = await prisma.payable.findMany({
+        where: {
+          companyId,
+          paidCents: { gt: 0 },
+          updatedAt: {
+            gte: new Date(`${start}T00:00:00.000Z`),
+            lte: new Date(`${end}T23:59:59.999Z`),
+          },
+        },
+        orderBy: { updatedAt: "asc" },
+      });
+      return rows.map(payableToDomain);
+    },
     async listDueBetween(companyId: ID, start: ISODate, end: ISODate) {
       const rows = await prisma.payable.findMany({
         where: { companyId, dueDate: { gte: toDbDate(start), lte: toDbDate(end) } },
