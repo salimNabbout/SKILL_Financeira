@@ -486,16 +486,74 @@ describe("reconciliation_audit — saldo do banco × saldo do app", () => {
     expect(alerta?.entityId).toBe("ba_1");
   });
 
-  it("resíduo pequeno é warning, não crítico", async () => {
+  it("resíduo DENTRO da tolerância não alerta — é ruído de arredondamento", async () => {
     const env = createTestEnv();
     conta(env);
-    comSaldo(env, 99_950); // R$ 0,50 de resíduo
+    comSaldo(env, 99_950); // R$ 0,50, e a tolerância padrão é R$ 1,00
+
+    const d = await auditar(env);
+
+    expect(d.balanceChecks[0].residualCents).toBe(50);
+    expect(d.totals.balanceMismatchCount).toBe(0);
+    expect(env.db.alerts.filter((a) => a.code === "reconciliation_balance_mismatch")).toHaveLength(
+      0
+    );
+  });
+
+  it("resíduo acima da tolerância e até 100x dela é warning", async () => {
+    const env = createTestEnv();
+    conta(env);
+    comSaldo(env, 95_000); // R$ 50,00: acima de R$ 1,00, abaixo de R$ 100,00
 
     await auditar(env);
 
     expect(env.db.alerts.find((a) => a.code === "reconciliation_balance_mismatch")?.severity).toBe(
       "warning"
     );
+  });
+
+  it("aritmética COM SINAL: tarifa não conciliada (−) e recebimento sem lastro (+)", async () => {
+    const env = createTestEnv();
+    conta(env); // saldo inicial R$ 1.000,00
+    // Tarifa de R$ 120,00 no extrato, ainda não conciliada: o banco já
+    // debitou, o app não conta.
+    transacao(env, { amountCents: -12_000, reconciled: false, date: "2026-08-14" });
+    // Recebimento de R$ 500,00 registrado no app sem transação no extrato: o
+    // app soma, o banco não.
+    recibo(env, { amountCents: 50_000, receivedDate: "2026-08-12" });
+
+    // Banco: 100.000 − 12.000 = 88.000. App: 100.000 + 50.000 = 150.000.
+    comSaldo(env, 88_000);
+
+    const d = await auditar(env);
+    const b = d.balanceChecks[0];
+
+    expect(b.computedBalanceCents).toBe(150_000);
+    expect(b.ledgerBalanceCents).toBe(88_000);
+    expect(b.diffCents).toBe(62_000);
+    // explicado = (+50.000 do recebimento) − (−12.000 da tarifa) = 62.000
+    expect(b.explainedCents).toBe(62_000);
+    // Os dois se somam em módulo mas têm sinais opostos na fórmula: se algum
+    // sinal estivesse trocado, o resíduo seria 24.000 ou −24.000, não zero.
+    expect(b.residualCents).toBe(0);
+    expect(env.db.alerts.filter((a) => a.code === "reconciliation_balance_mismatch")).toHaveLength(
+      0
+    );
+  });
+
+  it("baixa manual de título NÃO entra no explicado", async () => {
+    const env = createTestEnv();
+    conta(env);
+    // paidCents não participa do saldo calculado (só Payment participa), então
+    // não desloca nada e não pode explicar diferença.
+    titulo(env, { paidCents: 40_000, status: "paid", updatedAt: "2026-08-19T10:00:00.000Z" });
+    comSaldo(env, 100_000);
+
+    const d = await auditar(env);
+
+    expect(d.settlementsWithoutBank).toHaveLength(1);
+    expect(d.balanceChecks[0].explainedCents).toBe(0);
+    expect(d.balanceChecks[0].residualCents).toBe(0);
   });
 });
 
@@ -514,6 +572,25 @@ describe("reconciliation_audit — filtro por conta", () => {
     expect(d.unexplainedBankTransactions).toHaveLength(1);
     expect(d.unexplainedBankTransactions[0].description).toBe("DA CONTA 1");
     expect(d.settlementsWithoutBank).toHaveLength(0);
+  });
+
+  it("declara quantas baixas manuais ficaram fora do filtro de conta", async () => {
+    const env = createTestEnv();
+    conta(env);
+    conta(env, { id: "ba_2", name: "Nubank", accountNumberMasked: "****9999" });
+    titulo(env, { paidCents: 30_000, status: "paid", updatedAt: "2026-08-19T10:00:00.000Z" });
+    titulo(env, { paidCents: 10_000, status: "paid", updatedAt: "2026-08-20T10:00:00.000Z" });
+
+    const res = await runSkill(conciliacaoSkill, env.ctx(env.actorFor("analyst")), {
+      action: "reconciliation_audit",
+      period: AGOSTO,
+      bankAccountId: "ba_1",
+    });
+    const d = res.data as ReconciliationAuditData;
+
+    // O título não tem conta bancária: não dá para atribuí-lo ao filtro.
+    expect(d.settlementsWithoutBank).toHaveLength(0);
+    expect(res.assumptions.some((a) => a.includes("2 baixa(s) manual(is)"))).toBe(true);
   });
 
   it("conta inexistente é erro, não lista vazia", async () => {

@@ -1967,6 +1967,7 @@ async function reconciliationAudit(
   }
 
   let recibosSemConta = 0;
+  let baixasManuaisForaDoFiltro = 0;
   const recebiveis = new Map(
     (await ctx.repos.receivables.listAll(ctx.companyId)).map((r) => [r.id, r])
   );
@@ -2004,8 +2005,12 @@ async function reconciliationAudit(
   for (const t of titulosPagos) {
     if (pagamentosPorTitulo.has(t.id)) continue;
     if (alvoAplicado.has(`payable:${t.id}`)) continue;
-    // Sem conta bancária no título: só entra quando a auditoria é geral.
-    if (input.bankAccountId) continue;
+    // O título não tem bankAccountId: não há como atribuí-lo a uma conta, então
+    // ele fica fora quando a auditoria é filtrada. Contado para a suposição.
+    if (input.bankAccountId) {
+      baixasManuaisForaDoFiltro++;
+      continue;
+    }
     semLastro.push({
       kind: "payable_paid_without_payment",
       id: t.id,
@@ -2014,6 +2019,12 @@ async function reconciliationAudit(
       counterparty: nomeFornecedor.get(t.supplierId) ?? t.supplierId,
       description: t.description,
     });
+  }
+
+  if (baixasManuaisForaDoFiltro > 0) {
+    assumptions.push(
+      `${baixasManuaisForaDoFiltro} baixa(s) manual(is) de título ficaram fora: o título não tem conta bancária, e a auditoria foi filtrada por conta. Rode sem filtro para vê-las.`
+    );
   }
 
   for (const d of semLastro) {
@@ -2119,16 +2130,26 @@ async function reconciliationAudit(
 
     const diff = calculado - ledger;
 
-    // Decomposição: o extrato não conciliado não entra no saldo calculado (por
-    // isso soma com sinal invertido), e a baixa sem lastro entra sem ter saído
-    // do banco.
+    // Decomposição, com a álgebra dos sinais explícita:
+    //   computado = inicial − pagamentos + recebimentos + (conciliadas não casadas)
+    //   ledger    = inicial + Σ(todas as transações)
+    //   diff      = (−pag_sem_lastro + receb_sem_lastro) − Σ(não conciliadas)
+    //
+    // O extrato NÃO conciliado fica fora do saldo calculado (bank-balance
+    // ignora reconciled=false), então entra aqui com o sinal invertido. A baixa
+    // sem lastro entra no saldo sem ter saído do banco: pagamento subtrai,
+    // recebimento soma.
+    //
+    // `payable_paid_without_payment` NÃO entra: o paidCents do título não
+    // participa de bank-balance (só Payment participa), logo não desloca o
+    // saldo calculado e não explica diferença nenhuma.
     const naoConciliadasAteAsOf = extratoDaConta
       .filter((t) => !t.reconciled && t.date <= asOf)
       .reduce((acc, t) => acc + t.amountCents, 0);
     const semLastroAteAsOf = semLastro
       .filter((d) => d.date <= asOf && d.kind !== "payable_paid_without_payment")
       .reduce((acc, d) => acc + (d.kind === "payment" ? -d.amountCents : d.amountCents), 0);
-    const explicado = -naoConciliadasAteAsOf + semLastroAteAsOf;
+    const explicado = semLastroAteAsOf - naoConciliadasAteAsOf;
     const residuo = diff - explicado;
 
     balanceChecks.push({
@@ -2143,7 +2164,9 @@ async function reconciliationAudit(
       importId: lote.id,
     });
 
-    if (residuo !== 0) {
+    // Resíduo dentro da tolerância da empresa é ruído de arredondamento, não
+    // divergência: não alerta. Acima de 100x a tolerância, é crítico.
+    if (Math.abs(residuo) > tolerancia) {
       alerts.push({
         severity: Math.abs(residuo) > tolerancia * 100 ? "critical" : "warning",
         code: "reconciliation_balance_mismatch",
@@ -2180,7 +2203,9 @@ async function reconciliationAudit(
     settlementsWithoutBankCount: semLastro.length,
     settlementsWithoutBankCents: semLastro.reduce((acc, d) => acc + d.amountCents, 0),
     amountMismatchCount: mismatches.length,
-    balanceMismatchCount: balanceChecks.filter((b) => b.residualCents !== 0).length,
+    balanceMismatchCount: balanceChecks.filter(
+      (b) => Math.abs(b.residualCents) > ctx.config.reconciliationAmountToleranceCents
+    ).length,
   };
 
   await ctx.events.publish({
@@ -2206,7 +2231,7 @@ async function reconciliationAudit(
         "extrato sem explicação = transações do período com reconciled=false; " +
         "baixas sem lastro = Payment executado, Receipt ativo com conta bancária, ou título pago sem Payment, nenhum deles com match confirmado (recebimento em dinheiro fica fora); " +
         "valores divergentes = |aplicado − esperado| > tolerância da empresa, onde aplicado = match.amountCents ou |valor da transação|, e esperado = valor do pagamento/recebimento ou o SALDO ATUAL do título (não o histórico do momento da conciliação); " +
-        "saldo = comparação do saldo calculado (bank-balance) com o <LEDGERBAL> do último extrato importado até a data, DECOMPOSTA: explicado = extrato não conciliado + baixas sem lastro; resíduo = diferença − explicado, e é o resíduo que gera alerta",
+        "saldo = saldo calculado por core/bank-balance (o MESMO da tela de Conciliação) menos o <LEDGERBAL> do último extrato importado até a data, DECOMPOSTO com sinal: explicado = (−pagamentos sem lastro + recebimentos sem lastro) − Σ(transações não conciliadas até a data); resíduo = diferença − explicado, e alerta só quando |resíduo| > tolerância (crítico acima de 100x). Baixa manual de título não entra no explicado: o paidCents não participa do saldo calculado",
     },
     { alerts, assumptions, pendingItems, confidence: 1.0, dataSources: DATA_SOURCES }
   );
