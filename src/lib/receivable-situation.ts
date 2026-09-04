@@ -6,7 +6,9 @@
  *
  * A lógica de datas/precedência vive em `deriveSituation` (genérica, comum a
  * pagar e receber). Aqui só se traduz o enum abstrato para o rótulo pt-BR do
- * lado "a receber" ("Recebido" / "Recebido em Atraso"). PURA: recebe `today` e
+ * lado "a receber" ("Recebido" / "Recebido no Vencimento" / "Recebido em
+ * Atraso"), com rótulos distintos porque a cor não chega à exportação nem à
+ * impressão em preto e branco. PURA: recebe `today` e
  * a data de recebimento por parâmetro.
  */
 
@@ -19,6 +21,7 @@ export type ReceivableSituation =
   | "Hoje"
   | "Atrasado"
   | "Recebido"
+  | "Recebido no Vencimento"
   | "Recebido em Atraso"
   | "Cancelado";
 
@@ -28,9 +31,7 @@ const RECEIVABLE_LABEL: Record<Situation, ReceivableSituation> = {
   hoje: "Hoje",
   atrasado: "Atrasado",
   quitado: "Recebido",
-  // Recebido no dia do vencimento continua "Recebido": a distinção das três
-  // cores é uma regra de Contas a PAGAR; este lado segue como sempre foi.
-  quitado_no_vencimento: "Recebido",
+  quitado_no_vencimento: "Recebido no Vencimento",
   quitado_atraso: "Recebido em Atraso",
   cancelado: "Cancelado",
 };

@@ -27,7 +27,7 @@ import {
   type ISODate,
   type ISOMonth,
 } from "@/core/dates";
-import { formatBRL, payableRemainingCents, receivableRemainingCents } from "@/core/money";
+import { formatBRL, payableRemainingCents, receiptIsActive, receivableRemainingCents } from "@/core/money";
 import type { ReportNarrative } from "@/core/ai";
 import { ValidationError } from "@/core/errors";
 import type { AlertSeverity, PendingItem, SkillAlert } from "@/core/types";
@@ -469,11 +469,9 @@ async function computeMonthlyClose(
   const end = endOfMonth(period);
   const bank = await loadBankBase(ctx);
 
-  const receiptsOfMonth: Receipt[] = await ctx.repos.receipts.listByDateRange(
-    ctx.companyId,
-    start,
-    end
-  );
+  const receiptsOfMonth: Receipt[] = (
+    await ctx.repos.receipts.listByDateRange(ctx.companyId, start, end)
+  ).filter(receiptIsActive);
   const executedPayments: Payment[] = (
     await ctx.repos.payments.listByStatus(ctx.companyId, ["executed"])
   ).filter((p) => p.scheduledDate >= start && p.scheduledDate <= end);

@@ -8,6 +8,7 @@ import type {
   RecurringTemplate,
 } from "@/core/entities";
 import { runSkill } from "@/core/skill";
+import { deriveReceivableSituation } from "@/lib/receivable-situation";
 import {
   contasAReceberSkill,
   type CancelReceivableData,
@@ -16,7 +17,10 @@ import {
   type IssueChargeData,
   type ListOverdueData,
   type ProjectionData,
+  type AdjustReceiptDateData,
   type RegisterReceiptData,
+  type ReverseReceiptData,
+  type UpdateReceivableData,
 } from "..";
 
 // Relógio fixo do createTestEnv: 2026-08-18T15:00:00Z → "hoje" = 2026-08-18 em São Paulo.
@@ -995,5 +999,252 @@ describe("contas_a_receber / cancel_receivable", () => {
     expect(res.status).toBe("error");
     expect(res.alerts[0].code).toBe("permission_denied");
     expect(env.db.receivables.find((x) => x.id === r.id)?.status).toBe("open");
+  });
+});
+
+
+describe("contas_a_receber — edição de título", () => {
+  function editar(env: TestEnv, receivableId: string, over: Record<string, unknown> = {}) {
+    return runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "update_receivable",
+      receivableId,
+      description: "Descrição corrigida",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-30",
+      amountCents: 120_000,
+      ...over,
+    });
+  }
+
+  it("edita título sem recebimento", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const receivable = seedReceivable(env);
+
+    const res = await editar(env, receivable.id, { notes: "combinado por e-mail" });
+    const data = res.data as UpdateReceivableData;
+
+    expect(res.status).toBe("success");
+    expect(data.receivable.description).toBe("Descrição corrigida");
+    expect(data.receivable.amountCents).toBe(120_000);
+    expect(data.receivable.dueDate).toBe("2026-08-30");
+    expect(data.receivable.notes).toBe("combinado por e-mail");
+    expect(env.db.auditRecords.some((a) => a.action === "receivable.updated")).toBe(true);
+  });
+
+  it("recusa título COM recebimento — o caminho é estornar antes", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const receivable = seedReceivable(env, { receivedCents: 40_000, status: "partially_received" });
+
+    const res = await editar(env, receivable.id);
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toContain("Estorne o recebimento");
+  });
+
+  it("recusa título recebido ou cancelado e vencimento anterior à emissão", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const quitado = seedReceivable(env, { receivedCents: 100_000, status: "received" });
+    expect((await editar(env, quitado.id)).status).toBe("error");
+
+    const aberto = seedReceivable(env);
+    const res = await editar(env, aberto.id, { dueDate: "2026-07-20" });
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toContain("Verificar a Data da Emissão");
+  });
+
+  it("papel sem receivable.create não edita", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const receivable = seedReceivable(env);
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("viewer")), {
+      action: "update_receivable",
+      receivableId: receivable.id,
+      description: "x",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-30",
+      amountCents: 1_000,
+    });
+
+    expect(res.status).toBe("error");
+    expect(env.db.receivables.find((r) => r.id === receivable.id)?.description).toBe(
+      "Título semeado"
+    );
+  });
+});
+
+describe("contas_a_receber — estorno de recebimento", () => {
+  /** Registra um recebimento e devolve o título e o recibo. */
+  async function comRecebimento(env: TestEnv, amountCents = 100_000, over: Partial<Receivable> = {}) {
+    seedCustomer(env);
+    const receivable = seedReceivable(env, over);
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "register_receipt",
+      receivableId: receivable.id,
+      amountCents,
+      receivedDate: TODAY,
+      method: "pix",
+    });
+    const data = res.data as RegisterReceiptData;
+    return { receivable, receipt: data.receipt };
+  }
+
+  function estornar(env: TestEnv, receiptId: string, role: "manager" | "analyst" = "manager") {
+    return runSkill(contasAReceberSkill, env.ctx(env.actorFor(role)), {
+      action: "reverse_receipt",
+      receiptId,
+      reason: "baixa no título errado",
+    });
+  }
+
+  it("devolve o saldo e o título volta para a fila", async () => {
+    const env = createTestEnv();
+    const { receivable, receipt } = await comRecebimento(env);
+    expect(env.db.receivables.find((r) => r.id === receivable.id)?.status).toBe("received");
+
+    const res = await estornar(env, receipt.id);
+    const data = res.data as ReverseReceiptData;
+
+    expect(res.status).toBe("success");
+    expect(data.receipt.status).toBe("canceled");
+    const stored = env.db.receivables.find((r) => r.id === receivable.id);
+    expect(stored?.receivedCents).toBe(0);
+    expect(stored?.status).toBe("open");
+    expect(env.db.auditRecords.some((a) => a.action === "receipt.reversed")).toBe(true);
+  });
+
+  it("estorno parcial deixa o título partially_received", async () => {
+    const env = createTestEnv();
+    const env2 = env; // legibilidade
+    const { receivable } = await comRecebimento(env2, 40_000);
+    const segundo = await runSkill(contasAReceberSkill, env2.ctx(env2.actorFor("manager")), {
+      action: "register_receipt",
+      receivableId: receivable.id,
+      amountCents: 60_000,
+      receivedDate: TODAY,
+      method: "pix",
+    });
+    const doSegundo = (segundo.data as RegisterReceiptData).receipt;
+    expect(env2.db.receivables.find((r) => r.id === receivable.id)?.status).toBe("received");
+
+    const res = await estornar(env2, doSegundo.id);
+
+    expect(res.status).toBe("success");
+    const stored = env2.db.receivables.find((r) => r.id === receivable.id);
+    expect(stored?.receivedCents).toBe(40_000); // só o estornado voltou
+    expect(stored?.status).toBe("partially_received");
+  });
+
+  it("estorno repetido é idempotente", async () => {
+    const env = createTestEnv();
+    const { receivable, receipt } = await comRecebimento(env);
+
+    await estornar(env, receipt.id);
+    const segunda = await estornar(env, receipt.id);
+
+    expect(segunda.status).toBe("success");
+    const stored = env.db.receivables.find((r) => r.id === receivable.id);
+    expect(stored?.receivedCents).toBe(0);
+    expect(stored?.status).toBe("open");
+  });
+
+  it("papel sem receivable.cancel não estorna", async () => {
+    const env = createTestEnv();
+    const { receivable, receipt } = await comRecebimento(env);
+
+    const res = await estornar(env, receipt.id, "analyst");
+
+    expect(res.status).toBe("error");
+    expect(env.db.receivables.find((r) => r.id === receivable.id)?.receivedCents).toBe(100_000);
+    expect(env.db.receipts.find((rc) => rc.id === receipt.id)?.status).not.toBe("canceled");
+  });
+
+  it("devolve só o PRINCIPAL quando o recebimento incluiu multa e juros", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    // Vencido: recebimento acima do saldo é aceito se o excedente = encargos.
+    const receivable = seedReceivable(env, { dueDate: "2026-08-01", amountCents: 100_000 });
+    const reg = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "register_receipt",
+      receivableId: receivable.id,
+      amountCents: 100_000,
+      receivedDate: TODAY,
+      method: "pix",
+    });
+    const receipt = (reg.data as RegisterReceiptData).receipt;
+    expect(receipt.principalCents).toBe(100_000);
+
+    await estornar(env, receipt.id);
+
+    // O saldo devolvido é o principal, nunca o total com encargos.
+    expect(env.db.receivables.find((r) => r.id === receivable.id)?.receivedCents).toBe(0);
+  });
+});
+
+describe("contas_a_receber — correção da data de recebimento", () => {
+  async function conciliadoEm(env: TestEnv, receivedDate: string, over: Partial<Receivable> = {}) {
+    seedCustomer(env);
+    const receivable = seedReceivable(env, over);
+    const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "register_receipt",
+      receivableId: receivable.id,
+      amountCents: 100_000,
+      receivedDate,
+      method: "pix",
+    });
+    return { receivable, receipt: (res.data as RegisterReceiptData).receipt };
+  }
+
+  function corrigir(env: TestEnv, receiptId: string, receivedDate: string) {
+    return runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "adjust_receipt_date",
+      receiptId,
+      receivedDate,
+    });
+  }
+
+  it("corrige a data e reclassifica de Recebido em Atraso para Recebido", async () => {
+    const env = createTestEnv();
+    // Vence 10/08, recebido em 18/08 (hoje) → em atraso.
+    const { receivable, receipt } = await conciliadoEm(env, TODAY, { dueDate: "2026-08-10" });
+    const stored = env.db.receivables.find((r) => r.id === receivable.id)!;
+    expect(deriveReceivableSituation(stored, TODAY, receipt.receivedDate)).toBe(
+      "Recebido em Atraso"
+    );
+
+    const res = await corrigir(env, receipt.id, "2026-08-05");
+    const data = res.data as AdjustReceiptDateData;
+
+    expect(res.status).toBe("success");
+    expect(data.receipt.receivedDate).toBe("2026-08-05");
+    expect(deriveReceivableSituation(stored, TODAY, "2026-08-05")).toBe("Recebido");
+    // Valor e saldo intactos.
+    expect(stored.receivedCents).toBe(100_000);
+    expect(env.db.auditRecords.some((a) => a.action === "receipt.date_adjusted")).toBe(true);
+  });
+
+  it("recusa data futura, anterior à emissão e recebimento estornado", async () => {
+    const env = createTestEnv();
+    const { receipt } = await conciliadoEm(env, TODAY);
+
+    const futura = await corrigir(env, receipt.id, "2026-12-31");
+    expect(futura.status).toBe("error");
+    expect(futura.alerts[0].message).toContain("futuro");
+
+    const antiga = await corrigir(env, receipt.id, "2026-07-20");
+    expect(antiga.status).toBe("error");
+    expect(antiga.alerts[0].message).toContain("anterior à emissão");
+
+    await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "reverse_receipt",
+      receiptId: receipt.id,
+      reason: "teste",
+    });
+    const estornado = await corrigir(env, receipt.id, "2026-08-05");
+    expect(estornado.status).toBe("error");
+    expect(estornado.alerts[0].message).toContain("estornado");
   });
 });

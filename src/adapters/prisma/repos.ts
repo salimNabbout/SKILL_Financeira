@@ -555,6 +555,9 @@ const receiptToDomain = (r: DbReceipt): Receipt => ({
   amountCents: fromCents(r.amountCents),
   receivedDate: fromDbDate(r.receivedDate),
   method: r.method as Receipt["method"],
+  status: r.status as Receipt["status"],
+  canceledAt: fromInstantOpt(r.canceledAt),
+  principalCents: fromCentsOpt(r.principalCents),
   registeredBy: r.registeredBy,
   createdAt: fromInstant(r.createdAt),
 });
@@ -566,6 +569,9 @@ const receiptToDb = (e: Receipt): Prisma.ReceiptUncheckedCreateInput => ({
   amountCents: toCents(e.amountCents),
   receivedDate: toDbDate(e.receivedDate),
   method: e.method,
+  status: e.status ?? "registered",
+  canceledAt: toInstantOpt(e.canceledAt),
+  principalCents: toCentsOpt(e.principalCents),
   registeredBy: e.registeredBy,
   createdAt: toInstant(e.createdAt),
 });

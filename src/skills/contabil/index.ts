@@ -37,7 +37,7 @@ import type {
   Receipt,
 } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
-import { formatBRL } from "@/core/money";
+import { formatBRL, receiptIsActive } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 import {
@@ -374,11 +374,13 @@ async function prepareEntries(
     for (const payment of executedPayments) {
       plans.push(await planForPayment(ctx, payment));
     }
-    const receipts = await ctx.repos.receipts.listByDateRange(
-      ctx.companyId,
-      startOfMonth(period),
-      endOfMonth(period)
-    );
+    const receipts = (
+      await ctx.repos.receipts.listByDateRange(
+        ctx.companyId,
+        startOfMonth(period),
+        endOfMonth(period)
+      )
+    ).filter(receiptIsActive);
     for (const receipt of receipts) {
       plans.push(await planForReceipt(ctx, receipt));
     }
@@ -1039,7 +1041,9 @@ async function taxSummary(
   const start = startOfMonth(input.period);
   const end = endOfMonth(input.period);
 
-  const receipts = await ctx.repos.receipts.listByDateRange(ctx.companyId, start, end);
+  const receipts = (
+    await ctx.repos.receipts.listByDateRange(ctx.companyId, start, end)
+  ).filter(receiptIsActive);
   const cashCents = receipts.reduce((acc, r) => acc + r.amountCents, 0);
 
   const receivables = (await ctx.repos.receivables.listAll(ctx.companyId)).filter(

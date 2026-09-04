@@ -273,6 +273,9 @@ export interface Payment {
   updatedAt: string;
 }
 
+/** Estorno é lógico: o recebimento fica "canceled", nunca é apagado. */
+export type ReceiptStatus = "registered" | "canceled";
+
 export interface Receipt {
   id: ID;
   companyId: ID;
@@ -281,6 +284,15 @@ export interface Receipt {
   amountCents: number;
   receivedDate: ISODate;
   method: ReceiptMethod;
+  /** Ausente = "registered" (linhas anteriores ao estorno existir). */
+  status?: ReceiptStatus;
+  canceledAt?: string;
+  /**
+   * Parte do valor que baixou o SALDO do título — `amountCents` é o total
+   * recebido e pode incluir multa/juros. É este o valor que o estorno devolve.
+   * Ausente nas linhas antigas: o estorno cai num fallback conservador.
+   */
+  principalCents?: number;
   /** userId ou "system" (baixa automática via conciliação). */
   registeredBy: ID;
   createdAt: string;

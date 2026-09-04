@@ -49,6 +49,7 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
   const categoryId = fdOptional(formData, "categoryId");
   const costCenterId = fdOptional(formData, "costCenterId");
   const method = fdOptional(formData, "method");
+  const notes = fdOptional(formData, "notes");
 
   // Falha na CRIAÇÃO: reexibe o Card "Novo título" com TUDO que foi digitado
   // (searchParams nt_* → defaultValue), inclusive o campo errado. Preserva o
@@ -65,6 +66,7 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
     if (categoryId) qs.set("nt_categoria", categoryId);
     if (costCenterId) qs.set("nt_centrocusto", costCenterId);
     if (method) qs.set("nt_metodo", method);
+    if (notes) qs.set("nt_observacao", notes.slice(0, MAX_URL_DESCRIPTION));
     redirect(`${PATH}?${qs.toString()}`);
   }
 
@@ -117,6 +119,8 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
       ...(costCenterId ? { costCenterId } : {}),
       installmentCount,
       method,
+      // Observação é opcional: só entra quando preenchida.
+      ...(notes ? { notes } : {}),
     });
   } catch (error) {
     failCreate(errorMessage(error));
@@ -250,4 +254,147 @@ export async function cancelReceivableAction(formData: FormData): Promise<void> 
   if (response.status === "failed") failCancel(flowErrorMessage(response));
 
   ok("Título cancelado e mantido no histórico para auditoria.");
+}
+
+/**
+ * EDIÇÃO de título a receber. As regras e os bloqueios ficam na skill
+ * (recusa título recebido, cancelado ou com recebimento registrado); aqui só
+ * validamos a entrada e, em falha, reabrimos o formulário na mesma linha
+ * preservando o que foi digitado.
+ */
+export async function updateReceivableAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const receivableId = fdString(formData, "receivableId");
+  const description = fdString(formData, "description");
+  const issueDate = fdString(formData, "issueDate");
+  const dueDate = fdString(formData, "dueDate");
+  const amountRaw = fdString(formData, "amount");
+  const categoryId = fdOptional(formData, "categoryId");
+  const costCenterId = fdOptional(formData, "costCenterId");
+  const notes = fdOptional(formData, "notes");
+
+  function failEdit(message: string): never {
+    const qs = new URLSearchParams({ editar: receivableId, erro: message });
+    if (description) qs.set("f_descricao", description.slice(0, MAX_URL_DESCRIPTION));
+    if (issueDate) qs.set("f_emissao", issueDate);
+    if (dueDate) qs.set("f_vencimento", dueDate);
+    if (amountRaw) qs.set("f_valor", amountRaw);
+    if (categoryId) qs.set("f_categoria", categoryId);
+    if (costCenterId) qs.set("f_centrocusto", costCenterId);
+    if (notes) qs.set("f_notas", notes.slice(0, MAX_URL_DESCRIPTION));
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!receivableId) fail("Título não identificado para edição.");
+  if (!description || !issueDate || !dueDate) {
+    failEdit("Preencha descrição, emissão e vencimento.");
+  }
+
+  let amountCents = 0;
+  try {
+    amountCents = parseBRLToCents(amountRaw);
+  } catch (error) {
+    failEdit(errorMessage(error));
+  }
+  if (amountCents <= 0) failEdit("O valor do título deve ser positivo.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "update_receivable",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: {
+        receivableId,
+        description,
+        issueDate,
+        dueDate,
+        amountCents,
+        // Vazio vira undefined e MANTÉM o atual — a skill só limpa com null.
+        categoryId,
+        costCenterId,
+        notes,
+      },
+    });
+  } catch (error) {
+    failEdit(errorMessage(error));
+  }
+
+  if (response.status === "failed") failEdit(flowErrorMessage(response));
+
+  ok("Título atualizado.");
+}
+
+/**
+ * ESTORNO de um recebimento: devolve o saldo e o título volta para a fila.
+ * Em falha, reabre o pop-up preservando o motivo.
+ */
+export async function reverseReceiptAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const receiptId = fdString(formData, "receiptId");
+  const reason = fdString(formData, "reason");
+
+  function failReverse(message: string): never {
+    const qs = new URLSearchParams({ estornar: receiptId, erro: message });
+    if (reason) qs.set("f_motivo_estorno", reason);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!receiptId) fail("Recebimento não identificado.");
+  // Motivo obrigatório: é o que explica o estorno na trilha de auditoria.
+  if (!reason) failReverse("Informe o motivo do estorno.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "reverse_receipt",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: { receiptId, reason },
+    });
+  } catch (error) {
+    failReverse(errorMessage(error));
+  }
+
+  if (response.status === "failed") failReverse(flowErrorMessage(response));
+
+  ok("Recebimento estornado. O saldo voltou para o título.");
+}
+
+/** Corrige a DATA de um recebimento já registrado. */
+export async function adjustReceiptDateAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const receiptId = fdString(formData, "receiptId");
+  const receivableId = fdString(formData, "receivableId");
+  const receivedDate = fdString(formData, "receivedDate");
+
+  function failAdjust(message: string): never {
+    const qs = new URLSearchParams({ recebimentos: receivableId, erro: message });
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!receiptId) fail("Recebimento não identificado.");
+  if (!receivedDate) failAdjust("Informe a data do recebimento.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "adjust_receipt_date",
+      companyId: session.company.id,
+      actor: session.actor,
+      payload: { receiptId, receivedDate },
+    });
+  } catch (error) {
+    failAdjust(errorMessage(error));
+  }
+
+  if (response.status === "failed") failAdjust(flowErrorMessage(response));
+
+  ok("Data do recebimento corrigida. A situação do título foi reclassificada.");
 }

@@ -9,7 +9,7 @@
 
 import { z } from "zod";
 import type { ISODate } from "@/core/dates";
-import { formatBRL } from "@/core/money";
+import { formatBRL, receiptIsActive } from "@/core/money";
 import type { Invoice, Receivable } from "@/core/entities";
 import { NotFoundError } from "@/core/errors";
 import { errorResult, makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
@@ -344,7 +344,9 @@ async function cancelInvoice(
 
   // Bloqueio: fatura com qualquer recebimento registrado não pode ser cancelada.
   for (const r of receivables) {
-    const receipts = await ctx.repos.receipts.listByReceivable(ctx.companyId, r.id);
+    const receipts = (
+      await ctx.repos.receipts.listByReceivable(ctx.companyId, r.id)
+    ).filter(receiptIsActive);
     if (receipts.length > 0 || r.receivedCents > 0) {
       return errorResult(
         SKILL_NAME,

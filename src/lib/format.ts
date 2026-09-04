@@ -141,6 +141,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "receivable.receipt_registered": "Recebimento registrado",
   "receivable.charge_issued": "Cobrança emitida",
   "receipt.created": "Recebimento criado",
+  "receipt.reversed": "Recebimento estornado",
+  "receipt.date_adjusted": "Data do recebimento corrigida",
 
   // Notas fiscais
   "invoice.created": "Nota fiscal criada",

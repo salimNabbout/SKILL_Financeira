@@ -58,6 +58,7 @@ import { InMemoryRateLimiter } from "@/lib/rate-limit";
 import { verifyTotpConsume } from "@/lib/totp";
 import { toTitleCase } from "@/app/(app)/cadastros/_lib/form-utils";
 import { EXPORT_LAYOUT_IDS } from "@/skills/contabil/layouts";
+import { receiptIsActive } from "@/core/money";
 import type { ExportBatchData } from "@/skills/contabil";
 import { maskSensitive, publicCompany, publicUser, type PublicCompany, type PublicUser } from "./respond";
 
@@ -665,7 +666,9 @@ export async function getReceivable(
 ): Promise<ReceivableDetail> {
   const receivable = await deps.repos.receivables.getById(session.company.id, id);
   if (!receivable) throw new NotFoundError("Título a receber", id);
-  const receipts = await deps.repos.receipts.listByReceivable(session.company.id, id);
+  const receipts = (
+    await deps.repos.receipts.listByReceivable(session.company.id, id)
+  ).filter(receiptIsActive);
   return { receivable, receipts };
 }
 

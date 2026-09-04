@@ -19,7 +19,7 @@ import { assertPermission } from "@/core/auth";
 import { addMonths, monthOf, startOfMonth, type ISOMonth } from "@/core/dates";
 import type { Budget, BudgetLine, ID } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
-import { formatBRL, payableRemainingCents } from "@/core/money";
+import { formatBRL, payableRemainingCents, receiptIsActive } from "@/core/money";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
 import type { PendingItem, SkillAlert, SkillResult } from "@/core/types";
 
@@ -172,7 +172,7 @@ async function loadRealizedItems(ctx: SkillContext): Promise<RealizedItem[]> {
   const [payments, payables, receipts, receivables] = await Promise.all([
     ctx.repos.payments.listAll(ctx.companyId),
     ctx.repos.payables.listAll(ctx.companyId),
-    ctx.repos.receipts.listAll(ctx.companyId),
+    ctx.repos.receipts.listAll(ctx.companyId).then((rs) => rs.filter(receiptIsActive)),
     ctx.repos.receivables.listAll(ctx.companyId),
   ]);
   const payableById = new Map(payables.map((p) => [p.id, p]));

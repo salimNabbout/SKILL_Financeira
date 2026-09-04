@@ -64,7 +64,7 @@ export default async function ImprimirContasAPagarPage({
 
       <div className="nao-imprimir mb-4 flex flex-wrap items-center gap-3">
         <Link href="/contas-a-receber" className="text-sm text-[var(--brand)] underline">
-          ← Voltar para Contas a pagar
+          ← Voltar para Contas a receber
         </Link>
         <span className="text-xs text-[var(--ink-muted)]">
           A janela de impressão abre sozinha. Selecione &quot;Paisagem&quot; se o navegador não
