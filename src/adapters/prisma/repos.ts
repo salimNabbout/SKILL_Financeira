@@ -1375,7 +1375,10 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
           ledgerBalanceCents: { not: null },
           ledgerBalanceDate: { not: null, lte: toDbDate(date) },
         },
-        orderBy: { ledgerBalanceDate: "desc" },
+        // Data-base primeiro: o arquivo importado por último pode declarar um
+        // saldo MAIS ANTIGO que o de um arquivo importado antes. Desempate por
+        // createdAt para o caso de dois lotes com a mesma data-base.
+        orderBy: [{ ledgerBalanceDate: "desc" }, { createdAt: "desc" }],
       });
       return row ? statementImportToDomain(row) : null;
     },

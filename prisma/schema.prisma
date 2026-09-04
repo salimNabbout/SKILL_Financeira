@@ -237,6 +237,9 @@ model BankTransaction {
   currency      String   @default("BRL")
   description   String
   externalId    String? // FITID do OFX ou hash determinístico (dedupe)
+  // Aponta para StatementImport.id, mas SEM foreign key de propósito: os
+  // lotes anteriores à migração 0019 não têm linha lá, e uma FK exigiria
+  // backfill ou quebraria a migração. A referência fica solta.
   importBatchId String?
   source        String // ofx | csv | api_mock | manual
   reconciled    Boolean  @default(false)

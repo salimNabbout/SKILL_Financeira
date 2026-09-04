@@ -227,7 +227,13 @@ class MemStatementImportRepo extends MemBase<StatementImport> implements Stateme
           i.ledgerBalanceDate !== undefined &&
           i.ledgerBalanceDate <= date
       )
-      .sort((a, b) => (a.ledgerBalanceDate! < b.ledgerBalanceDate! ? 1 : -1));
+      // Data-base desc, desempate por createdAt desc. O comparador anterior
+      // nunca devolvia 0, então datas iguais davam ordem arbitrária.
+      .sort(
+        (a, b) =>
+          b.ledgerBalanceDate!.localeCompare(a.ledgerBalanceDate!) ||
+          b.createdAt.localeCompare(a.createdAt)
+      );
     return candidatos[0] ? clone(candidatos[0]) : null;
   }
 }

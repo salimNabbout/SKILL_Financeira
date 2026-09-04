@@ -206,6 +206,20 @@ async function run(env: TestEnv, input: unknown, actorKey: Parameters<TestEnv["a
 }
 
 // Mesmo arquivo, com o saldo declarado pelo banco no fim.
+/** OFX com saldo declarado e FITIDs próprios (para não deduplicar entre lotes). */
+function comSaldo(base: string, valor: string, dtasof: string, prefixo: string): string {
+  return base
+    .replace(/FIT-00(\d)/g, `${prefixo}-$1`)
+    .replace(
+      "</BANKTRANLIST>",
+      `</BANKTRANLIST>
+<LEDGERBAL>
+<BALAMT>${valor}
+<DTASOF>${dtasof}
+</LEDGERBAL>`
+    );
+}
+
 const OFX_COM_SALDO = OFX_SAMPLE.replace(
   "</BANKTRANLIST>",
   `</BANKTRANLIST>
@@ -281,6 +295,70 @@ describe("conciliacao_bancaria — lote de importação (StatementImport)", () =
     // e a auditoria precisa do mais recente.
     expect(env.db.statementImports).toHaveLength(2);
     expect(env.db.statementImports[1]).toMatchObject({ imported: 0, duplicates: 3 });
+  });
+
+  it("escolhe pela DATA-BASE, não pela ordem de importação", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    // Ordem invertida de propósito: primeiro entra o arquivo com a data-base
+    // MAIS NOVA, depois o com a data-base mais velha. Ordenar por createdAt
+    // devolveria o segundo — e o saldo conferido seria o desatualizado.
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "9999,00", "20260831", "FIT-A"),
+    });
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "1111,00", "20260810", "FIT-B"),
+    });
+
+    expect(env.db.statementImports).toHaveLength(2);
+    // O último importado é o de data-base mais velha...
+    expect(env.db.statementImports[1].ledgerBalanceCents).toBe(111_100);
+
+    // ...mas a referência tem de ser a data-base mais recente.
+    const achado = await env.repos.statementImports.latestWithBalanceBefore(
+      env.company.id,
+      "ba_1",
+      "2026-09-30"
+    );
+    expect(achado?.ledgerBalanceCents).toBe(999_900);
+    expect(achado?.ledgerBalanceDate).toBe("2026-08-31");
+  });
+
+  it("mesma data-base em dois lotes: vence o importado por último", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "500,00", "20260831", "FIT-C"),
+    });
+    // O relógio do ambiente de teste é fixo: sem avançá-lo, os dois lotes
+    // teriam o MESMO createdAt e não haveria desempate para exercitar.
+    env.clock.set("2026-08-18T16:00:00Z");
+    await run(env, {
+      action: "import_statement",
+      bankAccountId: "ba_1",
+      format: "ofx",
+      content: comSaldo(OFX_SAMPLE, "700,00", "20260831", "FIT-D"),
+    });
+
+    const achado = await env.repos.statementImports.latestWithBalanceBefore(
+      env.company.id,
+      "ba_1",
+      "2026-09-30"
+    );
+    // Empate na data-base: o desempate é por createdAt, então o arquivo mais
+    // recente corrige o saldo do anterior.
+    expect(achado?.ledgerBalanceCents).toBe(700_00);
   });
 
   it("latestWithBalanceBefore ignora lote sem saldo e respeita a data-base", async () => {
