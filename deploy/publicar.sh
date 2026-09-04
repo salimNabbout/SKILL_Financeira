@@ -53,7 +53,10 @@ echo "==> 4/6 Reaplicando privilegios da role restrita…"
 # Idempotente, e NO-OP silencioso quando a role ainda nao existe. Roda depois da
 # migration: tabela nova precisa nascer acessivel para a role do app. O
 # ALTER DEFAULT PRIVILEGES ja cobre isso, este passo e a rede de seguranca.
-dc exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"   -v role_app="$APP_DB_USER" < "${APP_DIR}/deploy/sql/grants-app.sql" >/dev/null
+# APP_DB_USER pode nao existir no .env.prod (o fallback vive no compose), e o
+# script roda com `set -u`: a referencia PRECISA do default, senao aborta o
+# deploy depois de ja ter recriado os containers.
+dc exec -T db psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"   -v role_app="${APP_DB_USER:-financeira_app}" < "${APP_DIR}/deploy/sql/grants-app.sql" >/dev/null
 
 echo "==> 5/6 Aguardando o app responder…"
 # Porta local do app (do .env.prod); default 3000 se não definida.
