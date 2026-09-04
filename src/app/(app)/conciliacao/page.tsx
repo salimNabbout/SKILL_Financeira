@@ -5,7 +5,12 @@ import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatBR, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
 import type { ISODate } from "@/core/dates";
-import { computeBankPeriodBalance, reconciledInPeriod } from "@/core/bank-balance";
+import {
+  balanceLines,
+  computeBankPeriodBalance,
+  type BalanceLine,
+  type BankBalanceInput,
+} from "@/core/bank-balance";
 import type { ReconciliationMatch } from "@/core/entities";
 import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
@@ -59,7 +64,7 @@ export default async function ConciliacaoPage({
   // um dia. Declarado aqui porque o saldo e o card de pagamentos usam o mesmo.
   const today = todayInTz(clock.now(), session.config.timezone);
 
-  const [bankAccounts, suggested, decided, unreconciledPage, payables, receivables, payments, suppliers, customers, users, costCenters] =
+  const [bankAccounts, suggested, decided, unreconciledPage, payables, receivables, payments, receipts, suppliers, customers, users, costCenters] =
     await Promise.all([
       repos.bankAccounts.listAll(companyId),
       repos.reconciliations.listByStatus(companyId, ["suggested"]),
@@ -73,6 +78,8 @@ export default async function ConciliacaoPage({
       repos.payables.listAll(companyId),
       repos.receivables.listAll(companyId),
       repos.payments.listAll(companyId),
+      // Entradas do saldo: a tela não usava recibos até a caixa existir.
+      repos.receipts.listAll(companyId),
       repos.suppliers.listAll(companyId),
       repos.customers.listAll(companyId),
       repos.users.listAll(),
@@ -99,15 +106,28 @@ export default async function ConciliacaoPage({
     contaSelecionada && !filtros.periodoInvalido
       ? await repos.bankTransactions.listByAccount(companyId, contaSelecionada.id)
       : [];
-  const periodo = { from: filtros.from, to: filtros.to };
-  const saldo = contaSelecionada
-    ? computeBankPeriodBalance(contaSelecionada, extratoDaConta, periodo)
-    : undefined;
-  // Mesmo filtro do total, de propósito: a lista abaixo da caixa SEMPRE soma o
-  // número exibido. Não custa consulta — o extrato da conta já está carregado.
-  const linhasDoPeriodo = contaSelecionada
-    ? reconciledInPeriod(contaSelecionada.id, extratoDaConta, periodo)
-    : [];
+  // O dinheiro conciliado mora em dois lugares: no registro da empresa
+  // (pagamento executado, recebimento) e no extrato do banco. `decided` são os
+  // matches confirmados, usados para NÃO contar duas vezes a transação do
+  // extrato que já veio como pagamento.
+  const entradaSaldo: BankBalanceInput | undefined =
+    contaSelecionada && !filtros.periodoInvalido
+      ? {
+          account: contaSelecionada,
+          payments,
+          receipts,
+          transactions: extratoDaConta,
+          matches: decided,
+          period: { from: filtros.from, to: filtros.to },
+          timeZone: session.config.timezone,
+        }
+      : undefined;
+  const saldo = entradaSaldo ? computeBankPeriodBalance(entradaSaldo) : undefined;
+  // Os totais DERIVAM destas linhas: a lista abaixo da caixa não tem como
+  // divergir do número exibido.
+  const linhasDoPeriodo = entradaSaldo ? balanceLines(entradaSaldo) : [];
+  const receiptById = new Map(receipts.map((r) => [r.id, r]));
+  const extratoById = new Map(extratoDaConta.map((t) => [t.id, t]));
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const userName = new Map(users.map((u) => [u.id, u.name]));
@@ -124,6 +144,33 @@ export default async function ConciliacaoPage({
       .filter((t): t is NonNullable<typeof t> => t !== null)
       .map((t) => [t.id, t])
   );
+
+  /**
+   * O core devolve origem + id; nomear é da tela, que já tem os cadastros em
+   * memória. Assim o cálculo do saldo não precisa saber o que é fornecedor.
+   */
+  function descreverLinha(linha: BalanceLine): { descricao: string; origem: string } {
+    if (linha.origin === "payment") {
+      const pay = paymentById.get(linha.sourceId);
+      const payable = pay ? payableById.get(pay.payableId) : undefined;
+      const fornecedor = payable ? supplierName.get(payable.supplierId) : undefined;
+      return {
+        descricao: [fornecedor, payable?.description].filter(Boolean).join(" — ") || "Pagamento",
+        origem: "Pagamento",
+      };
+    }
+    if (linha.origin === "receipt") {
+      const rec = receiptById.get(linha.sourceId);
+      const receivable = rec ? receivableById.get(rec.receivableId) : undefined;
+      const cliente = receivable ? customerName.get(receivable.customerId) : undefined;
+      return {
+        descricao: [cliente, receivable?.description].filter(Boolean).join(" — ") || "Recebimento",
+        origem: "Recebimento",
+      };
+    }
+    const tx = extratoById.get(linha.sourceId);
+    return { descricao: tx?.description ?? linha.sourceId, origem: "Extrato" };
+  }
 
   function resolveTarget(match: ReconciliationMatch): TargetInfo | null {
     // Despesa bancária (tarifa/IOF/juros) não tem título do outro lado: o alvo
@@ -256,7 +303,7 @@ export default async function ConciliacaoPage({
           transação bancária nenhuma — só a importação do extrato cria. Sem essa
           distinção no rótulo, o saldo parece errado para quem lança pagamentos
           sem importar OFX. */}
-      <Card className="mb-6" title="Saldo do extrato conciliado">
+      <Card className="mb-6" title="Saldo conciliado">
         <form method="get" action="/conciliacao" className="grid gap-4 md:grid-cols-4">
           <Field label="Conta bancária">
             <select
@@ -321,26 +368,29 @@ export default async function ConciliacaoPage({
             {linhasDoPeriodo.length > 0 ? (
               <details className="mt-3">
                 <summary className="cursor-pointer text-sm text-[var(--brand)]">
-                  Ver os {linhasDoPeriodo.length} lançamentos do extrato
+                  Ver os {linhasDoPeriodo.length} lançamentos que compõem o saldo
                 </summary>
                 <div className="mt-2 overflow-x-auto">
                   <Table
                     headers={["Data", "Descrição", "Entrada", "Saída", "Origem"]}
                     align={["l", "l", "r", "r", "l"]}
                   >
-                    {linhasDoPeriodo.map((t) => (
-                      <tr key={t.id}>
-                        <Td className="whitespace-nowrap">{formatBR(t.date)}</Td>
-                        <Td>{t.description}</Td>
-                        <Td right className="text-[var(--ok)]">
-                          {t.amountCents > 0 ? formatBRL(t.amountCents) : ""}
-                        </Td>
-                        <Td right className="text-[var(--crit)]">
-                          {t.amountCents < 0 ? formatBRL(Math.abs(t.amountCents)) : ""}
-                        </Td>
-                        <Td>{t.source}</Td>
-                      </tr>
-                    ))}
+                    {linhasDoPeriodo.map((l) => {
+                      const rotulo = descreverLinha(l);
+                      return (
+                        <tr key={`${l.origin}_${l.sourceId}`}>
+                          <Td className="whitespace-nowrap">{formatBR(l.date)}</Td>
+                          <Td>{rotulo.descricao}</Td>
+                          <Td right className="text-[var(--ok)]">
+                            {l.amountCents > 0 ? formatBRL(l.amountCents) : ""}
+                          </Td>
+                          <Td right className="text-[var(--crit)]">
+                            {l.amountCents < 0 ? formatBRL(Math.abs(l.amountCents)) : ""}
+                          </Td>
+                          <Td>{rotulo.origem}</Td>
+                        </tr>
+                      );
+                    })}
                   </Table>
                 </div>
               </details>
@@ -348,8 +398,10 @@ export default async function ConciliacaoPage({
             <p className="mt-3 text-xs text-[var(--ink-muted)]">
               Saldo = saldo inicial da conta ({formatBRL(saldo.openingBalanceCents)}, em{" "}
               {formatBR(contaSelecionada.openingBalanceDate)}) + entradas − saídas. O saldo inicial
-              entra por inteiro, qualquer que seja o período escolhido. Só entram lançamentos do
-              extrato bancário importado marcados como conciliados.
+              entra por inteiro, qualquer que seja o período escolhido. Entram pagamentos
+              executados, recebimentos e as linhas do extrato conciliadas que não correspondem a
+              nenhum deles (tarifa, IOF, juros do banco) — o que já foi conciliado contra um
+              pagamento não é contado duas vezes.
             </p>
           </>
         )}
