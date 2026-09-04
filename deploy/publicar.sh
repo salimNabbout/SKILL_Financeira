@@ -19,19 +19,16 @@ dc() {
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
 
-# Credenciais da role restrita do app. Se ainda nao existirem no .env.prod, cai
-# no usuario dono do banco e AVISA: o deploy continua funcionando, so nao esta
-# endurecido ainda. Variavel exportada tem precedencia sobre o --env-file.
+# Aviso: sem a role restrita, o app roda como dono do banco (superusuario), e o
+# REVOKE da trilha de auditoria nao protege nada. O FALLBACK esta no compose,
+# nao aqui -- uma protecao que mora neste script so vale na publicacao SEGUINTE
+# aquela que a torna necessaria, porque o bash ja carregou a versao antiga.
 # shellcheck disable=SC1090
 set -a; . "$ENV_FILE"; set +a
-if [ -z "${APP_DB_USER:-}" ] || [ -z "${APP_DB_PASSWORD:-}" ]; then
-  export APP_DB_USER="${POSTGRES_USER}"
-  export APP_DB_PASSWORD="${POSTGRES_PASSWORD}"
-  echo "!!! AVISO: APP_DB_USER/APP_DB_PASSWORD ausentes em ${ENV_FILE}."
-  echo "    O app vai rodar como ${POSTGRES_USER}, que e SUPERUSUARIO -- o"
-  echo "    REVOKE da trilha de auditoria nao protege nada nessa condicao."
-  echo "    Para corrigir: preencha os dois no .env.prod e rode"
-  echo "    ${APP_DIR}/deploy/criar-role-app.sh"
+if [ -z "${APP_DB_USER:-}" ]; then
+  echo "!!! AVISO: APP_DB_USER ausente em ${ENV_FILE}."
+  echo "    O app vai rodar como ${POSTGRES_USER}, que e SUPERUSUARIO."
+  echo "    Para endurecer: ${APP_DIR}/deploy/criar-role-app.sh"
   echo ""
 fi
 
@@ -80,7 +77,18 @@ if [ -z "$ok" ]; then
   exit 1
 fi
 
-echo "==> 6/6 Status dos containers:"
+echo "==> 6/6 Conferindo que o app fala com o banco…"
+# /login responde 200 sem tocar no banco: sozinho ele NAO detecta credencial
+# invalida (ja deixou passar uma URL sem usuario nem senha). O audit-anchor le a
+# trilha inteira e verifica a cadeia de hash, com as mesmas credenciais do app.
+if ! dc exec -T scheduler npx tsx scripts/audit-anchor.ts; then
+  echo "!!! ERRO: o app nao conseguiu ler a trilha de auditoria no banco."
+  echo "    Confira a DATABASE_URL:"
+  echo "    dc exec -T app printenv DATABASE_URL"
+  exit 1
+fi
+
+echo "==> Status dos containers:"
 dc ps
 
 echo ""
