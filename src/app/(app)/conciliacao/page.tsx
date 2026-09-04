@@ -123,6 +123,17 @@ export default async function ConciliacaoPage({
   );
 
   function resolveTarget(match: ReconciliationMatch): TargetInfo | null {
+    // Despesa bancária (tarifa/IOF/juros) não tem título do outro lado: o alvo
+    // é a própria transação, e por isso vem SEM targetId.
+    if (match.targetType === "bank_fee") {
+      const tx = txById.get(match.bankTransactionId);
+      return {
+        label: "Despesa bancária",
+        description: tx ? tx.description : `Transação ${match.bankTransactionId}`,
+        amountCents: match.amountCents ?? (tx ? Math.abs(tx.amountCents) : 0),
+        date: tx?.date ?? "",
+      };
+    }
     if (!match.targetId) return null;
     if (match.targetType === "payable") {
       const p = payableById.get(match.targetId);

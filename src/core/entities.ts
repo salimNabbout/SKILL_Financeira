@@ -435,6 +435,8 @@ export type ReconciliationTargetType =
   | "payable"
   | "receivable"
   | "transfer"
+  /** Débito de tarifa/IOF/juros do próprio banco — não tem título a pagar. */
+  | "bank_fee"
   | "unknown";
 
 export type ReconciliationStatus = "auto_confirmed" | "suggested" | "confirmed" | "rejected";

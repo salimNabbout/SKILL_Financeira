@@ -129,12 +129,38 @@ async function autoMatch(): Promise<AutoMatchData> {
   return res.data as AutoMatchData;
 }
 
-describe("baixa parcial (1 transação menor que o título)", () => {
+/**
+ * A Fase 4 (baixa parcial) vem DESLIGADA por padrão. Aqui ela é ligada só para
+ * este contexto — sem mutar o objeto de configuração compartilhado, que
+ * vazaria para os outros arquivos de teste do mesmo processo.
+ */
+async function autoMatchComParcial(): Promise<AutoMatchData> {
+  const res = await runSkill(
+    conciliacaoSkill,
+    { ...env.ctx(), config: { ...env.config, reconciliationEnablePartial: true } },
+    { action: "auto_match" }
+  );
+  expect(res.status).not.toBe("error");
+  return res.data as AutoMatchData;
+}
+
+describe("baixa parcial (1 transação menor que o título) — exige a flag ligada", () => {
+  it("DESLIGADA por padrão: não sugere nada", async () => {
+    seedReceivable({ amountCents: 150_000 });
+    seedTx({ amountCents: 50_000, description: "PIX CLIENTE BETA parcela" });
+
+    const data = await autoMatch(); // sem a flag
+
+    expect(data.suggested).toBe(0);
+    expect(data.autoConfirmed).toBe(0);
+    expect(data.unmatched).toBe(1);
+  });
+
   it("sugere porção com nome obrigatório e NUNCA auto-confirma; confirmação aplica baixa parcial", async () => {
     const r = seedReceivable({ amountCents: 150_000 });
     const tx = seedTx({ amountCents: 50_000, description: "PIX CLIENTE BETA parcela" });
 
-    const data = await autoMatch();
+    const data = await autoMatchComParcial();
     // score 0,45 + 0,20 nome + 0,25 data = 0,90 (>= limiar), mas parcial nunca é automática.
     expect(data.autoConfirmed).toBe(0);
     expect(data.suggested).toBe(1);
@@ -160,7 +186,7 @@ describe("baixa parcial (1 transação menor que o título)", () => {
   it("sem o nome da contraparte na descrição, não propõe baixa parcial", async () => {
     seedReceivable({ amountCents: 150_000 });
     seedTx({ amountCents: 50_000, description: "PIX RECEBIDO 1234" });
-    const data = await autoMatch();
+    const data = await autoMatchComParcial();
     expect(data.suggested).toBe(0);
     expect(data.unmatched).toBe(1);
   });
@@ -168,7 +194,7 @@ describe("baixa parcial (1 transação menor que o título)", () => {
   it("segunda transação parcial completa o título via fase 1 (valor exato do saldo)", async () => {
     const r = seedReceivable({ amountCents: 150_000, receivedCents: 50_000, status: "partially_received" });
     seedTx({ amountCents: 100_000, description: "PIX CLIENTE BETA quitação" });
-    const data = await autoMatch();
+    const data = await autoMatchComParcial();
     expect(data.autoConfirmed).toBe(1); // 0,55 + 0,25 + 0,20 = 1,00
     const updated = await env.repos.receivables.getById(env.company.id, r.id);
     expect(updated?.status).toBe("received");
@@ -333,5 +359,55 @@ describe("transferências entre contas", () => {
       (m) => m.bankTransactionId === credit.id && m.targetType === "transfer"
     );
     expect(creditTransferMatches).toHaveLength(0);
+  });
+});
+
+describe("baixa parcial — regras que impedem o falso positivo", () => {
+  it("token genérico do nome NÃO gera sugestão nem com a flag ligada", async () => {
+    // O caso real: tarifa bancária de R$ 36,51 contra um título da LIGHT de
+    // R$ 215,20 vencido há 20 dias. O único token em comum era "servicos".
+    env.db.suppliers.push({
+      id: "sup_light",
+      companyId: env.company.id,
+      name: "LIGHT SERVICOS DE ELETRICIDADE S A",
+      active: true,
+      createdAt: env.clock.now().toISOString(),
+      updatedAt: env.clock.now().toISOString(),
+    });
+    seedPayable({ amountCents: 21_520, supplierId: "sup_light", dueDate: "2026-07-29" });
+    seedTx({ amountCents: -3_651, description: "TARIFA PACOTE SERVICOS", date: "2026-08-18" });
+
+    const data = await autoMatchComParcial();
+
+    // Vira despesa bancária, não baixa parcial do título da LIGHT.
+    expect(data.matches.every((m) => m.targetType !== "payable")).toBe(true);
+    expect(data.matches[0]?.targetType).toBe("bank_fee");
+  });
+
+  it("vencimento fora da tolerância de dias não gera sugestão parcial", async () => {
+    // Nome casa com dois tokens, mas o vencimento está a 20 dias.
+    seedReceivable({ amountCents: 150_000, dueDate: "2026-07-29" });
+    seedTx({ amountCents: 50_000, description: "PIX CLIENTE BETA parcela", date: "2026-08-18" });
+
+    const data = await autoMatchComParcial();
+
+    expect(data.suggested).toBe(0);
+    expect(data.unmatched).toBe(1);
+  });
+
+  it("um único token genérico não basta; dois tokens do nome bastam", async () => {
+    env.db.customers.push({
+      id: "cus_gen",
+      companyId: env.company.id,
+      name: "Alfa Servicos Ltda",
+      active: true,
+      createdAt: env.clock.now().toISOString(),
+      updatedAt: env.clock.now().toISOString(),
+    });
+    // "servicos" é stopword e "alfa" tem 4 letras: sozinho não identifica.
+    seedReceivable({ amountCents: 150_000, customerId: "cus_gen", id: "rcv_gen" });
+    seedTx({ amountCents: 50_000, description: "CREDITO SERVICOS DIVERSOS" });
+
+    expect((await autoMatchComParcial()).suggested).toBe(0);
   });
 });
