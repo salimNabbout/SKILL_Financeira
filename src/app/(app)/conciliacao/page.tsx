@@ -1,14 +1,16 @@
 import { Fragment } from "react";
 import Link from "next/link";
-import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass, statusTone } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, PageHeader, StatCard, Table, Td, inputClass, statusTone } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatBR, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
 import type { ISODate } from "@/core/dates";
+import { computeBankPeriodBalance } from "@/core/bank-balance";
 import type { ReconciliationMatch } from "@/core/entities";
 import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
+import { filtersToQuery, resolveFilters } from "./_lib/filters";
 import {
   adjustPaymentDateAction,
   confirmMatchAction,
@@ -42,6 +44,10 @@ export default async function ConciliacaoPage({
     /** Pagamento com o pop-up de exclusão aberto. */
     excluir?: string;
     f_motivo?: string;
+    /** Filtros da caixa Saldo: conta bancária e período (inclusivo). */
+    conta?: string;
+    de?: string;
+    ate?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -49,6 +55,9 @@ export default async function ConciliacaoPage({
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
+  // Fuso da empresa, nunca UTC: na virada do mês o default do filtro pularia
+  // um dia. Declarado aqui porque o saldo e o card de pagamentos usam o mesmo.
+  const today = todayInTz(clock.now(), session.config.timezone);
 
   const [bankAccounts, suggested, decided, unreconciledPage, payables, receivables, payments, suppliers, customers, users, costCenters] =
     await Promise.all([
@@ -77,6 +86,25 @@ export default async function ConciliacaoPage({
   // ficariam só com a opção vazia, fazendo o navegador barrar o submit com o
   // tooltip "Selecione um item da lista" — que não diz o que fazer.
   const contasAtivas = bankAccounts.filter((b) => b.active);
+
+  // --- Saldo do extrato conciliado ----------------------------------------
+  // SALDO = saldo inicial da conta + entradas − saídas dos lançamentos
+  // CONCILIADOS do extrato, no período. O extrato de uma conta é carregado
+  // inteiro e recortado em memória — é o que tesouraria e relatórios já fazem,
+  // e o volume de um app PME não justifica um método novo no repositório.
+  const filtros = resolveFilters(sp, bankAccounts, today);
+  const filtrosQuery = filtersToQuery(sp);
+  const contaSelecionada = bankAccounts.find((b) => b.id === filtros.bankAccountId);
+  const extratoDaConta =
+    contaSelecionada && !filtros.periodoInvalido
+      ? await repos.bankTransactions.listByAccount(companyId, contaSelecionada.id)
+      : [];
+  const saldo = contaSelecionada
+    ? computeBankPeriodBalance(contaSelecionada, extratoDaConta, {
+        from: filtros.from,
+        to: filtros.to,
+      })
+    : undefined;
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const userName = new Map(users.map((u) => [u.id, u.name]));
@@ -150,7 +178,6 @@ export default async function ConciliacaoPage({
   // --- Pagamentos aprovados aguardando conciliação -------------------------
   // A aprovação autoriza mas não baixa: o título só é quitado aqui, com a data
   // real em que o dinheiro saiu. Ordena pelo vencimento (o mais urgente antes).
-  const today = todayInTz(clock.now(), session.config.timezone);
   const podeConciliar = hasPermission(session.membership.role, "payment.execute");
   // --- Ações do card "Conciliados" ---------------------------------------
   // Corrigir a data e desfazer a conciliação mexem no PAGAMENTO: as duas usam
@@ -209,6 +236,79 @@ export default async function ConciliacaoPage({
         subtitle="Importação de extratos (OFX/CSV), conciliação automática com grau de confiança e revisão humana das sugestões."
       />
       <Flash ok={ok} erro={erro} />
+
+      {/* Saldo do EXTRATO conciliado. Mede coisa diferente do card
+          "Conciliados" logo abaixo: conciliar um pagamento aqui não cria
+          transação bancária nenhuma — só a importação do extrato cria. Sem essa
+          distinção no rótulo, o saldo parece errado para quem lança pagamentos
+          sem importar OFX. */}
+      <Card className="mb-6" title="Saldo do extrato conciliado">
+        <form method="get" action="/conciliacao" className="grid gap-4 md:grid-cols-4">
+          <Field label="Conta bancária">
+            <select
+              name="conta"
+              className={inputClass}
+              defaultValue={filtros.bankAccountId ?? ""}
+              disabled={contasAtivas.length === 0}
+            >
+              {contasAtivas.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} ({b.accountNumberMasked})
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Data inicial">
+            <input type="date" name="de" defaultValue={filtros.from} className={inputClass} />
+          </Field>
+          <Field label="Data final">
+            <input type="date" name="ate" defaultValue={filtros.to} className={inputClass} />
+          </Field>
+          <div className="flex items-end gap-2">
+            <Button type="submit">Filtrar</Button>
+            <Link
+              href="/conciliacao"
+              className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+            >
+              Limpar
+            </Link>
+          </div>
+        </form>
+
+        {filtros.periodoInvalido ? (
+          <p className="mt-4 text-sm text-[var(--crit)]">
+            Data inicial maior que a data final.
+          </p>
+        ) : !contaSelecionada || !saldo ? (
+          <EmptyState message="Cadastre uma conta bancária ativa para ver o saldo." />
+        ) : (
+          <>
+            <div className="mt-4 max-w-xs">
+              <StatCard
+                label="Saldo"
+                value={formatBRL(saldo.balanceCents)}
+                tone={saldo.balanceCents < 0 ? "crit" : "ok"}
+                hint={`${contaSelecionada.name} · ${formatBR(filtros.from)} a ${formatBR(filtros.to)}`}
+              />
+            </div>
+            <div className="mt-3 space-y-1 text-sm text-[var(--ink-muted)]">
+              <p>
+                Entradas: {formatBRL(saldo.inflowCents)} ({saldo.inflowCount} lançamentos)
+              </p>
+              <p>
+                Saídas: {formatBRL(saldo.outflowCents)} ({saldo.outflowCount} lançamentos)
+              </p>
+              <p>Total de lançamentos conciliados no período: {saldo.reconciledCount}</p>
+            </div>
+            <p className="mt-3 text-xs text-[var(--ink-muted)]">
+              Saldo = saldo inicial da conta ({formatBRL(saldo.openingBalanceCents)}, em{" "}
+              {formatBR(contaSelecionada.openingBalanceDate)}) + entradas − saídas. O saldo inicial
+              entra por inteiro, qualquer que seja o período escolhido. Só entram lançamentos do
+              extrato bancário importado marcados como conciliados.
+            </p>
+          </>
+        )}
+      </Card>
 
       {/* Pagamentos APROVADOS aguardando conciliação. A aprovação autoriza a
           saída; a baixa só acontece aqui, com a data real do pagamento — é ela
@@ -331,6 +431,9 @@ export default async function ConciliacaoPage({
                             name="editar"
                             value={editarId === pay.id ? "" : pay.id}
                           />
+                          <input type="hidden" name="conta" value={sp.conta ?? ""} />
+                          <input type="hidden" name="de" value={sp.de ?? ""} />
+                          <input type="hidden" name="ate" value={sp.ate ?? ""} />
                           <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
                             <Button variant="warn" type="submit">
                               {editarId === pay.id ? "Fechar" : "✎"}
@@ -341,6 +444,9 @@ export default async function ConciliacaoPage({
                       {podeConciliar ? (
                         <form method="get" action="/conciliacao" className="inline">
                           <input type="hidden" name="excluir" value={pay.id} />
+                          <input type="hidden" name="conta" value={sp.conta ?? ""} />
+                          <input type="hidden" name="de" value={sp.de ?? ""} />
+                          <input type="hidden" name="ate" value={sp.ate ?? ""} />
                           <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
                             <Button variant="danger" type="submit">
                               🗑
@@ -386,7 +492,7 @@ export default async function ConciliacaoPage({
                           paymentDateMax: today,
                         }}
                         prefill={{ paymentDate: sp.f_pagamento }}
-                        cancelHref="/conciliacao"
+                        cancelHref={`/conciliacao?${filtrosQuery.slice(1)}`}
                         hiddenFields={{ paymentId: pay.id }}
                       />
                     </td>
@@ -440,7 +546,7 @@ export default async function ConciliacaoPage({
                   Confirmar exclusão
                 </Button>
                 <Link
-                  href="/conciliacao"
+                  href={`/conciliacao?${filtrosQuery.slice(1)}`}
                   className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
                 >
                   Voltar
@@ -668,7 +774,12 @@ export default async function ConciliacaoPage({
             ))}
           </Table>
         )}
-        <Pager page={unreconciledPage} basePath="/conciliacao" param="pt" />
+        <Pager
+          page={unreconciledPage}
+          basePath="/conciliacao"
+          param="pt"
+          extraQuery={{ conta: sp.conta, de: sp.de, ate: sp.ate }}
+        />
       </Card>
 
       <Card title="4 — Histórico recente de conciliações">
