@@ -120,6 +120,28 @@ function transacao(env: TestEnv, over: Partial<BankTransaction> = {}): BankTrans
   return t;
 }
 
+/**
+ * Estabelece até onde o extrato importado enxerga. Sem isto, a auditoria trata
+ * toda baixa como "aguardando importação do extrato" e não acusa nada — que é
+ * o comportamento correto, mas atrapalha o teste do resto.
+ */
+function cobertura(env: TestEnv, date = "2026-08-31", bankAccountId = "ba_1") {
+  env.db.statementImports.push({
+    id: `imp_cob_${++seq}`,
+    companyId: env.company.id,
+    bankAccountId,
+    format: "ofx",
+    source: "ofx",
+    imported: 0,
+    duplicates: 0,
+    warnings: [],
+    ledgerBalanceCents: 100_000,
+    ledgerBalanceDate: date,
+    createdBy: "usr_analyst",
+    createdAt: env.clock.now().toISOString(),
+  });
+}
+
 async function auditar(env: TestEnv, extra: Record<string, unknown> = {}) {
   const res = await runSkill(conciliacaoSkill, env.ctx(env.actorFor("analyst")), {
     action: "reconciliation_audit",
@@ -143,6 +165,7 @@ describe("reconciliation_audit — cenário limpo", () => {
       settlementsWithoutBankCount: 0,
       settlementsWithoutBankCents: 0,
       amountMismatchCount: 0,
+      pendingCoverageCount: 0,
       balanceMismatchCount: 0,
     });
     expect(env.db.alerts).toHaveLength(0);
@@ -174,6 +197,7 @@ describe("reconciliation_audit — baixas sem lastro", () => {
   it("pagamento executado sem conciliação aparece e gera alerta", async () => {
     const env = createTestEnv();
     conta(env);
+    cobertura(env);
     const t = titulo(env, { description: "Conta de luz" });
     const pag = pagamento(env, { payableId: t.id, amountCents: 30_000 });
 
@@ -199,6 +223,7 @@ describe("reconciliation_audit — baixas sem lastro", () => {
   it("reexecutar três vezes não duplica o alerta", async () => {
     const env = createTestEnv();
     conta(env);
+    cobertura(env);
     const t = titulo(env);
     pagamento(env, { payableId: t.id });
 
@@ -247,6 +272,7 @@ describe("reconciliation_audit — baixas sem lastro", () => {
   it("recebimento SEM conta bancária vira suposição, não divergência", async () => {
     const env = createTestEnv();
     conta(env);
+    cobertura(env);
     recibo(env, { bankAccountId: undefined });
 
     const res = await runSkill(conciliacaoSkill, env.ctx(env.actorFor("analyst")), {
@@ -262,6 +288,7 @@ describe("reconciliation_audit — baixas sem lastro", () => {
   it("recebimento com conta e sem conciliação é divergência", async () => {
     const env = createTestEnv();
     conta(env);
+    cobertura(env);
     const r = recibo(env);
 
     const d = await auditar(env);
@@ -273,6 +300,7 @@ describe("reconciliation_audit — baixas sem lastro", () => {
   it("título pago sem Payment é baixa manual sem lastro", async () => {
     const env = createTestEnv();
     conta(env);
+    cobertura(env);
     titulo(env, {
       paidCents: 30_000,
       status: "paid",
@@ -293,6 +321,7 @@ describe("reconciliation_audit — baixas sem lastro", () => {
   it("título pago COM Payment executado não conta duas vezes", async () => {
     const env = createTestEnv();
     conta(env);
+    cobertura(env);
     const t = titulo(env, { paidCents: 30_000, status: "paid", updatedAt: "2026-08-19T10:00:00.000Z" });
     pagamento(env, { payableId: t.id });
 
@@ -301,6 +330,96 @@ describe("reconciliation_audit — baixas sem lastro", () => {
     // Só o pagamento aparece — o título não vira uma segunda linha.
     expect(d.settlementsWithoutBank).toHaveLength(1);
     expect(d.settlementsWithoutBank[0].kind).toBe("payment");
+  });
+});
+
+describe("reconciliation_audit — cobertura do extrato", () => {
+  it("baixa DENTRO da janela de tolerância não alerta: o extrato ainda não a alcança", async () => {
+    const env = createTestEnv();
+    conta(env);
+    // Extrato vai até 18/08; a tolerância padrão é de 3 dias, então a fronteira
+    // efetiva é 15/08. Um pagamento em 17/08 ainda pode não ter sido publicado.
+    cobertura(env, "2026-08-18");
+    const t = titulo(env);
+    pagamento(env, { payableId: t.id, executedAt: "2026-08-17T13:00:00.000Z" });
+
+    const res = await runSkill(conciliacaoSkill, env.ctx(env.actorFor("analyst")), {
+      action: "reconciliation_audit",
+      period: AGOSTO,
+    });
+    const d = res.data as ReconciliationAuditData;
+
+    expect(d.settlementsWithoutBank).toHaveLength(0);
+    expect(d.totals.pendingCoverageCount).toBe(1);
+    expect(env.db.alerts).toHaveLength(0);
+    expect(res.assumptions.some((a) => a.includes("aguardam importação do extrato"))).toBe(true);
+  });
+
+  it("baixa ANTERIOR à cobertura alerta: o extrato já passou por ali", async () => {
+    const env = createTestEnv();
+    conta(env);
+    // Mesma cobertura de 18/08, mas o pagamento é de 10/08: já devia constar.
+    cobertura(env, "2026-08-18");
+    const t = titulo(env);
+    pagamento(env, { payableId: t.id, executedAt: "2026-08-10T13:00:00.000Z" });
+
+    const d = await auditar(env);
+
+    expect(d.settlementsWithoutBank).toHaveLength(1);
+    expect(d.totals.pendingCoverageCount).toBe(0);
+    expect(
+      env.db.alerts.filter((a) => a.code === "reconciliation_settlement_without_bank")
+    ).toHaveLength(1);
+  });
+
+  it("conta SEM nenhum extrato importado não acusa nada", async () => {
+    const env = createTestEnv();
+    conta(env); // nenhum lote, nenhuma transação
+    const t = titulo(env);
+    pagamento(env, { payableId: t.id, executedAt: "2026-08-05T13:00:00.000Z" });
+    recibo(env, { receivedDate: "2026-08-06" });
+
+    const res = await runSkill(conciliacaoSkill, env.ctx(env.actorFor("analyst")), {
+      action: "reconciliation_audit",
+      period: AGOSTO,
+    });
+    const d = res.data as ReconciliationAuditData;
+
+    expect(d.settlementsWithoutBank).toHaveLength(0);
+    expect(d.totals.pendingCoverageCount).toBe(2);
+    expect(env.db.alerts).toHaveLength(0);
+    expect(res.assumptions.some((a) => a.includes("conta sem extrato importado"))).toBe(true);
+  });
+
+  it("a cobertura vem do maior entre lançamento importado e data-base do saldo", async () => {
+    const env = createTestEnv();
+    conta(env);
+    // Saldo declarado em 10/08, mas há lançamento importado até 25/08: a
+    // cobertura tem de seguir o lançamento, que é mais recente.
+    cobertura(env, "2026-08-10");
+    transacao(env, { date: "2026-08-25", reconciled: true, amountCents: -100 });
+    const t = titulo(env);
+    pagamento(env, { payableId: t.id, executedAt: "2026-08-15T13:00:00.000Z" });
+
+    const d = await auditar(env);
+
+    expect(d.totals.pendingCoverageCount).toBe(0);
+    expect(d.settlementsWithoutBank).toHaveLength(1);
+  });
+
+  it("título sem conta: só é divergência quando TODAS as contas já cobrem a data", async () => {
+    const env = createTestEnv();
+    conta(env);
+    conta(env, { id: "ba_2", name: "Nubank", accountNumberMasked: "****9999" });
+    // Uma conta coberta até 31/08, a outra sem extrato nenhum. O dinheiro pode
+    // ter saído pela segunda, então não dá para acusar.
+    cobertura(env, "2026-08-31", "ba_1");
+    titulo(env, { paidCents: 30_000, status: "paid", updatedAt: "2026-08-05T10:00:00.000Z" });
+
+    const d = await auditar(env);
+
+    expect(d.settlementsWithoutBank).toHaveLength(0);
+    expect(d.totals.pendingCoverageCount).toBe(1);
   });
 });
 
@@ -611,6 +730,7 @@ describe("reconciliation_audit — evento", () => {
   it("publica reconciliation.audited com os totais", async () => {
     const env = createTestEnv();
     conta(env);
+    cobertura(env);
     const t = titulo(env);
     pagamento(env, { payableId: t.id });
 

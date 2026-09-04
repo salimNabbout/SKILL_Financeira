@@ -1841,6 +1841,7 @@ export interface ReconciliationAuditData {
     settlementsWithoutBankCount: number;
     settlementsWithoutBankCents: number;
     amountMismatchCount: number;
+    pendingCoverageCount: number;
     balanceMismatchCount: number;
   };
   formula: string;
@@ -1889,6 +1890,50 @@ async function reconciliationAudit(
     throw new NotFoundError("Conta bancária", input.bankAccountId);
   }
   const idsAlvo = new Set(contasAlvo.map((c) => c.id));
+
+  // --- Cobertura do extrato ------------------------------------------------
+  // Até onde o extrato importado enxerga, por conta. Sem isto a auditoria
+  // acusaria como "sem lastro" todo pagamento feito DEPOIS do último extrato
+  // importado — que é o estado normal de quem paga hoje e importa amanhã.
+  const extratoPorConta = new Map<ID, BankTransaction[]>();
+  const coberturaPorConta = new Map<ID, ISODate | undefined>();
+  const loteDeSaldoPorConta = new Map<ID, Awaited<
+    ReturnType<typeof ctx.repos.statementImports.latestWithBalanceBefore>
+  >>();
+  for (const c of contasAlvo) {
+    const txs = await ctx.repos.bankTransactions.listByAccount(ctx.companyId, c.id);
+    extratoPorConta.set(c.id, txs);
+    const lote = await ctx.repos.statementImports.latestWithBalanceBefore(ctx.companyId, c.id, end);
+    loteDeSaldoPorConta.set(c.id, lote);
+    // A data mais recente que o extrato alcança: o último lançamento importado
+    // ou a data-base do saldo declarado, o que for maior.
+    const maiorTx = txs.reduce<ISODate | undefined>(
+      (maior, t) => (!maior || t.date > maior ? t.date : maior),
+      undefined
+    );
+    const dataDoSaldo = lote?.ledgerBalanceDate;
+    const cobertura =
+      maiorTx && dataDoSaldo ? (maiorTx > dataDoSaldo ? maiorTx : dataDoSaldo) : (maiorTx ?? dataDoSaldo);
+    coberturaPorConta.set(c.id, cobertura);
+  }
+
+  /**
+   * A baixa ainda não podia aparecer no extrato? Então não é divergência.
+   *
+   * A tolerância de dias da empresa entra aqui: o banco pode levar alguns dias
+   * para publicar o lançamento, então a fronteira recua por esse tanto. Conta
+   * sem nenhuma importação não cobre data nenhuma.
+   */
+  function foraDaCobertura(data: ISODate, bankAccountId?: ID): boolean {
+    // Título não tem conta: só é divergência se TODAS as contas já cobrem a
+    // data — o dinheiro pode ter saído por qualquer uma delas.
+    const coberturas = bankAccountId
+      ? [coberturaPorConta.get(bankAccountId)]
+      : contasAlvo.map((c) => coberturaPorConta.get(c.id));
+    if (coberturas.length === 0 || coberturas.some((c) => c === undefined)) return true;
+    const menor = (coberturas as ISODate[]).reduce((a, b) => (a < b ? a : b));
+    return data > addDays(menor, -ctx.config.reconciliationDateToleranceDays);
+  }
 
   const [transacoes, pagamentos, recibos, matches, fornecedores, clientes, titulosPagos] =
     await Promise.all([
@@ -1946,6 +1991,12 @@ async function reconciliationAudit(
   // O caso que motiva a auditoria: "alguém marcou como pago, mas o dinheiro
   // não saiu". Nenhum destes é corrigido automaticamente.
   const semLastro: ReconciliationAuditData["settlementsWithoutBank"] = [];
+  /**
+   * Baixas excusadas pela cobertura. Não são divergência, mas DESLOCAM o saldo
+   * calculado tanto quanto as outras — se ficassem de fora da decomposição, o
+   * bloco de saldo reacusaria exatamente o que a cobertura acabou de excusar.
+   */
+  const pendentesDeCobertura: Array<{ date: ISODate; amountCents: number; entrada: boolean }> = [];
   const titulos = new Map((await ctx.repos.payables.listAll(ctx.companyId)).map((p) => [p.id, p]));
 
   for (const p of pagamentos) {
@@ -1954,6 +2005,10 @@ async function reconciliationAudit(
     const data = todayInTz(new Date(p.executedAt), ctx.config.timezone);
     if (data < start || data > end) continue;
     if (alvoAplicado.has(`payment:${p.id}`)) continue;
+    if (foraDaCobertura(data, p.bankAccountId)) {
+      pendentesDeCobertura.push({ date: data, amountCents: p.amountCents, entrada: false });
+      continue;
+    }
     const titulo = titulos.get(p.payableId);
     semLastro.push({
       kind: "payment",
@@ -1981,6 +2036,14 @@ async function reconciliationAudit(
     }
     if (!idsAlvo.has(r.bankAccountId)) continue;
     if (alvoAplicado.has(`receipt:${r.id}`)) continue;
+    if (foraDaCobertura(r.receivedDate, r.bankAccountId)) {
+      pendentesDeCobertura.push({
+        date: r.receivedDate,
+        amountCents: r.amountCents,
+        entrada: true,
+      });
+      continue;
+    }
     const tit = recebiveis.get(r.receivableId);
     semLastro.push({
       kind: "receipt",
@@ -2011,16 +2074,35 @@ async function reconciliationAudit(
       baixasManuaisForaDoFiltro++;
       continue;
     }
+    const dataDaBaixa = t.updatedAt.slice(0, 10) as ISODate;
+    if (foraDaCobertura(dataDaBaixa)) {
+      // paidCents não participa do saldo calculado: entra na contagem, não na
+      // decomposição (mesmo motivo do payable_paid_without_payment).
+      pendentesDeCobertura.push({ date: dataDaBaixa, amountCents: 0, entrada: false });
+      continue;
+    }
     semLastro.push({
       kind: "payable_paid_without_payment",
       id: t.id,
-      date: t.updatedAt.slice(0, 10) as ISODate,
+      date: dataDaBaixa,
       amountCents: t.paidCents,
       counterparty: nomeFornecedor.get(t.supplierId) ?? t.supplierId,
       description: t.description,
     });
   }
 
+  if (pendentesDeCobertura.length > 0) {
+    const coberturas = contasAlvo
+      .map((c) => coberturaPorConta.get(c.id))
+      .filter((d): d is ISODate => d !== undefined);
+    const ate =
+      coberturas.length === contasAlvo.length && coberturas.length > 0
+        ? coberturas.reduce((a, b) => (a < b ? a : b))
+        : "nenhuma data (conta sem extrato importado)";
+    assumptions.push(
+      `${pendentesDeCobertura.length} baixa(s) após ${ate} aguardam importação do extrato: ainda não podiam aparecer nele, e não são divergência.`
+    );
+  }
   if (baixasManuaisForaDoFiltro > 0) {
     assumptions.push(
       `${baixasManuaisForaDoFiltro} baixa(s) manual(is) de título ficaram fora: o título não tem conta bancária, e a auditoria foi filtrada por conta. Rode sem filtro para vê-las.`
@@ -2102,11 +2184,7 @@ async function reconciliationAudit(
   const semReferencia: string[] = [];
 
   for (const conta of contasAlvo) {
-    const lote = await ctx.repos.statementImports.latestWithBalanceBefore(
-      ctx.companyId,
-      conta.id,
-      end
-    );
+    const lote = loteDeSaldoPorConta.get(conta.id);
     if (lote?.ledgerBalanceCents === undefined || lote.ledgerBalanceDate === undefined) {
       semReferencia.push(conta.name);
       continue;
@@ -2116,7 +2194,7 @@ async function reconciliationAudit(
 
     // Saldo do app na data-base: do começo dos tempos até asOf, para o saldo
     // inicial da conta entrar por inteiro (ver bank-balance.ts).
-    const extratoDaConta = await ctx.repos.bankTransactions.listByAccount(ctx.companyId, conta.id);
+    const extratoDaConta = extratoPorConta.get(conta.id) ?? [];
     const janela = { from: "0001-01-01" as ISODate, to: asOf };
     const calculado = computeBankPeriodBalance({
       account: conta,
@@ -2149,7 +2227,12 @@ async function reconciliationAudit(
     const semLastroAteAsOf = semLastro
       .filter((d) => d.date <= asOf && d.kind !== "payable_paid_without_payment")
       .reduce((acc, d) => acc + (d.kind === "payment" ? -d.amountCents : d.amountCents), 0);
-    const explicado = semLastroAteAsOf - naoConciliadasAteAsOf;
+    // As excusadas pela cobertura contam igual: elas deslocam o saldo do app
+    // sem ter saído do banco, exatamente como as sem lastro.
+    const pendentesAteAsOf = pendentesDeCobertura
+      .filter((d) => d.date <= asOf)
+      .reduce((acc, d) => acc + (d.entrada ? d.amountCents : -d.amountCents), 0);
+    const explicado = semLastroAteAsOf + pendentesAteAsOf - naoConciliadasAteAsOf;
     const residuo = diff - explicado;
 
     balanceChecks.push({
@@ -2203,6 +2286,8 @@ async function reconciliationAudit(
     settlementsWithoutBankCount: semLastro.length,
     settlementsWithoutBankCents: semLastro.reduce((acc, d) => acc + d.amountCents, 0),
     amountMismatchCount: mismatches.length,
+    /** Baixas recentes demais para o extrato importado: aguardam, não divergem. */
+    pendingCoverageCount: pendentesDeCobertura.length,
     balanceMismatchCount: balanceChecks.filter(
       (b) => Math.abs(b.residualCents) > ctx.config.reconciliationAmountToleranceCents
     ).length,
@@ -2229,9 +2314,9 @@ async function reconciliationAudit(
       totals,
       formula:
         "extrato sem explicação = transações do período com reconciled=false; " +
-        "baixas sem lastro = Payment executado, Receipt ativo com conta bancária, ou título pago sem Payment, nenhum deles com match confirmado (recebimento em dinheiro fica fora); " +
+        "baixas sem lastro = Payment executado, Receipt ativo com conta bancária, ou título pago sem Payment, nenhum deles com match confirmado (recebimento em dinheiro fica fora), e SOMENTE dentro da cobertura do extrato: cobertura = maior entre a data do último lançamento importado e a data-base do saldo, recuada pela tolerância de dias da empresa; baixa posterior a isso conta em pendingCoverageCount, não é divergência; " +
         "valores divergentes = |aplicado − esperado| > tolerância da empresa, onde aplicado = match.amountCents ou |valor da transação|, e esperado = valor do pagamento/recebimento ou o SALDO ATUAL do título (não o histórico do momento da conciliação); " +
-        "saldo = saldo calculado por core/bank-balance (o MESMO da tela de Conciliação) menos o <LEDGERBAL> do último extrato importado até a data, DECOMPOSTO com sinal: explicado = (−pagamentos sem lastro + recebimentos sem lastro) − Σ(transações não conciliadas até a data); resíduo = diferença − explicado, e alerta só quando |resíduo| > tolerância (crítico acima de 100x). Baixa manual de título não entra no explicado: o paidCents não participa do saldo calculado",
+        "saldo = saldo calculado por core/bank-balance (o MESMO da tela de Conciliação) menos o <LEDGERBAL> do último extrato importado até a data, DECOMPOSTO com sinal: explicado = (−pagamentos + recebimentos) sem lastro E aguardando cobertura − Σ(transações não conciliadas até a data); resíduo = diferença − explicado, e alerta só quando |resíduo| > tolerância (crítico acima de 100x). Baixa manual de título não entra no explicado: o paidCents não participa do saldo calculado",
     },
     { alerts, assumptions, pendingItems, confidence: 1.0, dataSources: DATA_SOURCES }
   );
