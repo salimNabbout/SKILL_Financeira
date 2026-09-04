@@ -51,7 +51,7 @@ openssl rand -base64 48
 
 ## 2. Migrações do banco
 
-O schema é versionado em `prisma/migrations/` (0001 → 0007). Rode **antes** de
+O schema é versionado em `prisma/migrations/` (0001 → 0019). Rode **antes** de
 subir a aplicação nova, no banco apontado por `DATABASE_URL`:
 
 ```bash
@@ -60,8 +60,14 @@ npm run db:migrate     # = prisma migrate deploy (aplica migrações pendentes)
 ```
 
 `prisma migrate deploy` é **idempotente**: aplica só o que falta e não repete o
-que já foi aplicado. As migrações 0005–0007 (adicionadas nesta série) são todas
-**aditivas** (colunas opcionais, tabela `AuditHead`, índices) — não destroem dados.
+que já foi aplicado. As migrações desta série são todas **aditivas** (colunas
+opcionais, tabelas `AuditHead` e `StatementImport`, gatilhos append-only da
+trilha, índices) — não destroem dados.
+
+> **`0019_statement_import`** cria a tabela do lote de importação de extrato.
+> Não há backfill: lotes importados antes dela não têm registro, e a auditoria
+> de conciliação trata a ausência como "sem saldo de referência". O primeiro OFX
+> importado depois do deploy já traz a referência.
 
 > **Primeira publicação (banco vazio):** para popular a carga de demonstração
 > (empresa fictícia Café Aurora), rode `npm run db:seed` **uma vez**. Em um banco
@@ -103,9 +109,32 @@ npx tsx scripts/smoke-prisma.ts   # exercita orquestrador + skills sobre Prisma 
 Só valem no modo produção (PostgreSQL). Rode como serviços gerenciados
 (systemd/PM2/container próprio), não no mesmo processo do web:
 
+> ⚠️ **O agendador precisa ser REINICIADO a cada deploy.** Ele é um processo de
+> vida longa que carrega a definição dos fluxos na memória ao iniciar: passos
+> novos (como a auditoria de conciliação acrescentada a `bank_sync` e a
+> `daily_summary`) só passam a rodar depois do restart. Sem isso, o código novo
+> está no ar pela web e o agendador continua executando a versão antiga dos
+> fluxos — silenciosamente, sem erro nenhum.
+>
+> No deploy padrão da VPS isso já acontece: `deploy/publicar.sh` faz
+> `docker compose up -d --force-recreate app scheduler`. Em deploy manual, ou
+> com o agendador sob systemd/PM2 fora do compose, reinicie-o à mão:
+>
+> ```bash
+> docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod >   up -d --force-recreate scheduler
+> # ou, fora do compose:
+> systemctl restart financeira-scheduler   # pm2 restart scheduler
+> ```
+>
+> Conferir que subiu com o código novo:
+> ```bash
+> docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.prod >   logs --tail 20 scheduler
+> ```
+
 ```bash
 # Agendador: bank_sync 6h, daily_summary 7h, dunning_run 8h (horas locais da empresa).
-# Também recupera flowRuns presos (reaper). Disparos são idempotentes por balde de tempo.
+# Também recupera flowRuns presos (reaper) e imprime a âncora diária da trilha
+# de auditoria. Disparos são idempotentes por balde de tempo.
 npx tsx scripts/scheduler.ts
 
 # Worker da fila (apenas se EVENT_BUS=bullmq):

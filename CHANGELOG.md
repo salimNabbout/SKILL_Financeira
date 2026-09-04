@@ -4,6 +4,44 @@ Registro das mudanças relevantes. Datas em ISO (AAAA-MM-DD).
 
 ---
 
+## 2026-09-04 — Auditoria de conciliação: extrato × baixas
+
+A conciliação só olhava numa direção — do extrato para os títulos. Quatro perguntas ficavam sem
+resposta, e a mais séria era: **quais baixas do app não têm lastro no extrato?** É o caso de
+alguém marcar um título como pago sem que o dinheiro tenha saído.
+
+A ação nova `reconciliation_audit` responde as quatro: extrato do período ainda sem explicação,
+baixas sem contrapartida bancária, conciliações com valor fora da tolerância e saldo do app
+contra o saldo que o banco declara. É **100% leitura**: aponta e alerta, não corrige nada.
+
+**O `<LEDGERBAL>` do OFX deixou de ser descartado.** Ele é a única referência externa para
+conferir o saldo calculado, e agora fica guardado no lote de importação (tabela `StatementImport`,
+migração `0019`). Sem backfill: lotes anteriores não têm registro, e a auditoria trata a ausência
+como "sem saldo de referência".
+
+Duas decisões que evitam alarme falso, e que são o miolo do trabalho:
+
+- **A diferença de saldo é decomposta.** O saldo calculado exclui transações não conciliadas por
+  construção; o do banco inclui tudo. Comparar cru daria alerta crítico permanente para qualquer
+  empresa com extrato pendente. Só o **resíduo** — a diferença menos o que o extrato pendente e as
+  baixas sem lastro explicam — gera alerta.
+- **Cobertura do extrato.** Baixa feita depois do último extrato importado não é divergência: é o
+  estado normal de quem paga hoje e importa amanhã. Ela conta em `pendingCoverageCount` e aparece
+  como linha informativa na tela, nunca como problema.
+
+Também: seção "Divergências do período" na tela de Conciliação, relatório
+`GET /api/v1/reports/reconciliation_audit` em csv/xlsx/pdf com uma linha por divergência, e
+execução automática dentro de `bank_sync` e do `daily_summary` — sem agenda nova.
+
+> **No deploy:** rodar `npm run db:migrate` e **reiniciar o processo do agendador**, que carrega
+> a definição dos fluxos na memória ao iniciar. Ver `docs/DEPLOY.md`.
+
+Dívida conhecida registrada em [#108](https://github.com/salimNabbout/SKILL_Financeira/issues/108):
+2 erros de `tsc` em fixtures de teste e a corrida entre specs E2E que compartilham o servidor demo.
+Ambos anteriores a este trabalho.
+
+---
+
 ## 2026-09-04 — Conciliação: fim dos falsos positivos em série
 
 O card **"2 — Sugestões pendentes de revisão"** vinha propondo baixas parciais absurdas: bastava um

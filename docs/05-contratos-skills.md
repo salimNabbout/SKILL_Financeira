@@ -86,6 +86,20 @@ Notação: campos `?` são opcionais; valores monetários em **centavos**; datas
 | `confirm_match` | `matchId` | `{ match, settlement }` |
 | `reject_match` | `matchId, notes?` | `{ match }` |
 | `reconciliation_status` | — | `{ unreconciled, suggestedPending, confirmedThisMonth, ... }` |
+| `reconciliation_audit` | `period: "YYYY-MM" \| {start,end}, bankAccountId?` | `{ period, coverage[], unexplainedBankTransactions[], settlementsWithoutBank[], amountMismatches[], balanceChecks[], totals, formula }` |
+
+**`reconciliation_audit` — regras que não cabem na tabela.** Permissão
+`report.view`. Alerta apenas em dois casos: baixa sem lastro
+(`reconciliation_settlement_without_bank`, warning) e resíduo de saldo
+(`reconciliation_balance_mismatch`, warning acima da tolerância de valor da
+empresa, crítico acima de 100× ela). Extrato sem explicação e valor divergente
+geram só `pendingItems`, porque já têm sugestões próprias.
+
+O `balanceChecks` compara o saldo de `core/bank-balance` (o mesmo da tela) com o
+`<LEDGERBAL>` do último extrato e **decompõe** a diferença: `explicado` =
+(−pagamentos + recebimentos) sem lastro ou aguardando cobertura, menos as
+transações não conciliadas; `resíduo` = diferença − explicado. Só o resíduo
+alerta. Sem a decomposição, qualquer extrato pendente viraria alarme crítico.
 
 ### cobranca_inadimplencia
 | Ação | Entrada | Saída |

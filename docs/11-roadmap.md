@@ -36,6 +36,11 @@ Escopo priorizado e implementado:
 - ✅ Fila real: EventBus sobre Redis/BullMQ com worker dedicado, retry exponencial e fila morta
   (mesma interface; ativação por EVENT_BUS=bullmq + REDIS_URL) — entregue, com integração
   validada contra Redis real no CI. O in-process com outbox segue como padrão.
+- ✅ Auditoria de conciliação (extrato × baixas, saldo bancário × saldo calculado) — entregue:
+  ação `reconciliation_audit`, tabela `StatementImport` guardando o `<LEDGERBAL>` do OFX,
+  relatório exportável, seção na tela e execução automática em `bank_sync` e `daily_summary`.
+  Responde "o que foi baixado no app sem lastro no banco?", que a conciliação, olhando só do
+  extrato para os títulos, não respondia.
 
 ## v1.2 — Integrações reais (6–10 semanas)
 

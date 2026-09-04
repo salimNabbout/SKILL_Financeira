@@ -61,7 +61,7 @@ Persistidos como outbox (`EventRecord`) e despachados in-process; `correlationId
 | Contas a pagar | `payable.created` · `payable.updated` · `payable.canceled` · `payment.scheduled` · `payment.approved` · `payment.rejected` · `payment.executed` |
 | Contas a receber | `receivable.created` · `receivable.updated` · `receivable.received` · `receivable.overdue_detected` |
 | Faturamento | `invoice.created` · `invoice.issued` · `invoice.canceled` |
-| Conciliação | `statement.imported` · `reconciliation.auto_matched` · `reconciliation.suggested` · `reconciliation.confirmed` · `reconciliation.rejected` |
+| Conciliação | `statement.imported` · `reconciliation.auto_matched` · `reconciliation.suggested` · `reconciliation.confirmed` · `reconciliation.rejected` · `reconciliation.audited` |
 | Cobrança | `collection.message_drafted` · `collection.message_sent` |
 | Tesouraria | `cashflow.updated` · `cashflow.shortfall_detected` |
 | Orçamento | `budget.deviation_detected` |
