@@ -165,6 +165,42 @@ async function main(): Promise<void> {
     "auditoria paginada em ordem seq desc"
   );
 
+  // --- Trilha append-only NO BANCO (migration 0018) ------------------------
+  // O contrato existia so no codigo; agora ha gatilho na tabela. Este bloco
+  // prova que UPDATE e DELETE falham mesmo com SQL direto.
+  const alvoAudit = auditPage.items[0];
+  const barrado = async (sql: string, ...args: unknown[]): Promise<boolean> => {
+    try {
+      await prisma.$executeRawUnsafe(sql, ...args);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  assert(
+    await barrado(`UPDATE "AuditRecord" SET "action" = 'adulterado' WHERE "id" = $1`, alvoAudit.id),
+    "UPDATE em AuditRecord e bloqueado pelo gatilho"
+  );
+  assert(
+    await barrado(`DELETE FROM "AuditRecord" WHERE "id" = $1`, alvoAudit.id),
+    "DELETE em AuditRecord e bloqueado pelo gatilho"
+  );
+  assert(
+    await barrado(`DELETE FROM "AuditHead" WHERE "companyId" = $1`, DEMO_COMPANY_ID),
+    "DELETE em AuditHead e bloqueado pelo gatilho"
+  );
+  assert(
+    await barrado(`UPDATE "AuditHead" SET "seq" = 1 WHERE "companyId" = $1`, DEMO_COMPANY_ID),
+    "AuditHead.seq nao pode retroceder (anti-truncamento do fim)"
+  );
+
+  const depoisDasTentativas = await repos.audit.listPage(DEMO_COMPANY_ID, { offset: 0, limit: 1 });
+  assert(
+    depoisDasTentativas.items[0]?.id === alvoAudit.id,
+    "registro de auditoria permanece intacto"
+  );
+
   await prisma.$disconnect();
   console.log("\nSmoke Prisma/PostgreSQL: TUDO OK ✅\n");
 }
