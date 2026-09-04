@@ -83,6 +83,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "user.password_reset": "Senha redefinida pelo administrador",
   "user.deactivated": "Usuário desativado",
   "user.reactivated": "Usuário reativado",
+  "user.totp_setup_started": "Segredo de duas etapas gerado",
   "user.totp_enabled": "Verificação em duas etapas ativada",
   "user.totp_disabled": "Verificação em duas etapas desativada",
   "membership.created": "Acesso de usuário concedido",
@@ -119,6 +120,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "supplier_category.deleted": "Categoria de fornecedor excluída",
 
   // Contas a pagar e pagamentos
+  "document.created": "Documento fiscal registrado",
   "payable.created": "Título a pagar criado",
   "payable.updated": "Título a pagar alterado",
   "payable.canceled": "Título a pagar cancelado",
@@ -148,6 +150,18 @@ export const ACTION_LABELS: Record<string, string> = {
   "invoice.created": "Nota fiscal criada",
   "invoice.issued": "Nota fiscal emitida",
   "invoice.canceled": "Nota fiscal cancelada",
+
+  // Aprovações e fluxos
+  "approval.requested": "Aprovação solicitada",
+  "approval.partially_approved": "Aprovação parcial registrada",
+  "approval.approved": "Aprovação concedida",
+  "approval.rejected": "Aprovação rejeitada",
+  "flow.started": "Fluxo iniciado",
+  "flow.completed": "Fluxo concluído",
+  "flow.failed": "Fluxo falhou",
+  "flow.reaped": "Fluxo travado liberado pelo sistema",
+  // Empresa
+  "company.created": "Empresa criada",
 
   // Conciliação bancária
   "statement.imported": "Extrato importado",

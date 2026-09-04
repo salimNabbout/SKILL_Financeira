@@ -13,6 +13,10 @@
 
 import { PrismaClient } from "@prisma/client";
 import { createPrismaRepositories } from "../src/adapters/prisma/repos";
+import { HashChainAuditTrail } from "../src/core/audit";
+import { SystemClock } from "../src/core/clock";
+import type { Actor } from "../src/core/entities";
+import { SequentialIdGenerator } from "../src/core/ids";
 import { DEFAULT_COMPANY_CONFIG } from "../src/core/config";
 import { hashPassword } from "../src/lib/password";
 
@@ -50,6 +54,11 @@ async function main(): Promise<void> {
     await prisma.$connect();
     const repos = createPrismaRepositories(prisma);
     const now = new Date().toISOString();
+    // Este script cria empresa, usuário e vínculo com poder total. Sem trilha,
+    // o primeiro acesso do sistema — o mais sensível de todos — não deixava
+    // registro nenhum de quem o criou nem de quando.
+    const audit = new HashChainAuditTrail(repos.audit, new SystemClock(), new SequentialIdGenerator());
+    const actor: Actor = { type: "system", id: "create-admin" };
 
     // Empresa (idempotente por CNPJ).
     const existingCompany = await repos.companies.findByCnpj(companyCnpj);
@@ -67,7 +76,16 @@ async function main(): Promise<void> {
         updatedAt: now,
       }));
     if (existingCompany) console.log(`Empresa já existia: ${company.name} (${company.id}).`);
-    else console.log(`Empresa criada: ${company.name} (${company.id}).`);
+    else {
+      await audit.record(company.id, {
+        actor,
+        action: "company.created",
+        entityType: "company",
+        entityId: company.id,
+        after: { name: company.name, cnpj: company.cnpj, timezone: company.timezone },
+      });
+      console.log(`Empresa criada: ${company.name} (${company.id}).`);
+    }
 
     // Usuário admin (idempotente por e-mail).
     let user = await repos.users.findByEmail(adminEmail);
@@ -81,6 +99,13 @@ async function main(): Promise<void> {
         createdAt: now,
         updatedAt: now,
       });
+      await audit.record(company.id, {
+        actor,
+        action: "user.created",
+        entityType: "user",
+        entityId: user.id,
+        after: { name: user.name, email: user.email }, // nunca auditar hash de senha
+      });
       console.log(`Usuário admin criado: ${user.email} (${user.id}).`);
     } else {
       console.log(`Usuário já existia: ${user.email} (${user.id}) — senha NÃO alterada.`);
@@ -89,12 +114,19 @@ async function main(): Promise<void> {
     // Vínculo admin (idempotente).
     const membership = await repos.memberships.findByUserAndCompany(user.id, company.id);
     if (!membership) {
-      await repos.memberships.create({
+      const membershipCriado = await repos.memberships.create({
         id: `mem_${Date.now().toString(36)}`,
         userId: user.id,
         companyId: company.id,
         role: "admin",
         approvalLimitCents: null, // admin: alçada ilimitada
+      });
+      await audit.record(company.id, {
+        actor,
+        action: "membership.created",
+        entityType: "membership",
+        entityId: membershipCriado.id,
+        after: { userId: user.id, role: "admin", approvalLimitCents: null },
       });
       console.log("Vínculo admin criado.");
     } else {

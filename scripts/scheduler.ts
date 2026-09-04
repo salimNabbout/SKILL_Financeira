@@ -26,6 +26,7 @@ import type { Actor } from "../src/core/entities";
 import { InMemoryEventBus } from "../src/core/events";
 import { RandomIdGenerator } from "../src/core/ids";
 import { Orchestrator } from "../src/core/orchestrator/orchestrator";
+import { HashChainAuditTrail } from "../src/core/audit";
 import { reapStuckFlowRuns } from "../src/core/orchestrator/reaper";
 import { collectDueJobs } from "../src/core/scheduler";
 import { buildIntegrations } from "../src/integrations/registry";
@@ -40,6 +41,8 @@ async function main(): Promise<void> {
   const clock = new SystemClock();
   const ids = new RandomIdGenerator();
   const events = new InMemoryEventBus(repos.events, clock, ids);
+  // O reaper muda flowRun running → failed: passa a deixar rastro na trilha.
+  const audit = new HashChainAuditTrail(repos.audit, clock, ids);
   const orchestrator = new Orchestrator({
     repos,
     events,
@@ -61,9 +64,13 @@ async function main(): Promise<void> {
       // Recupera fluxos travados em "running" há mais de 30 min (crash no meio
       // de um passo) marcando-os como "failed" — libera para reprocessamento.
       try {
-        const reaped = await reapStuckFlowRuns(repos, company.id, nowUtc.getTime(), {
-          olderThanMs: 30 * 60_000,
-        });
+        const reaped = await reapStuckFlowRuns(
+          repos,
+          company.id,
+          nowUtc.getTime(),
+          { olderThanMs: 30 * 60_000 },
+          audit
+        );
         if (reaped > 0) {
           console.log(`[${nowUtc.toISOString()}] ${company.id} reaper: ${reaped} flowRun(s) presos → failed`);
         }

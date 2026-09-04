@@ -462,6 +462,17 @@ async function createPayable(
         contentHash,
         createdAt: nowIso,
       });
+      // O documento fiscal é a chave de deduplicação do título; criá-lo sem
+      // rastro deixava sem explicação por que um lançamento foi (ou não) tratado
+      // como duplicata depois.
+      await ctx.audit.record(ctx.companyId, {
+        actor: ctx.actor,
+        action: "document.created",
+        entityType: "document",
+        entityId: document.id,
+        after: document,
+        correlationId: ctx.correlationId,
+      });
     }
   }
 

@@ -747,6 +747,17 @@ async function registerReceipt(
   receivable.updatedAt = now;
   await ctx.repos.receivables.update(receivable);
 
+  // O recibo em si passava sem registro próprio: só existia o evento do título,
+  // que não guarda método, conta, principal nem encargos. A conciliação
+  // bancária já auditava receipt.created — aqui ficava o buraco.
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receipt.created",
+    entityType: "receipt",
+    entityId: receipt.id,
+    after: { ...receipt, principalCents, chargesCents },
+    correlationId: ctx.correlationId,
+  });
   await ctx.audit.record(ctx.companyId, {
     actor: ctx.actor,
     action: "receivable.receipt_registered",
