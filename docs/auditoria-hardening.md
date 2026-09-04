@@ -103,57 +103,73 @@ $DC exec -T db dropdb -U "$POSTGRES_USER" smoke_tmp
 
 ---
 
-## 2. REVOKE na role da aplicação — hoje é um NO-OP
+## 2. Role restrita para o app, e o REVOKE que a acompanha
 
-Os gatilhos barram a operação, mas quem pode `ALTER TABLE ... DISABLE TRIGGER`
-os desliga. Revogar o privilégio fecharia essa porta.
+Os gatilhos barram a operação, mas quem consegue `ALTER TABLE ... DISABLE
+TRIGGER` os desliga. A segunda tranca é tirar o privilégio de quem não precisa
+dele.
 
-**Só que hoje não fecha.** No `docker-compose.prod.yml`, `app`, `scheduler` e
-`migrate` usam o mesmo `POSTGRES_USER`, e a imagem oficial do Postgres cria esse
-usuário como **superusuário**. Superusuário ignora `GRANT`/`REVOKE` por
-completo: o SQL abaixo rodaria sem erro e não protegeria nada.
+Isso não funcionava enquanto `app`, `scheduler` e `migrate` usavam o mesmo
+`POSTGRES_USER`: a imagem oficial do Postgres cria esse usuário como
+**superusuário**, e superusuário ignora `GRANT`/`REVOKE`. Hoje são duas
+credenciais:
 
-### Pré-requisito: uma role dedicada, sem superpoderes
+| Container | Role | Para quê |
+|---|---|---|
+| `migrate` | `POSTGRES_USER` — dono do banco, superusuário | criar e alterar tabelas |
+| `app`, `scheduler` | `APP_DB_USER` — restrita, sem superpoderes | ler e escrever dados |
 
-Antes do REVOKE fazer sentido é preciso separar quem lê e escreve de quem migra:
+### Instalar (uma vez por ambiente)
 
-- criar uma role para o app e o scheduler, **sem** `SUPERUSER` e sem ser dona
-  das tabelas;
-- manter o dono do banco apenas para o container `migrate`;
-- passar uma segunda `DATABASE_URL` no `.env.prod` e no compose, para que `app`
-  e `scheduler` conectem com a role restrita.
+1. Preencha `APP_DB_USER` e `APP_DB_PASSWORD` em `deploy/.env.prod`
+   (`openssl rand -base64 24` para a senha).
+2. Rode `deploy/criar-role-app.sh` — cria a role, aplica os privilégios e
+   **verifica**, conectando como ela, que um `UPDATE` na trilha é recusado.
+3. Publique (`deploy/publicar.sh`), para o app e o scheduler passarem a usar a
+   credencial nova.
 
-Enquanto isso não existir, a proteção real é o gatilho — que vale para todo
-mundo. Este documento registra a lacuna em vez de fingir que ela está fechada.
+Enquanto os dois valores não existirem, `publicar.sh` cai no usuário dono e
+avisa em voz alta: o deploy funciona, mas sem esta proteção.
 
-### O REVOKE, depois que a role existir
+### O que a role recebe
 
-Não está na migration de propósito: o nome da role varia por ambiente, e uma
-migration que cita role inexistente derruba o deploy inteiro. Rode uma vez por
-ambiente, conectado como o dono do banco:
+`deploy/sql/grants-app.sql` (versionado, sem segredos, idempotente):
 
-```sql
--- Troque financeira_app pelo nome real da role restrita.
-REVOKE DELETE, TRUNCATE ON TABLE "AuditRecord" FROM financeira_app;
-REVOKE UPDATE           ON TABLE "AuditRecord" FROM financeira_app;
-REVOKE DELETE, TRUNCATE ON TABLE "AuditHead"   FROM financeira_app;
+| Objeto | Privilégio |
+|---|---|
+| banco / schema `public` | `CONNECT`, `USAGE` — sem `CREATE` |
+| tabelas em geral | `SELECT, INSERT, UPDATE, DELETE` |
+| `AuditRecord` | só `SELECT, INSERT` — `UPDATE`, `DELETE` e `TRUNCATE` revogados |
+| `AuditHead` | `SELECT, INSERT, UPDATE` — `DELETE` e `TRUNCATE` revogados |
 
--- A aplicação precisa continuar podendo INSERIR e LER:
-GRANT INSERT, SELECT         ON TABLE "AuditRecord" TO financeira_app;
-GRANT INSERT, SELECT, UPDATE ON TABLE "AuditHead"   TO financeira_app;
-```
+`AuditHead` mantém `UPDATE` porque a âncora é gravada por upsert; quem impede o
+retrocesso é o gatilho `audit_head_seq_forward`. `DELETE` continua no geral
+porque a aplicação apaga de verdade em dois lugares (`SupplierRepo.delete` e
+`IdempotencyRepo.remove`).
 
-Conferir:
+### Manutenção: tabela nova não quebra o app
+
+O script inclui `ALTER DEFAULT PRIVILEGES`, então tabelas criadas por migrations
+futuras já nascem acessíveis à role. Além disso, `publicar.sh` reaplica o script
+a cada publicação (passo 4/6) — idempotente, e no-op silencioso onde a role
+ainda não existe.
+
+⚠️ Se uma migration futura **recriar** `AuditRecord` ou `AuditHead`, a tabela
+nova nasce com os privilégios padrão e o REVOKE se perde. O passo 4/6 do
+`publicar.sh` reaplica logo em seguida, mas vale conferir.
+
+### Conferir
 
 ```bash
 $DC exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<'SQL'
-SELECT grantee, privilege_type FROM information_schema.role_table_grants
-WHERE table_name IN ('AuditRecord', 'AuditHead') ORDER BY grantee, privilege_type;
-SELECT rolname, rolsuper FROM pg_roles WHERE rolname = 'financeira_app';
+SELECT grantee, table_name, privilege_type FROM information_schema.role_table_grants
+WHERE table_name IN ('AuditRecord', 'AuditHead') ORDER BY grantee, table_name, privilege_type;
+SELECT rolname, rolsuper FROM pg_roles WHERE rolname <> 'postgres' AND rolcanlogin;
 SQL
 ```
 
-`rolsuper = t` significa que o REVOKE não vale nada — volte ao pré-requisito.
+`rolsuper = t` na role do app significa que o REVOKE não vale nada — a role foi
+criada errada, refaça pelo `criar-role-app.sh`.
 
 ---
 
