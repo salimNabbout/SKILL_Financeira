@@ -151,15 +151,6 @@ export const ACTION_LABELS: Record<string, string> = {
   "invoice.issued": "Nota fiscal emitida",
   "invoice.canceled": "Nota fiscal cancelada",
 
-  // Aprovações e fluxos
-  "approval.requested": "Aprovação solicitada",
-  "approval.partially_approved": "Aprovação parcial registrada",
-  "approval.approved": "Aprovação concedida",
-  "approval.rejected": "Aprovação rejeitada",
-  "flow.started": "Fluxo iniciado",
-  "flow.completed": "Fluxo concluído",
-  "flow.failed": "Fluxo falhou",
-  "flow.reaped": "Fluxo travado liberado pelo sistema",
   // Empresa
   "company.created": "Empresa criada",
 
@@ -181,6 +172,8 @@ export const ACTION_LABELS: Record<string, string> = {
   // Aprovações
   "approval.requested": "Aprovação solicitada",
   "approval.partially_approved": "Aprovação parcial registrada",
+  "approval.approved": "Aprovação concedida",
+  "approval.rejected": "Aprovação rejeitada",
 
   // Alertas e controles
   "alert.created": "Alerta gerado",
@@ -201,4 +194,5 @@ export const ACTION_LABELS: Record<string, string> = {
   "flow.started": "Fluxo iniciado",
   "flow.completed": "Fluxo concluído",
   "flow.failed": "Fluxo interrompido por erro",
+  "flow.reaped": "Fluxo travado liberado pelo sistema",
 };

@@ -25,6 +25,7 @@ import { todayInTz } from "../dates";
 import type { Actor, Approval, FlowRun, FlowRunStatus, ID } from "../entities";
 import { DomainError, NotFoundError, PermissionError, ValidationError } from "../errors";
 import type { EventBus } from "../events";
+import { persistAlert } from "../alerts";
 import { hashPayload, type IdGenerator } from "../ids";
 import type { Repositories } from "../repositories";
 import { runSkill, type ApprovalDecision, type SkillContext } from "../skill";
@@ -604,18 +605,26 @@ export class Orchestrator {
     flowRun.updatedAt = this.env.clock.now().toISOString();
     await this.env.repos.flowRuns.update(flowRun);
 
-    await this.env.repos.alerts.create({
-      id: this.env.ids.next("alr"),
-      companyId: flowRun.companyId,
-      severity: "warning",
-      code: "approval_pending",
-      message: `Aprovação pendente: ${req.summary}`,
-      entityType: "Approval",
-      entityId: approval.id,
-      source: "orchestrator",
-      status: "open",
-      createdAt: this.env.clock.now().toISOString(),
-    });
+    // Caminho único de alerta (dedupe + trilha): ver core/alerts.ts.
+    await persistAlert(
+      {
+        companyId: flowRun.companyId,
+        actor,
+        repos: this.env.repos,
+        audit: this.audit,
+        clock: this.env.clock,
+        ids: this.env.ids,
+        correlationId: flowRun.correlationId,
+      },
+      {
+        severity: "warning",
+        code: "approval_pending",
+        message: `Aprovação pendente: ${req.summary}`,
+        entityType: "approval",
+        entityId: approval.id,
+      },
+      "orchestrator"
+    );
     await this.audit.record(flowRun.companyId, {
       actor,
       action: "approval.requested",

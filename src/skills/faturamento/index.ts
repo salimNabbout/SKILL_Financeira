@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import type { ISODate } from "@/core/dates";
 import { formatBRL, receiptIsActive } from "@/core/money";
 import type { Invoice, Receivable } from "@/core/entities";
@@ -465,23 +466,18 @@ async function billingStatus(ctx: SkillContext): Promise<SkillResult<Faturamento
         entityType: "invoice",
         entityId: item.invoiceId,
       });
-      // Dedupe: não recria alerta aberto para o mesmo código + fatura.
-      const alreadyOpen = openAlerts.some(
-        (a) => a.code === "invoice_sem_titulos" && a.entityId === item.invoiceId
+      // O dedupe (code + entityId entre os abertos) agora vive no helper.
+      await persistAlert(
+        ctx,
+        {
+          severity: "warning",
+          code: "invoice_sem_titulos",
+          message,
+          entityType: "invoice",
+          entityId: item.invoiceId,
+        },
+        SKILL_NAME
       );
-      if (alreadyOpen) continue;
-      await ctx.repos.alerts.create({
-        id: ctx.ids.next("alr"),
-        companyId: ctx.companyId,
-        severity: "warning",
-        code: "invoice_sem_titulos",
-        message,
-        entityType: "invoice",
-        entityId: item.invoiceId,
-        source: SKILL_NAME,
-        status: "open",
-        createdAt: ctx.clock.now().toISOString(),
-      });
     }
   }
 

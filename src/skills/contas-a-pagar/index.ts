@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import { assertSegregation, hasPermission } from "@/core/auth";
 import {
   addDays,
@@ -319,21 +320,7 @@ const OPEN_STATUSES: Payable["status"][] = ["open", "partially_paid", "scheduled
  * (dedupe exigido para não inflar o painel a cada reexecução da skill).
  */
 async function persistAlertDeduped(ctx: SkillContext, alert: SkillAlert): Promise<void> {
-  const open = await ctx.repos.alerts.listOpen(ctx.companyId);
-  const exists = open.some((a) => a.code === alert.code && a.entityId === alert.entityId);
-  if (exists) return;
-  await ctx.repos.alerts.create({
-    id: ctx.ids.next("alr"),
-    companyId: ctx.companyId,
-    severity: alert.severity,
-    code: alert.code,
-    message: alert.message,
-    entityType: alert.entityType,
-    entityId: alert.entityId,
-    source: SKILL,
-    status: "open",
-    createdAt: ctx.clock.now().toISOString(),
-  });
+  await persistAlert(ctx, alert, SKILL);
 }
 
 async function resolveCurrency(ctx: SkillContext): Promise<CurrencyCode> {

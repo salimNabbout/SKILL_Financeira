@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import { assertPermission } from "@/core/auth";
 import { addDays, diffDays, endOfMonth, monthOf, startOfMonth, type ISODate } from "@/core/dates";
 import type {
@@ -173,20 +174,7 @@ export type ConciliacaoData =
 
 /** Persiste alerta apenas se não houver outro ABERTO com mesmo code+entityId. */
 async function persistAlertDeduped(ctx: SkillContext, alert: SkillAlert): Promise<void> {
-  const open = await ctx.repos.alerts.listOpen(ctx.companyId);
-  if (open.some((a) => a.code === alert.code && a.entityId === alert.entityId)) return;
-  await ctx.repos.alerts.create({
-    id: ctx.ids.next("alr"),
-    companyId: ctx.companyId,
-    severity: alert.severity,
-    code: alert.code,
-    message: alert.message,
-    entityType: alert.entityType,
-    entityId: alert.entityId,
-    source: SKILL,
-    status: "open",
-    createdAt: ctx.clock.now().toISOString(),
-  });
+  await persistAlert(ctx, alert, SKILL);
 }
 
 /** Arredonda a 2 casas para evitar ruído de ponto flutuante na soma dos pesos. */

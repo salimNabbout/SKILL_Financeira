@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import { assertPermission } from "@/core/auth";
 import { addMonths, monthOf, startOfMonth, type ISOMonth } from "@/core/dates";
 import type { Budget, BudgetLine, ID } from "@/core/entities";
@@ -219,20 +220,7 @@ function lineKey(period: string, categoryId?: ID, costCenterId?: ID): string {
 
 /** Dedupe exigido: não persiste alerta se já houver um ABERTO com mesmo code+entityId. */
 async function persistAlertDeduped(ctx: SkillContext, alert: SkillAlert): Promise<void> {
-  const open = await ctx.repos.alerts.listOpen(ctx.companyId);
-  if (open.some((a) => a.code === alert.code && a.entityId === alert.entityId)) return;
-  await ctx.repos.alerts.create({
-    id: ctx.ids.next("alr"),
-    companyId: ctx.companyId,
-    severity: alert.severity,
-    code: alert.code,
-    message: alert.message,
-    entityType: alert.entityType,
-    entityId: alert.entityId,
-    source: SKILL,
-    status: "open",
-    createdAt: ctx.clock.now().toISOString(),
-  });
+  await persistAlert(ctx, alert, SKILL);
 }
 
 function sortLines(lines: BudgetLine[]): BudgetLine[] {

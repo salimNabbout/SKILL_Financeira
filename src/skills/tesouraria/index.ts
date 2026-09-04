@@ -19,6 +19,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import type {
   Alert,
   BankAccount,
@@ -651,26 +652,13 @@ async function executeRefreshProjection(ctx: SkillContext, input: RefreshProject
         `Alerta '${alertToPersist.code}' já está aberto (${existing.id}); não foi duplicado.`
       );
     } else {
-      const alert: Alert = {
-        id: ctx.ids.next("alr"),
-        companyId: ctx.companyId,
+      const alert: SkillAlert = {
         severity: alertToPersist.severity,
         code: alertToPersist.code,
         message: alertToPersist.message,
         entityType: "cashflow_projection",
-        source: SKILL_NAME,
-        status: "open",
-        createdAt: ctx.clock.now().toISOString(),
       };
-      await ctx.repos.alerts.create(alert);
-      await ctx.audit.record(ctx.companyId, {
-        actor: ctx.actor,
-        action: "alert.created",
-        entityType: "alert",
-        entityId: alert.id,
-        after: alert,
-        correlationId: ctx.correlationId,
-      });
+      await persistAlert(ctx, alert, SKILL_NAME);
     }
   }
 

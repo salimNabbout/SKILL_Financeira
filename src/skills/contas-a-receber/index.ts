@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import { addDays, addMonths, diffDays, formatBR, minDate, type ISODate } from "@/core/dates";
 import type { CurrencyCode, LateFeeResult } from "@/core/money";
 import {
@@ -625,23 +626,18 @@ async function listOverdue(ctx: SkillContext): Promise<SkillResult<ContasARecebe
         entityType: "receivable",
         entityId: o.receivable.id,
       });
-      // Dedupe: não recria alerta aberto para o mesmo código + título.
-      const alreadyOpen = openAlerts.some(
-        (a) => a.code === "receivable_overdue" && a.entityId === o.receivable.id
+      // O dedupe (code + entityId entre os abertos) agora vive no helper.
+      await persistAlert(
+        ctx,
+        {
+          severity: "critical",
+          code: "receivable_overdue",
+          message,
+          entityType: "receivable",
+          entityId: o.receivable.id,
+        },
+        SKILL_NAME
       );
-      if (alreadyOpen) continue;
-      await ctx.repos.alerts.create({
-        id: ctx.ids.next("alr"),
-        companyId: ctx.companyId,
-        severity: "critical",
-        code: "receivable_overdue",
-        message,
-        entityType: "receivable",
-        entityId: o.receivable.id,
-        source: SKILL_NAME,
-        status: "open",
-        createdAt: ctx.clock.now().toISOString(),
-      });
     }
   }
 
