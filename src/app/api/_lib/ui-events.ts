@@ -10,7 +10,7 @@ import type { ActivityLog } from "@/core/activity";
 import { ValidationError } from "@/core/errors";
 
 export const uiEventSchema = z.object({
-  tipo: z.enum(["clique", "submissao", "navegacao"]),
+  tipo: z.enum(["clique", "submissao", "navegacao", "interacao"]),
   tela: z.string().trim().min(1).max(300),
   rotulo: z.string().trim().max(160).optional(),
   elemento: z.string().trim().max(160).optional(),

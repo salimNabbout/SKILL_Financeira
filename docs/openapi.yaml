@@ -948,7 +948,7 @@ paths:
                     type: object
                     required: [tipo, tela]
                     properties:
-                      tipo: { type: string, enum: [clique, submissao, navegacao] }
+                      tipo: { type: string, enum: [clique, submissao, navegacao, interacao] }
                       tela: { type: string, example: /contas-a-pagar }
                       rotulo: { type: string, example: Novo título }
                       elemento: { type: string, example: nt_abrir }
