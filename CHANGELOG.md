@@ -4,6 +4,42 @@ Registro das mudanças relevantes. Datas em ISO (AAAA-MM-DD).
 
 ---
 
+## 2026-09-04 — Conciliação: fim dos falsos positivos em série
+
+O card **"2 — Sugestões pendentes de revisão"** vinha propondo baixas parciais absurdas: bastava um
+token genérico da razão social aparecer na descrição do extrato. Uma tarifa de R$ 36,51 com a
+descrição `TARIFA PACOTE SERVICOS` era sugerida como baixa parcial de um título da
+`LIGHT SERVICOS DE ELETRICIDADE S A` de R$ 215,20 vencido 20 dias antes — 65% de confiança, só
+porque `"servicos"` casava dos dois lados.
+
+**Baixa parcial (Fase 4) desligada por padrão.** Nova configuração
+`reconciliationEnablePartial` (default `false`), no mesmo padrão das demais chaves
+`reconciliation*`. A fase continua no código e volta a rodar quando a flag é ligada — só não é
+mais o comportamento padrão. As Fases 1, 2 e 3 (casamento exato, transferência entre contas e
+rateio com soma exata) **não mudaram**: nem lógica, nem limiares, nem ordenação.
+
+**Novo tipo de alvo `bank_fee` — despesa bancária.** Débitos cuja descrição casa com
+tarifa/IOF/juros/encargo/cesta/pacote de serviços/anuidade passam a virar sugestão própria
+(confiança fixa 0,80, **nunca automática**), avaliada **antes** dos demais fallbacks. Antes,
+esses débitos ou viravam falso positivo na Fase 4 ou ficavam órfãos em "não conciliadas".
+
+Confirmar uma despesa bancária concilia a transação e **lança a despesa** — o app não tinha rota
+para despesa sem título, então foi criada a mínima: um `AccountingEntry` de ajuste (débito em
+despesa operacional, crédito em caixa) usando as **mesmas contas** da skill contábil, agora
+exportadas para não duplicar código mágico. O lançamento é idempotente pela origem (`fee:<txId>`),
+e a classificação da tarifa é sinalizada como pendente de validação do contador. Rejeitar mantém a
+transação não conciliada, como nos demais tipos.
+
+**Fase 4 endurecida, para quando a flag estiver ligada.** Passou a exigir que o vencimento esteja
+**dentro da tolerância de dias** configurada (antes, um vencimento 77 dias distante pontuava 0,00
+em data e a sugestão nascia mesmo assim) e que **dois tokens** do nome da contraparte apareçam na
+descrição — ou um único com 6 letras ou mais. A `NAME_STOPWORDS` deixou de conter só sufixos
+societários e agora inclui termos genéricos de razão social: serviços, comércio, indústria,
+Brasil, engenharia, manutenção, distribuidora, consultoria, tecnologia, participações,
+empreendimentos, soluções, sistemas, construtora, transportes e logística.
+
+---
+
 ## 2026-08-19 — QR Code no cadastro do 2FA
 
 A tela **Segurança** passa a exibir um **QR Code** da URI otpauth, em vez de apenas a chave base32

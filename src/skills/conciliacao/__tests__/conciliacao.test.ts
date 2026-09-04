@@ -577,6 +577,107 @@ describe("conciliacao_bancaria — confirm_match / reject_match", () => {
   });
 });
 
+describe("conciliacao_bancaria — despesa bancária (bank_fee)", () => {
+  /** Débito de tarifa, sem título a pagar correspondente. */
+  async function sugerirTarifa(env: TestEnv, description = "TARIFA PACOTE SERVICOS") {
+    seedBankAccount(env);
+    const tx = seedTx(env, { amountCents: -3_651, date: "2026-08-18", description });
+    const res = await run(env, { action: "auto_match" });
+    const data = res.data as AutoMatchData;
+    return { tx, data };
+  }
+
+  it("débito de tarifa vira sugestão bank_fee, nunca automática", async () => {
+    const env = createTestEnv();
+    const { tx, data } = await sugerirTarifa(env);
+
+    expect(data.suggested).toBe(1);
+    expect(data.autoConfirmed).toBe(0);
+    const match = data.matches[0];
+    expect(match.targetType).toBe("bank_fee");
+    expect(match.targetId).toBeUndefined();
+    expect(match.status).toBe("suggested");
+    expect(match.confidence).toBe(0.8);
+    expect(match.amountCents).toBe(3_651);
+    expect(match.notes).toContain("despesa bancária");
+    expect(match.bankTransactionId).toBe(tx.id);
+    expect(env.db.events.some((e) => e.type === "reconciliation.suggested")).toBe(true);
+  });
+
+  it("pega IOF, juros, encargo, cesta e anuidade — e ignora crédito", async () => {
+    for (const d of ["IOF SOBRE OPERACAO", "JUROS DE MORA", "ENCARGOS DE CONTA", "CESTA MAIS SERVICOS", "ANUIDADE CARTAO"]) {
+      const env = createTestEnv();
+      const { data } = await sugerirTarifa(env, d);
+      expect(data.matches[0]?.targetType).toBe("bank_fee");
+    }
+    // Crédito com a mesma palavra não é despesa bancária.
+    const env = createTestEnv();
+    seedBankAccount(env);
+    seedTx(env, { amountCents: 3_651, description: "ESTORNO TARIFA" });
+    const res = await run(env, { action: "auto_match" });
+    expect((res.data as AutoMatchData).suggested).toBe(0);
+  });
+
+  it("confirmar concilia a transação e lança a despesa; confirmar de novo não duplica", async () => {
+    const env = createTestEnv();
+    const { tx, data } = await sugerirTarifa(env);
+    const matchId = data.matches[0].id;
+
+    const res = await run(env, { action: "confirm_match", matchId }, "manager");
+    expect(res.status).toBe("success");
+    expect((res.data as ConfirmMatchData).match.status).toBe("confirmed");
+
+    const txAfter = await env.repos.bankTransactions.getById(env.company.id, tx.id);
+    expect(txAfter?.reconciled).toBe(true);
+
+    const lancamentos = env.db.accountingEntries.filter((e) => e.sourceId === `fee:${tx.id}`);
+    expect(lancamentos).toHaveLength(1);
+    expect(lancamentos[0]).toMatchObject({
+      sourceType: "adjustment",
+      amountCents: 3_651,
+      entryDate: "2026-08-18",
+      exported: false,
+    });
+    expect(lancamentos[0].memo).toContain("Despesa bancária");
+    // Débito em despesa, crédito em caixa (saiu dinheiro).
+    expect(lancamentos[0].debitAccount).not.toBe(lancamentos[0].creditAccount);
+
+    // Idempotente: confirmar de novo não lança segunda despesa.
+    await run(env, { action: "confirm_match", matchId }, "manager");
+    expect(env.db.accountingEntries.filter((e) => e.sourceId === `fee:${tx.id}`)).toHaveLength(1);
+  });
+
+  it("rejeitar mantém a transação NÃO conciliada e sem lançamento", async () => {
+    const env = createTestEnv();
+    const { tx, data } = await sugerirTarifa(env);
+
+    const res = await run(
+      env,
+      { action: "reject_match", matchId: data.matches[0].id, notes: "não é tarifa" },
+      "manager"
+    );
+
+    expect(res.status).toBe("success");
+    const txAfter = await env.repos.bankTransactions.getById(env.company.id, tx.id);
+    expect(txAfter?.reconciled).toBe(false);
+    expect(env.db.accountingEntries.filter((e) => e.sourceId === `fee:${tx.id}`)).toHaveLength(0);
+  });
+
+  it("tarifa NÃO rouba a fase 1: débito exato de um título a pagar continua casando", async () => {
+    const env = createTestEnv();
+    seedBankAccount(env);
+    seedSupplier(env);
+    const payable = seedPayable(env, { amountCents: 3_651, dueDate: "2026-08-18" });
+    // Descrição com "tarifa" MAS com título exato: a fase 1 decide antes.
+    seedTx(env, { amountCents: -3_651, date: "2026-08-18", description: "TARIFA FORNECEDORA ALFA" });
+
+    const data = (await run(env, { action: "auto_match" })).data as AutoMatchData;
+
+    expect(data.matches[0].targetType).toBe("payable");
+    expect(data.matches[0].targetId).toBe(payable.id);
+  });
+});
+
 describe("conciliacao_bancaria — reconciliation_status", () => {
   it("consolida não conciliadas, sugeridas pendentes e conciliadas no mês", async () => {
     const env = createTestEnv();
@@ -588,7 +689,8 @@ describe("conciliacao_bancaria — reconciliation_status", () => {
     // Sugerida pendente:
     seedReceivable(env, { amountCents: 50_000, dueDate: "2026-08-10" });
     seedTx(env, { amountCents: 50_000, date: "2026-08-12", description: "DEPOSITO EM CONTA" });
-    // Sem par:
+    // Tarifa bancária: não tem título do outro lado, mas deixou de ficar órfã —
+    // vira sugestão de despesa bancária (bank_fee), que ainda aguarda revisão.
     seedTx(env, { amountCents: -9_990, date: "2026-08-17", description: "TARIFA BANCARIA" });
     await run(env, { action: "auto_match" });
 
@@ -596,10 +698,10 @@ describe("conciliacao_bancaria — reconciliation_status", () => {
     const data = res.data as ReconciliationStatusData;
 
     expect(data.reconciledInMonthCount).toBe(1);
-    expect(data.suggestedPendingCount).toBe(1);
-    expect(data.unreconciledCount).toBe(2); // sugerida (ainda não confirmada) + tarifa sem par
+    expect(data.suggestedPendingCount).toBe(2); // depósito + despesa bancária
+    expect(data.unreconciledCount).toBe(2); // as duas sugeridas seguem não conciliadas
     expect(data.period).toEqual({ start: "2026-08-01", end: "2026-08-31" });
-    expect(res.pending_items).toHaveLength(1);
+    expect(res.pending_items).toHaveLength(2);
     expect(res.confidence).toBe(1.0);
   });
 });

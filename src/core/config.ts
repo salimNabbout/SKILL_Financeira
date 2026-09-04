@@ -48,6 +48,14 @@ export interface CompanyConfig {
   reconciliationAmountToleranceCents: number;
   reconciliationDateToleranceDays: number;
   /**
+   * Liga a Fase 4 da conciliação (baixa PARCIAL sugerida sobre título maior).
+   * DESLIGADA por padrão: ela propunha baixa só porque um token genérico do
+   * nome da contraparte aparecia na descrição do extrato ("servicos" em
+   * "TARIFA PACOTE SERVICOS"), gerando falso positivo em série. Ligue apenas
+   * onde as descrições do banco forem confiáveis o bastante.
+   */
+  reconciliationEnablePartial: boolean;
+  /**
    * Regras tributárias como dados configuráveis (ex.: alíquotas por regime).
    * O sistema NUNCA fixa alíquota em código; a validação é do contador.
    */
@@ -93,6 +101,7 @@ export const DEFAULT_COMPANY_CONFIG: CompanyConfig = {
   reconciliationAutoConfirmThreshold: 0.9,
   reconciliationAmountToleranceCents: 100, // R$ 1,00
   reconciliationDateToleranceDays: 3,
+  reconciliationEnablePartial: false,
   taxRules: {
     regime: "simples_nacional",
     observacao:
@@ -206,6 +215,9 @@ export function resolveCompanyConfig(raw: unknown): CompanyConfig {
   const num = (value: unknown, fallback: number): number =>
     typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
+  const bool = (value: unknown, fallback: boolean): boolean =>
+    typeof value === "boolean" ? value : fallback;
+
   return {
     timezone,
     currency: typeof r.currency === "string" ? r.currency : d.currency,
@@ -233,6 +245,10 @@ export function resolveCompanyConfig(raw: unknown): CompanyConfig {
     reconciliationDateToleranceDays: num(
       r.reconciliationDateToleranceDays,
       d.reconciliationDateToleranceDays
+    ),
+    reconciliationEnablePartial: bool(
+      r.reconciliationEnablePartial,
+      d.reconciliationEnablePartial
     ),
     taxRules: isPlainObject(r.taxRules) ? (r.taxRules as Record<string, unknown>) : d.taxRules,
   };
