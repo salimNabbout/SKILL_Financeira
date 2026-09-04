@@ -509,6 +509,36 @@ export interface AuditRecord {
   hash: string;
 }
 
+/**
+ * Evento de atividade — telemetria de uso: cliques, navegação e requisições.
+ * Difere de AuditRecord: alto volume e SEM cadeia de hash, portanto pode ser
+ * podado por política de retenção sem afetar a trilha imutável de negócio.
+ */
+export interface ActivityEvent {
+  id: ID;
+  companyId: ID;
+  userId?: ID;
+  origin: "frontend" | "backend";
+  /** clique | submissao | navegacao (frontend) | requisicao (backend). */
+  eventType: string;
+  /** Rota da tela no app onde o evento ocorreu (frontend). */
+  screen?: string;
+  /** Método e rota HTTP (backend). */
+  method?: string;
+  path?: string;
+  status?: number;
+  durationMs?: number;
+  ip?: string;
+  userAgent?: string;
+  /** Rótulo visível do elemento interativo (frontend). */
+  label?: string;
+  /** id/name/data-action do elemento (frontend). */
+  elementId?: string;
+  /** Complemento livre, já mascarado (nunca senhas/tokens/cartões). */
+  details?: unknown;
+  timestamp: string;
+}
+
 // ---------------------------------------------------------------------------
 // Faturamento, cobrança, contabilidade
 // ---------------------------------------------------------------------------

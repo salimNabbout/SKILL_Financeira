@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { getContainer, isDemoMode } from "@/lib/container";
 import { logoutAction } from "@/app/login/actions";
 import { ROLE_LABELS } from "@/lib/format";
+import { ActivityTracker } from "@/components/activity-tracker";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { switchCompanyAction } from "./company-actions";
 
@@ -42,6 +43,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen">
+      {/* Telemetria de auditoria: cliques/submissões/navegação de TODO o app
+          autenticado (a tela de login fica de fora de propósito — o login já
+          é auditado na trilha imutável). */}
+      <ActivityTracker />
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 overflow-y-auto border-r border-[var(--line)] bg-white p-4 md:block">
         <div className="mb-6">
           <p className="text-lg font-semibold text-[var(--brand)]">Financeira PME</p>

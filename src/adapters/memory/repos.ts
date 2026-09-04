@@ -3,6 +3,7 @@
 import type { ISODate } from "@/core/dates";
 import type {
   AccountingEntry,
+  ActivityEvent,
   Alert,
   ApprovalStatus,
   AuditRecord,
@@ -34,6 +35,7 @@ import type {
 import { NotFoundError, ValidationError } from "@/core/errors";
 import type {
   AccountingEntryRepo,
+  ActivityEventRepo,
   AlertRepo,
   ApprovalRepo,
   AuditHead,
@@ -565,6 +567,59 @@ class MemAuditRepo implements AuditRepo {
   }
 }
 
+/** Telemetria de atividade — sem cadeia de hash; retenção é permitida. */
+class MemActivityEventRepo implements ActivityEventRepo {
+  constructor(private readonly items: ActivityEvent[]) {}
+  async append(event: ActivityEvent) {
+    this.items.push(clone(event));
+  }
+  async listPage(
+    companyId: ID,
+    query: {
+      offset?: number;
+      limit?: number;
+      userId?: ID;
+      eventType?: string;
+      origin?: string;
+      screen?: string;
+      q?: string;
+      from?: string;
+      to?: string;
+    }
+  ) {
+    // Mesma semântica de período do MemAuditRepo: from/to "YYYY-MM-DD" cobrem
+    // o dia inteiro por comparação lexicográfica sobre o ISO completo.
+    const fromTs = query.from ? `${query.from}T00:00:00.000Z` : undefined;
+    const toTs = query.to ? `${query.to}T23:59:59.999Z` : undefined;
+    const q = query.q?.toLowerCase();
+    const matchesQ = (e: ActivityEvent) =>
+      !q ||
+      [e.label, e.screen, e.path, e.elementId]
+        .some((v) => v !== undefined && v.toLowerCase().includes(q));
+    const screenQ = query.screen?.toLowerCase();
+    const filtered = this.items
+      .filter(
+        (e) =>
+          e.companyId === companyId &&
+          (!query.userId || e.userId === query.userId) &&
+          (!query.eventType || e.eventType === query.eventType) &&
+          (!query.origin || e.origin === query.origin) &&
+          // Tela: busca parcial (contém, sem caixa) — igual ao adaptador Prisma.
+          (!screenQ || (e.screen !== undefined && e.screen.toLowerCase().includes(screenQ))) &&
+          (fromTs === undefined || e.timestamp >= fromTs) &&
+          (toTs === undefined || e.timestamp <= toTs) &&
+          matchesQ(e)
+      )
+      .sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
+    return paginate(filtered, query);
+  }
+  async listEventTypes(companyId: ID) {
+    return [...new Set(
+      this.items.filter((e) => e.companyId === companyId).map((e) => e.eventType)
+    )].sort();
+  }
+}
+
 class MemCollectionMessageRepo
   extends MemBase<CollectionMessage>
   implements CollectionMessageRepo
@@ -654,6 +709,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     events: new MemEventRepo(db.events),
     skillExecutions: new MemSkillExecutionRepo(db.skillExecutions),
     audit: new MemAuditRepo(db.auditRecords, db.auditHeads),
+    activityEvents: new MemActivityEventRepo(db.activityEvents),
     invoices: new MemBase(db.invoices),
     collectionMessages: new MemCollectionMessageRepo(db.collectionMessages),
     accountingEntries: new MemAccountingEntryRepo(db.accountingEntries),

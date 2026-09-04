@@ -10,6 +10,7 @@
 import type { ISODate } from "./dates";
 import type {
   AccountingEntry,
+  ActivityEvent,
   Alert,
   Approval,
   ApprovalStatus,
@@ -285,6 +286,34 @@ export interface AuditRepo {
   setHead(head: AuditHead): Promise<void>;
 }
 
+/**
+ * Telemetria de atividade (cliques, navegação, requisições). Append-only no
+ * uso normal, mas SEM imutabilidade criptográfica — ao contrário de AuditRepo,
+ * uma política de retenção pode apagar registros antigos sem quebrar nada.
+ */
+export interface ActivityEventRepo {
+  append(event: ActivityEvent): Promise<void>;
+  /**
+   * Ordem: timestamp desc. Filtros aplicados no banco — paginação e `total`
+   * refletem o filtro. `screen` e `q` são buscas textuais (contém, sem
+   * caixa); `q` cobre label/screen/path/elementId. Os demais são igualdade.
+   */
+  listPage(
+    companyId: ID,
+    query: PageQuery & {
+      userId?: ID;
+      eventType?: string;
+      origin?: string;
+      screen?: string;
+      q?: string;
+      from?: string;
+      to?: string;
+    }
+  ): Promise<Page<ActivityEvent>>;
+  /** Tipos de evento distintos presentes (popula o filtro da tela). */
+  listEventTypes(companyId: ID): Promise<string[]>;
+}
+
 // --- Faturamento, cobrança, contabilidade -----------------------------------
 
 export type InvoiceRepo = BaseRepo<Invoice>;
@@ -346,6 +375,7 @@ export interface Repositories {
   events: EventRepo;
   skillExecutions: SkillExecutionRepo;
   audit: AuditRepo;
+  activityEvents: ActivityEventRepo;
   invoices: InvoiceRepo;
   collectionMessages: CollectionMessageRepo;
   accountingEntries: AccountingEntryRepo;
