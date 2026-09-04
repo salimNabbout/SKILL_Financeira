@@ -8,7 +8,7 @@
  *
  * Só que a âncora mora no MESMO banco. Quem apagar os registros também alcança
  * ela. Este script imprime a âncora no stdout, uma linha JSON por empresa: o log
- * do provedor (Render) passa a guardar uma cópia fora do banco, que ninguém com
+ * do container passa a guardar uma cópia fora do banco, que ninguém com
  * acesso ao Postgres consegue reescrever.
  *
  * Saída (uma linha por empresa, JSON puro para ser grepável):
