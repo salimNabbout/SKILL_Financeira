@@ -4,6 +4,7 @@ import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { ACTION_LABELS, formatDateTime } from "@/lib/format";
 import { verifyChain } from "@/core/audit";
+import type { ActivityEvent } from "@/core/entities";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 
 function smallJson(value: unknown): string {
@@ -13,10 +14,44 @@ function smallJson(value: unknown): string {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Rótulos em linguagem corrente dos eventos de atividade (código exato fica visível junto).
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  clique: "Clique",
+  submissao: "Envio de formulário",
+  navegacao: "Navegação",
+  interacao: "Interação com campo",
+  requisicao: "Requisição à API",
+};
+const ORIGIN_LABELS: Record<string, string> = {
+  frontend: "Interface",
+  backend: "API",
+};
+
+/** Navegação entre as abas Trilha de negócio / Atividade (estado na URL). */
+function Tabs({ active }: { active: "trilha" | "atividade" }) {
+  const tabClass = (isActive: boolean) =>
+    `rounded-lg px-3 py-1.5 text-sm ${
+      isActive
+        ? "bg-[var(--brand)] font-semibold text-white"
+        : "border border-[var(--line)] bg-white text-[var(--ink)] hover:bg-slate-50"
+    }`;
+  return (
+    <div className="mb-6 flex gap-2">
+      <Link href="/auditoria" className={tabClass(active === "trilha")}>
+        Trilha de negócio
+      </Link>
+      <Link href="/auditoria?aba=atividade" className={tabClass(active === "atividade")}>
+        Atividade
+      </Link>
+    </div>
+  );
+}
+
 export default async function AuditoriaPage({
   searchParams,
 }: {
   searchParams: Promise<{
+    aba?: string;
     entityType?: string;
     entityId?: string;
     p?: string;
@@ -24,13 +59,15 @@ export default async function AuditoriaPage({
     acao?: string;
     de?: string;
     ate?: string;
+    usuario?: string;
+    tipo?: string;
+    origem?: string;
+    tela?: string;
+    q?: string;
   }>;
 }) {
   const params = await searchParams;
-  const entityType = params.entityType?.trim() || undefined;
-  const entityId = params.entityId?.trim() || undefined;
-  const actorId = params.ator?.trim() || undefined;
-  const action = params.acao?.trim() || undefined;
+  const aba = params.aba === "atividade" ? "atividade" : "trilha";
   const de = params.de && ISO_DATE_RE.test(params.de) ? params.de : undefined;
   const ate = params.ate && ISO_DATE_RE.test(params.ate) ? params.ate : undefined;
   // De > Até: ignora o intervalo e avisa (não quebra).
@@ -41,6 +78,209 @@ export default async function AuditoriaPage({
   const session = await requireSession();
   const { repos } = await getContainer();
   const companyId = session.company.id;
+
+  const users = await repos.users.listAll();
+  const userName = new Map(users.map((u) => [u.id, u.name]));
+  const userOptions = [...users].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+
+  // -------------------------------------------------------------------------
+  // Aba ATIVIDADE: telemetria de uso (cliques, navegação, requisições).
+  // Tabela separada, sem cadeia de hash — a verificação de integridade da
+  // trilha não roda aqui (não se aplica e pouparia o custo à toa).
+  // -------------------------------------------------------------------------
+  if (aba === "atividade") {
+    const userId = params.usuario?.trim() || undefined;
+    const eventType = params.tipo?.trim() || undefined;
+    const origin =
+      params.origem === "frontend" || params.origem === "backend" ? params.origem : undefined;
+    const screen = params.tela?.trim() || undefined;
+    const q = params.q?.trim() || undefined;
+
+    const page = await repos.activityEvents.listPage(companyId, {
+      offset: pageOffset(params.p),
+      limit: PAGE_SIZE,
+      userId,
+      eventType,
+      origin,
+      screen,
+      q,
+      from,
+      to,
+    });
+    const eventTypes = await repos.activityEvents.listEventTypes(companyId);
+
+    const anyFilterActive =
+      Boolean(userId) || Boolean(eventType) || Boolean(origin) || Boolean(screen) || Boolean(q) || Boolean(from) || Boolean(to);
+    const extraQuery: Record<string, string | undefined> = {
+      aba: "atividade",
+      usuario: userId,
+      tipo: eventType,
+      origem: origin,
+      tela: screen,
+      q,
+      de: from,
+      ate: to,
+    };
+
+    // "Onde" o evento aconteceu: tela (interface) ou método+rota (API).
+    const whereOf = (e: ActivityEvent) =>
+      e.origin === "backend" ? `${e.method ?? ""} ${e.path ?? ""}`.trim() : (e.screen ?? "—");
+
+    // Detalhes expandíveis: tudo que não coube nas colunas, em JSON legível.
+    const expandedOf = (e: ActivityEvent) => {
+      const extra: Record<string, unknown> = {};
+      if (e.elementId !== undefined) extra.elemento = e.elementId;
+      if (e.status !== undefined) extra.status = e.status;
+      if (e.durationMs !== undefined) extra.duracaoMs = e.durationMs;
+      if (e.ip !== undefined) extra.ip = e.ip;
+      if (e.userAgent !== undefined) extra.userAgent = e.userAgent;
+      if (e.details !== undefined) extra.detalhes = e.details;
+      return Object.keys(extra).length > 0 ? extra : undefined;
+    };
+
+    return (
+      <div>
+        <PageHeader
+          title="Auditoria"
+          subtitle="Atividade de uso: todo clique, navegação e requisição autenticada — quem fez o quê, onde e quando."
+        />
+        <Tabs active="atividade" />
+
+        <Card className="mb-6" title="Filtros">
+          <form method="get" action="/auditoria" className="flex flex-wrap items-end gap-3">
+            <input type="hidden" name="aba" value="atividade" />
+            <Field label="De">
+              <input type="date" name="de" defaultValue={de ?? ""} className={`${inputClass} w-40`} />
+            </Field>
+            <Field label="Até">
+              <input type="date" name="ate" defaultValue={ate ?? ""} className={`${inputClass} w-40`} />
+            </Field>
+            <Field label="Usuário">
+              <select name="usuario" defaultValue={userId ?? ""} className={`${inputClass} w-56`}>
+                <option value="">Todos os usuários</option>
+                {userOptions.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Tipo de evento">
+              <select name="tipo" defaultValue={eventType ?? ""} className={`${inputClass} w-56`}>
+                <option value="">Todos os tipos</option>
+                {eventTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {EVENT_TYPE_LABELS[t] ?? t}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Origem">
+              <select name="origem" defaultValue={origin ?? ""} className={`${inputClass} w-40`}>
+                <option value="">Todas</option>
+                <option value="frontend">Interface</option>
+                <option value="backend">API</option>
+              </select>
+            </Field>
+            <Field label="Tela">
+              <input
+                name="tela"
+                defaultValue={screen ?? ""}
+                className={`${inputClass} w-48`}
+                placeholder="Ex.: /contas-a-pagar"
+              />
+            </Field>
+            <Field label="Busca">
+              <input
+                name="q"
+                defaultValue={q ?? ""}
+                className={`${inputClass} w-56`}
+                placeholder="Rótulo, tela, rota, elemento…"
+              />
+            </Field>
+            <Button variant="secondary">Filtrar</Button>
+            {anyFilterActive ? (
+              <Link href="/auditoria?aba=atividade" className="text-sm text-[var(--brand)] underline">
+                Limpar filtros
+              </Link>
+            ) : null}
+          </form>
+          {invalidRange ? (
+            <p className="mt-3 text-xs text-amber-700">
+              “De” é posterior a “Até” — o filtro de período foi ignorado.
+            </p>
+          ) : null}
+        </Card>
+
+        <Card title={`Eventos (${page.items.length} de ${page.total} — mais recentes primeiro)`}>
+          {page.items.length === 0 ? (
+            <EmptyState
+              message={
+                anyFilterActive
+                  ? "Nenhum evento corresponde aos filtros selecionados."
+                  : "Nenhum evento de atividade registrado ainda."
+              }
+            />
+          ) : (
+            <Table
+              headers={["Quando", "Usuário", "Origem", "Evento", "Onde", "Detalhes"]}
+              align={["l", "l", "l", "l", "l", "l"]}
+            >
+              {page.items.map((e) => {
+                const expanded = expandedOf(e);
+                return (
+                  <tr key={e.id}>
+                    <Td>{formatDateTime(e.timestamp)}</Td>
+                    <Td>{e.userId ? (userName.get(e.userId) ?? e.userId) : "—"}</Td>
+                    <Td>
+                      <Badge tone="neutral">{ORIGIN_LABELS[e.origin] ?? e.origin}</Badge>
+                    </Td>
+                    <Td>
+                      <span className="text-sm">{EVENT_TYPE_LABELS[e.eventType] ?? e.eventType}</span>
+                      {e.label ? (
+                        <span className="block text-[11px] text-[var(--ink-muted)]">“{e.label}”</span>
+                      ) : null}
+                    </Td>
+                    <Td>
+                      <span className="text-xs">{whereOf(e)}</span>
+                      {e.origin === "backend" && (e.status !== undefined || e.durationMs !== undefined) ? (
+                        <span className="tabular block text-[11px] text-[var(--ink-muted)]">
+                          {e.status !== undefined ? `HTTP ${e.status}` : ""}
+                          {e.status !== undefined && e.durationMs !== undefined ? " · " : ""}
+                          {e.durationMs !== undefined ? `${e.durationMs}ms` : ""}
+                        </span>
+                      ) : null}
+                    </Td>
+                    <Td>
+                      {expanded ? (
+                        <details>
+                          <summary className="cursor-pointer text-xs text-[var(--brand)]">detalhes</summary>
+                          <pre className="mt-1 max-h-48 max-w-md overflow-auto rounded bg-slate-50 p-2 text-[11px]">
+                            {smallJson(expanded)}
+                          </pre>
+                        </details>
+                      ) : (
+                        <span className="text-xs text-[var(--ink-muted)]">—</span>
+                      )}
+                    </Td>
+                  </tr>
+                );
+              })}
+            </Table>
+          )}
+          <Pager page={page} basePath="/auditoria" extraQuery={extraQuery} />
+        </Card>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Aba TRILHA DE NEGÓCIO: a trilha imutável encadeada por hash (como antes).
+  // -------------------------------------------------------------------------
+  const entityType = params.entityType?.trim() || undefined;
+  const entityId = params.entityId?.trim() || undefined;
+  const actorId = params.ator?.trim() || undefined;
+  const action = params.acao?.trim() || undefined;
 
   // Integridade: a cadeia é verificada sobre TODOS os registros da empresa
   // (o filtro vale apenas para a tabela — filtrar quebraria o encadeamento).
@@ -61,11 +301,8 @@ export default async function AuditoriaPage({
   });
   const rows = page.items;
 
-  const users = await repos.users.listAll();
-  const userName = new Map(users.map((u) => [u.id, u.name]));
-
   // Atores para o select: reaproveita `users` já carregado (sem 2ª consulta).
-  const actorOptions = [...users].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const actorOptions = userOptions;
   // Ações para o select: derivadas das presentes na trilha (allRecords já em mão).
   const actionOptions = [...new Set(allRecords.map((r) => r.action))].sort();
 
@@ -111,6 +348,7 @@ export default async function AuditoriaPage({
           </div>
         }
       />
+      <Tabs active="trilha" />
 
       <div className="mb-6">
         {chain.valid ? (

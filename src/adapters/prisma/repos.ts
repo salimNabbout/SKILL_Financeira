@@ -1971,7 +1971,8 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
         ...(query.userId ? { userId: query.userId } : {}),
         ...(query.eventType ? { eventType: query.eventType } : {}),
         ...(query.origin ? { origin: query.origin } : {}),
-        ...(query.screen ? { screen: query.screen } : {}),
+        // Tela: busca parcial (contém, sem caixa) — igual ao adaptador em memória.
+        ...(query.screen ? { screen: { contains: query.screen, mode: "insensitive" as const } } : {}),
         ...(query.from || query.to
           ? {
               timestamp: {

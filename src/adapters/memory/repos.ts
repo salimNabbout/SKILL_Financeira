@@ -596,6 +596,7 @@ class MemActivityEventRepo implements ActivityEventRepo {
       !q ||
       [e.label, e.screen, e.path, e.elementId]
         .some((v) => v !== undefined && v.toLowerCase().includes(q));
+    const screenQ = query.screen?.toLowerCase();
     const filtered = this.items
       .filter(
         (e) =>
@@ -603,7 +604,8 @@ class MemActivityEventRepo implements ActivityEventRepo {
           (!query.userId || e.userId === query.userId) &&
           (!query.eventType || e.eventType === query.eventType) &&
           (!query.origin || e.origin === query.origin) &&
-          (!query.screen || e.screen === query.screen) &&
+          // Tela: busca parcial (contém, sem caixa) — igual ao adaptador Prisma.
+          (!screenQ || (e.screen !== undefined && e.screen.toLowerCase().includes(screenQ))) &&
           (fromTs === undefined || e.timestamp >= fromTs) &&
           (toTs === undefined || e.timestamp <= toTs) &&
           matchesQ(e)

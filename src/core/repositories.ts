@@ -295,8 +295,8 @@ export interface ActivityEventRepo {
   append(event: ActivityEvent): Promise<void>;
   /**
    * Ordem: timestamp desc. Filtros aplicados no banco — paginação e `total`
-   * refletem o filtro. `q` é busca textual (contém, sem caixa) em
-   * label/screen/path/elementId.
+   * refletem o filtro. `screen` e `q` são buscas textuais (contém, sem
+   * caixa); `q` cobre label/screen/path/elementId. Os demais são igualdade.
    */
   listPage(
     companyId: ID,
