@@ -1824,6 +1824,13 @@ export interface ReconciliationAuditData {
     expectedCents: number;
     diffCents: number;
   }>;
+  /** Até onde o extrato importado enxerga, por conta. Alimenta o estado vazio da tela. */
+  coverage: Array<{
+    bankAccountId: ID;
+    bankName: string;
+    /** Ausente: conta sem nenhum extrato importado. */
+    coverageDate?: ISODate;
+  }>;
   balanceChecks: Array<{
     bankAccountId: ID;
     bankName: string;
@@ -2331,6 +2338,11 @@ async function reconciliationAudit(
     {
       period,
       bankAccountId: input.bankAccountId,
+      coverage: contasAlvo.map((c) => ({
+        bankAccountId: c.id,
+        bankName: c.name,
+        coverageDate: coberturaPorConta.get(c.id),
+      })),
       unexplainedBankTransactions: semExplicacao,
       settlementsWithoutBank: semLastro,
       amountMismatches: mismatches,

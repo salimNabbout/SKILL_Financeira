@@ -43,13 +43,22 @@ export function MonthNav({
   latest,
   count = 8,
   param = "period",
+  extraQuery = {},
 }: {
   basePath: string;
   selected: ISOMonth;
   latest: ISOMonth;
   count?: number;
   param?: string;
+  /** Outros filtros da tela, preservados ao trocar de mês (valores vazios saem). */
+  extraQuery?: Record<string, string | undefined>;
 }) {
+  const href = (m: ISOMonth) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(extraQuery)) if (v) qs.set(k, v);
+    qs.set(param, m);
+    return `${basePath}?${qs.toString()}`;
+  };
   const months = lastMonths(latest, count);
   if (!months.includes(selected)) months.unshift(selected);
   return (
@@ -57,7 +66,7 @@ export function MonthNav({
       {months.map((m) => (
         <Link
           key={m}
-          href={`${basePath}?${param}=${m}`}
+          href={href(m)}
           className={
             m === selected
               ? "rounded-lg bg-[var(--brand)] px-2.5 py-1 text-xs font-medium text-[var(--brand-ink)]"

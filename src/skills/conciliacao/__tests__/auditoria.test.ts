@@ -428,6 +428,25 @@ describe("reconciliation_audit — cobertura do extrato", () => {
   });
 });
 
+describe("reconciliation_audit — cobertura exposta na saída", () => {
+  it("devolve a data de cobertura por conta, e ausente quando não há extrato", async () => {
+    const env = createTestEnv();
+    conta(env);
+    conta(env, { id: "ba_2", name: "Nubank", accountNumberMasked: "****9999" });
+    cobertura(env, "2026-08-20", "ba_1");
+    transacao(env, { bankAccountId: "ba_1", date: "2026-08-27", reconciled: true });
+
+    const d = await auditar(env);
+
+    // Maior entre o lançamento (27/08) e a data-base do saldo (20/08).
+    expect(d.coverage.find((c) => c.bankAccountId === "ba_1")).toMatchObject({
+      bankName: "Itaú",
+      coverageDate: "2026-08-27",
+    });
+    expect(d.coverage.find((c) => c.bankAccountId === "ba_2")?.coverageDate).toBeUndefined();
+  });
+});
+
 describe("reconciliation_audit — extrato sem explicação", () => {
   it("lista transação não conciliada e marca se tem sugestão", async () => {
     const env = createTestEnv();

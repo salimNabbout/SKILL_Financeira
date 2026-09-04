@@ -4,7 +4,7 @@ import { Badge, Button, Card, EmptyState, Field, PageHeader, StatCard, Table, Td
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatBR, formatBRL, formatDateTime, statusLabel } from "@/lib/format";
-import type { ISODate } from "@/core/dates";
+import { addDays, isISODate, monthOf, type ISODate } from "@/core/dates";
 import {
   balanceLines,
   computeBankPeriodBalance,
@@ -16,6 +16,9 @@ import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { filtersToQuery, resolveFilters } from "./_lib/filters";
+import { MonthNav, formatMonthBR, isISOMonth } from "@/app/(app)/_lib/month-nav";
+import { runSkillForSession } from "@/app/(app)/_lib/run-skill";
+import type { ReconciliationAuditData } from "@/skills/conciliacao";
 import {
   adjustPaymentDateAction,
   confirmMatchAction,
@@ -53,6 +56,11 @@ export default async function ConciliacaoPage({
     conta?: string;
     de?: string;
     ate?: string;
+    /** Mês da seção "Divergências do período". */
+    dm?: string;
+    /** Pré-filtro de "Localizar no extrato": valor em centavos e data da baixa. */
+    bv?: string;
+    bd?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -126,6 +134,21 @@ export default async function ConciliacaoPage({
   // Os totais DERIVAM destas linhas: a lista abaixo da caixa não tem como
   // divergir do número exibido.
   const linhasDoPeriodo = entradaSaldo ? balanceLines(entradaSaldo) : [];
+
+  // --- Divergências do período (auditoria de conciliação) ------------------
+  // Leitura pura: a skill não altera nada, então a página a invoca direto, sem
+  // passar pelo orquestrador (padrão de runSkillForSession).
+  const mesDivergencias = isISOMonth(sp.dm) ? sp.dm : monthOf(today);
+  const auditoriaRes = await runSkillForSession<ReconciliationAuditData>(
+    session,
+    "conciliacao_bancaria",
+    {
+      action: "reconciliation_audit",
+      period: mesDivergencias,
+      ...(sp.conta ? { bankAccountId: sp.conta } : {}),
+    }
+  );
+  const auditoria = auditoriaRes.status === "success" ? auditoriaRes.data : null;
   const receiptById = new Map(receipts.map((r) => [r.id, r]));
   const extratoById = new Map(extratoDaConta.map((t) => [t.id, t]));
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
@@ -232,9 +255,23 @@ export default async function ConciliacaoPage({
   const recentDecided = [...decided]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 15);
-  const unreconciledRows = [...unreconciledPage.items].sort((a, b) =>
-    a.date === b.date ? a.id.localeCompare(b.id) : b.date.localeCompare(a.date)
-  );
+  // "Localizar no extrato": recorta as não conciliadas em torno do valor e da
+  // data da baixa, usando as tolerâncias da empresa — o banco arredonda tarifa
+  // e leva dias para publicar, então casar exato acharia pouco.
+  const buscaValor = sp.bv ? Number(sp.bv) : undefined;
+  const buscaData = sp.bd && isISODate(sp.bd) ? sp.bd : undefined;
+  const buscando = buscaValor !== undefined && Number.isFinite(buscaValor) && buscaData;
+  const tolValor = session.config.reconciliationAmountToleranceCents;
+  const tolDias = session.config.reconciliationDateToleranceDays;
+  const unreconciledRows = [...unreconciledPage.items]
+    .filter((t) => {
+      if (!buscando) return true;
+      const casaValor = Math.abs(Math.abs(t.amountCents) - Math.abs(buscaValor)) <= tolValor;
+      const casaData =
+        t.date >= addDays(buscaData, -tolDias) && t.date <= addDays(buscaData, tolDias);
+      return casaValor && casaData;
+    })
+    .sort((a, b) => (a.date === b.date ? a.id.localeCompare(b.id) : b.date.localeCompare(a.date)));
 
   // --- Pagamentos aprovados aguardando conciliação -------------------------
   // A aprovação autoriza mas não baixa: o título só é quitado aqui, com a data
@@ -403,6 +440,215 @@ export default async function ConciliacaoPage({
               nenhum deles (tarifa, IOF, juros do banco) — o que já foi conciliado contra um
               pagamento não é contado duas vezes.
             </p>
+          </>
+        )}
+      </Card>
+
+      {/* Divergências do período. A auditoria é LEITURA: nenhum botão aqui
+          corrige nada — os caminhos de correção são os que já existem
+          (conciliar, estornar). */}
+      <Card
+        className="mb-6"
+        title={`Divergências do período — ${formatMonthBR(mesDivergencias)}`}
+      >
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <MonthNav
+            basePath="/conciliacao"
+            selected={mesDivergencias}
+            latest={monthOf(today)}
+            param="dm"
+            extraQuery={{ conta: sp.conta, de: sp.de, ate: sp.ate }}
+          />
+          <Link
+            href={`/api/v1/reports/reconciliation_audit?period=${mesDivergencias}&format=xlsx`}
+            className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
+          >
+            Exportar
+          </Link>
+        </div>
+
+        {!auditoria ? (
+          <EmptyState message="Não foi possível carregar as divergências deste período." />
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Extrato sem explicação"
+                value={String(auditoria.totals.unexplainedCount)}
+                hint={formatBRL(auditoria.totals.unexplainedCents)}
+                tone={auditoria.totals.unexplainedCount > 0 ? "warn" : "ok"}
+              />
+              <StatCard
+                label="Baixas sem lastro"
+                value={String(auditoria.totals.settlementsWithoutBankCount)}
+                hint={formatBRL(auditoria.totals.settlementsWithoutBankCents)}
+                tone={auditoria.totals.settlementsWithoutBankCount > 0 ? "crit" : "ok"}
+              />
+              <StatCard
+                label="Valores divergentes"
+                value={String(auditoria.totals.amountMismatchCount)}
+                tone={auditoria.totals.amountMismatchCount > 0 ? "warn" : "ok"}
+              />
+              <StatCard
+                label="Contas com saldo divergente"
+                value={String(auditoria.totals.balanceMismatchCount)}
+                tone={auditoria.totals.balanceMismatchCount > 0 ? "crit" : "ok"}
+              />
+            </div>
+
+            {/* Pendente de cobertura NÃO é divergência: é baixa recente demais
+                para o extrato importado. Fica em linha informativa, fora dos
+                cartões, para não ser lida como problema. */}
+            {auditoria.totals.pendingCoverageCount > 0 ? (
+              <p className="mt-3 rounded-lg border border-[var(--line)] bg-[var(--surface-2)] px-3 py-2 text-sm text-[var(--ink-muted)]">
+                {auditoria.totals.pendingCoverageCount} baixa(s) aguardam a importação do extrato —
+                ainda não podiam aparecer nele.{" "}
+                {auditoria.coverage
+                  .map((c) =>
+                    c.coverageDate
+                      ? `${c.bankName}: extrato até ${formatBR(c.coverageDate)}`
+                      : `${c.bankName}: sem extrato importado`
+                  )
+                  .join(" · ")}
+                . <a href="#importar-extrato" className="text-[var(--brand)] underline">Importar OFX</a>
+              </p>
+            ) : null}
+
+            {auditoria.totals.unexplainedCount === 0 &&
+            auditoria.totals.settlementsWithoutBankCount === 0 &&
+            auditoria.totals.amountMismatchCount === 0 &&
+            auditoria.totals.balanceMismatchCount === 0 ? (
+              <div className="mt-4">
+                <EmptyState
+                  message={`Nenhuma divergência em ${formatMonthBR(mesDivergencias)}. ${auditoria.coverage
+                    .map((c) =>
+                      c.coverageDate
+                        ? `${c.bankName}: extrato conferido até ${formatBR(c.coverageDate)}`
+                        : `${c.bankName}: nenhum extrato importado`
+                    )
+                    .join(" · ")}.`}
+                />
+              </div>
+            ) : null}
+
+            {auditoria.settlementsWithoutBank.length > 0 ? (
+              <div className="mt-5">
+                <h3 className="mb-2 text-sm font-semibold">Baixas sem lastro no extrato</h3>
+                <div className="overflow-x-auto">
+                  <Table
+                    headers={["Data", "Contraparte", "Descrição", "Valor", "Origem", "Ações"]}
+                    align={["l", "l", "l", "r", "l", "l"]}
+                  >
+                    {auditoria.settlementsWithoutBank.map((d) => (
+                      <tr key={`${d.kind}_${d.id}`}>
+                        <Td className="whitespace-nowrap">{formatBR(d.date)}</Td>
+                        <Td>{d.counterparty}</Td>
+                        <Td>{d.description}</Td>
+                        <Td right>{formatBRL(d.amountCents)}</Td>
+                        <Td>
+                          {d.kind === "payment"
+                            ? "Pagamento"
+                            : d.kind === "receipt"
+                              ? "Recebimento"
+                              : "Baixa manual"}
+                        </Td>
+                        <Td className="whitespace-nowrap text-xs">
+                          {/* Pré-filtra as não conciliadas pelo valor e pela data,
+                              com as tolerâncias da empresa. */}
+                          <Link
+                            href={`/conciliacao?dm=${mesDivergencias}&bv=${d.amountCents}&bd=${d.date}#nao-conciliadas`}
+                            className="text-[var(--brand)] underline"
+                          >
+                            Localizar no extrato
+                          </Link>
+                        </Td>
+                      </tr>
+                    ))}
+                  </Table>
+                </div>
+              </div>
+            ) : null}
+
+            {auditoria.unexplainedBankTransactions.length > 0 ? (
+              <div className="mt-5">
+                <h3 className="mb-2 text-sm font-semibold">Extrato sem explicação</h3>
+                <div className="overflow-x-auto">
+                  <Table
+                    headers={["Data", "Descrição", "Valor", "Situação"]}
+                    align={["l", "l", "r", "l"]}
+                  >
+                    {auditoria.unexplainedBankTransactions.map((t) => (
+                      <tr key={t.id}>
+                        <Td className="whitespace-nowrap">{formatBR(t.date)}</Td>
+                        <Td>{t.description}</Td>
+                        <Td right className={t.amountCents < 0 ? "text-[var(--crit)]" : "text-[var(--ok)]"}>
+                          {formatBRL(t.amountCents)}
+                        </Td>
+                        <Td>
+                          <Badge tone={t.hasSuggestion ? "warn" : "neutral"}>
+                            {t.hasSuggestion ? "Tem sugestão" : "Sem sugestão"}
+                          </Badge>
+                        </Td>
+                      </tr>
+                    ))}
+                  </Table>
+                </div>
+              </div>
+            ) : null}
+
+            {auditoria.amountMismatches.length > 0 ? (
+              <div className="mt-5">
+                <h3 className="mb-2 text-sm font-semibold">Valores divergentes</h3>
+                <div className="overflow-x-auto">
+                  <Table
+                    headers={["Alvo", "Aplicado", "Esperado", "Diferença"]}
+                    align={["l", "r", "r", "r"]}
+                  >
+                    {auditoria.amountMismatches.map((m) => (
+                      <tr key={m.matchId}>
+                        <Td>{`${m.targetType} ${m.targetId ?? ""}`.trim()}</Td>
+                        <Td right>{formatBRL(m.appliedCents)}</Td>
+                        <Td right>{formatBRL(m.expectedCents)}</Td>
+                        <Td right className="text-[var(--crit)]">{formatBRL(m.diffCents)}</Td>
+                      </tr>
+                    ))}
+                  </Table>
+                </div>
+              </div>
+            ) : null}
+
+            {auditoria.balanceChecks.length > 0 ? (
+              <div className="mt-5">
+                <h3 className="mb-2 text-sm font-semibold">Saldo do banco × saldo do app</h3>
+                <div className="overflow-x-auto">
+                  <Table
+                    headers={["Conta", "Data-base", "Banco", "App", "Diferença", "Sem explicação"]}
+                    align={["l", "l", "r", "r", "r", "r"]}
+                  >
+                    {auditoria.balanceChecks.map((b) => (
+                      <tr key={b.bankAccountId}>
+                        <Td>{b.bankName}</Td>
+                        <Td className="whitespace-nowrap">{formatBR(b.asOf)}</Td>
+                        <Td right>{formatBRL(b.ledgerBalanceCents)}</Td>
+                        <Td right>{formatBRL(b.computedBalanceCents)}</Td>
+                        <Td right>{formatBRL(b.diffCents)}</Td>
+                        <Td right className={b.residualCents !== 0 ? "text-[var(--crit)]" : ""}>
+                          {formatBRL(b.residualCents)}
+                        </Td>
+                      </tr>
+                    ))}
+                  </Table>
+                </div>
+              </div>
+            ) : null}
+
+            {auditoriaRes.assumptions.length > 0 ? (
+              <ul className="mt-4 space-y-1 text-xs text-[var(--ink-muted)]">
+                {auditoriaRes.assumptions.map((a, i) => (
+                  <li key={i}>· {a}</li>
+                ))}
+              </ul>
+            ) : null}
           </>
         )}
       </Card>
@@ -654,7 +900,7 @@ export default async function ConciliacaoPage({
         </div>
       ) : null}
 
-      <Card className="mb-6" title="1 — Importar extrato">
+      <Card id="importar-extrato" className="mb-6" title="1 — Importar extrato">
         {contasAtivas.length === 0 ? (
           <p className="text-sm text-[var(--ink-muted)]">
             Nenhuma conta bancária ativa.{" "}
@@ -849,9 +1095,31 @@ export default async function ConciliacaoPage({
         )}
       </Card>
 
-      <Card className="mb-6" title={`3 — Transações não conciliadas (${unreconciledPage.total})`}>
+      <Card
+        id="nao-conciliadas"
+        className="mb-6"
+        title={`3 — Transações não conciliadas (${unreconciledPage.total})`}
+      >
+        {buscando ? (
+          <p className="mb-3 flex flex-wrap items-center gap-2 text-sm text-[var(--ink-muted)]">
+            Filtrando por {formatBRL(buscaValor as number)} ± {formatBRL(tolValor)} em torno de{" "}
+            {formatBR(buscaData as ISODate)} ± {tolDias} dia(s).
+            <Link
+              href={`/conciliacao?dm=${mesDivergencias}#nao-conciliadas`}
+              className="text-[var(--brand)] underline"
+            >
+              Limpar
+            </Link>
+          </p>
+        ) : null}
         {unreconciledRows.length === 0 ? (
-          <EmptyState message="Todas as transações importadas estão conciliadas." />
+          <EmptyState
+            message={
+              buscando
+                ? "Nenhuma transação não conciliada bate com esse valor e data."
+                : "Todas as transações importadas estão conciliadas."
+            }
+          />
         ) : (
           <Table headers={["Data", "Conta", "Descrição", "Valor", "Origem"]} align={["l", "l", "l", "r", "l"]}>
             {unreconciledRows.map((t) => (
