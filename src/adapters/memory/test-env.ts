@@ -4,6 +4,7 @@
  */
 
 import { HeuristicClassifier } from "@/core/ai";
+import { ActivityLog } from "@/core/activity";
 import { HashChainAuditTrail } from "@/core/audit";
 import { FixedClock } from "@/core/clock";
 import { DEFAULT_COMPANY_CONFIG, type CompanyConfig } from "@/core/config";
@@ -25,6 +26,7 @@ export interface TestEnv {
   repos: Repositories;
   events: InMemoryEventBus;
   audit: HashChainAuditTrail;
+  activity: ActivityLog;
   clock: FixedClock;
   ids: SequentialIdGenerator;
   ai: HeuristicClassifier;
@@ -54,6 +56,7 @@ export function createTestEnv(nowIso = "2026-08-18T15:00:00Z"): TestEnv {
   const ids = new SequentialIdGenerator();
   const events = new InMemoryEventBus(repos.events, clock, ids);
   const audit = new HashChainAuditTrail(repos.audit, clock, ids);
+  const activity = new ActivityLog(repos.activityEvents, clock, ids);
   const ai = new HeuristicClassifier();
   const integrations = buildIntegrations({}); // mocks determinísticos
   const config = DEFAULT_COMPANY_CONFIG;
@@ -124,6 +127,7 @@ export function createTestEnv(nowIso = "2026-08-18T15:00:00Z"): TestEnv {
     repos,
     events,
     audit,
+    activity,
     clock,
     ids,
     ai,

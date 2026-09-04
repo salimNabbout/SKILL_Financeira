@@ -6,6 +6,7 @@
  */
 
 import type { AiClassifier } from "@/core/ai";
+import { ActivityLog } from "@/core/activity";
 import { HashChainAuditTrail } from "@/core/audit";
 import { SystemClock } from "@/core/clock";
 import { InMemoryEventBus, type EventBus } from "@/core/events";
@@ -27,6 +28,7 @@ export interface AppContainer {
   repos: Repositories;
   events: EventBus;
   audit: HashChainAuditTrail;
+  activity: ActivityLog;
   clock: SystemClock;
   ids: RandomIdGenerator;
   ai: AiClassifier;
@@ -77,9 +79,10 @@ async function build(): Promise<AppContainer> {
     events = new InMemoryEventBus(repos.events, clock, ids);
   }
   const audit = new HashChainAuditTrail(repos.audit, clock, ids);
+  const activity = new ActivityLog(repos.activityEvents, clock, ids);
   const orchestrator = new Orchestrator({ repos, events, clock, ids, ai, integrations, registry });
 
-  return { mode, repos, events, audit, clock, ids, ai, integrations, registry, orchestrator };
+  return { mode, repos, events, audit, activity, clock, ids, ai, integrations, registry, orchestrator };
 }
 
 export function getContainer(): Promise<AppContainer> {
