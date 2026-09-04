@@ -21,6 +21,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import {
   endOfMonth,
   monthOf,
@@ -63,9 +64,11 @@ const ACCOUNTANT_ASSUMPTION =
   "Esta skill não substitui o contador: classificações, lotes e resumos são preparatórios e exigem validação de um contador responsável.";
 
 // Contas do plano de contas seed usadas pelo mapeamento determinístico.
-const ACCOUNT_CASH = "1.1";
+// Exportadas para a conciliação lançar despesa bancária com o MESMO plano de
+// contas — nada de código mágico duplicado em duas skills.
+export const ACCOUNT_CASH = "1.1";
 const ACCOUNT_REVENUE = "3.1";
-const ACCOUNT_DEFAULT_EXPENSE = "4.2";
+export const ACCOUNT_DEFAULT_EXPENSE = "4.2";
 
 /** Débito do pagamento por grupo de DRE da categoria do título. */
 const PAYMENT_DEBIT_BY_DRE: Partial<Record<DreGroup, string>> = {
@@ -256,20 +259,7 @@ export type ContabilData =
 
 /** Persiste alerta apenas se não houver outro ABERTO com mesmo code+entityId. */
 async function persistAlertDeduped(ctx: SkillContext, alert: SkillAlert): Promise<void> {
-  const open = await ctx.repos.alerts.listOpen(ctx.companyId);
-  if (open.some((a) => a.code === alert.code && a.entityId === alert.entityId)) return;
-  await ctx.repos.alerts.create({
-    id: ctx.ids.next("alr"),
-    companyId: ctx.companyId,
-    severity: alert.severity,
-    code: alert.code,
-    message: alert.message,
-    entityType: alert.entityType,
-    entityId: alert.entityId,
-    source: SKILL,
-    status: "open",
-    createdAt: ctx.clock.now().toISOString(),
-  });
+  await persistAlert(ctx, alert, SKILL);
 }
 
 /** Data de negócio (fuso da empresa) de um carimbo ISO-8601 UTC. */

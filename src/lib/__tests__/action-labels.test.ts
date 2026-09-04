@@ -2,6 +2,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ACTION_LABELS } from "@/lib/format";
+import {
+  AUDIT_ACTIONS,
+  LEGACY_ACTION_ALIASES,
+  canonicalAction,
+  canonicalEntityType,
+} from "@/core/audit-actions";
 
 /**
  * Guarda contra regressão: toda ação de auditoria registrada no código de
@@ -47,5 +53,32 @@ describe("ACTION_LABELS cobre todas as ações de auditoria em produção", () =
   it("toda ação de produção tem rótulo em ACTION_LABELS", () => {
     const semRotulo = actions.filter((a) => !(a in ACTION_LABELS));
     expect(semRotulo).toEqual([]);
+  });
+
+  it("todo nome do catálogo canônico tem rótulo — nada cai no fallback cru", () => {
+    const semRotulo = Object.values(AUDIT_ACTIONS).filter((a) => !(a in ACTION_LABELS));
+    expect(semRotulo).toEqual([]);
+  });
+
+  it("as ações emitidas em produção estão no catálogo canônico", () => {
+    const canonicas = new Set<string>(Object.values(AUDIT_ACTIONS));
+    // `actions` vem do varredor de src/; nomes legados não devem mais ser
+    // EMITIDOS (só normalizados na leitura).
+    const foraDoCatalogo = actions.filter((a) => !canonicas.has(a));
+    expect(foraDoCatalogo).toEqual([]);
+  });
+
+  it("nomes legados são normalizados na leitura, não reescritos na trilha", () => {
+    expect(canonicalAction("costcenter.created")).toBe(AUDIT_ACTIONS.COST_CENTER_CREATED);
+    expect(canonicalAction("bankaccount.created")).toBe(AUDIT_ACTIONS.BANK_ACCOUNT_CREATED);
+    expect(canonicalEntityType("Supplier")).toBe("supplier");
+    expect(canonicalEntityType("Approval")).toBe("approval");
+    // Nome que já é canônico passa intacto.
+    expect(canonicalAction(AUDIT_ACTIONS.PAYABLE_CREATED)).toBe(AUDIT_ACTIONS.PAYABLE_CREATED);
+    // E todo alias aponta para um nome que existe no catálogo.
+    const canonicas = new Set<string>(Object.values(AUDIT_ACTIONS));
+    for (const alvo of Object.values(LEGACY_ACTION_ALIASES)) {
+      expect(canonicas.has(alvo)).toBe(true);
+    }
   });
 });

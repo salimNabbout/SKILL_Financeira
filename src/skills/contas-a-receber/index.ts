@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import { addDays, addMonths, diffDays, formatBR, minDate, type ISODate } from "@/core/dates";
 import type { CurrencyCode, LateFeeResult } from "@/core/money";
 import {
@@ -625,23 +626,18 @@ async function listOverdue(ctx: SkillContext): Promise<SkillResult<ContasARecebe
         entityType: "receivable",
         entityId: o.receivable.id,
       });
-      // Dedupe: não recria alerta aberto para o mesmo código + título.
-      const alreadyOpen = openAlerts.some(
-        (a) => a.code === "receivable_overdue" && a.entityId === o.receivable.id
+      // O dedupe (code + entityId entre os abertos) agora vive no helper.
+      await persistAlert(
+        ctx,
+        {
+          severity: "critical",
+          code: "receivable_overdue",
+          message,
+          entityType: "receivable",
+          entityId: o.receivable.id,
+        },
+        SKILL_NAME
       );
-      if (alreadyOpen) continue;
-      await ctx.repos.alerts.create({
-        id: ctx.ids.next("alr"),
-        companyId: ctx.companyId,
-        severity: "critical",
-        code: "receivable_overdue",
-        message,
-        entityType: "receivable",
-        entityId: o.receivable.id,
-        source: SKILL_NAME,
-        status: "open",
-        createdAt: ctx.clock.now().toISOString(),
-      });
     }
   }
 
@@ -747,6 +743,17 @@ async function registerReceipt(
   receivable.updatedAt = now;
   await ctx.repos.receivables.update(receivable);
 
+  // O recibo em si passava sem registro próprio: só existia o evento do título,
+  // que não guarda método, conta, principal nem encargos. A conciliação
+  // bancária já auditava receipt.created — aqui ficava o buraco.
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receipt.created",
+    entityType: "receipt",
+    entityId: receipt.id,
+    after: { ...receipt, principalCents, chargesCents },
+    correlationId: ctx.correlationId,
+  });
   await ctx.audit.record(ctx.companyId, {
     actor: ctx.actor,
     action: "receivable.receipt_registered",
@@ -1173,29 +1180,30 @@ async function reverseReceipt(
   receivable.status = receivable.receivedCents > 0 ? "partially_received" : "open";
   receivable.updatedAt = nowIso;
 
-  // Atômico: estorno do recebimento e devolução do saldo commitam juntos.
+  // Atômico: estorno do recebimento, devolução do saldo e a trilha commitam
+  // juntos — auditoria fora da transação deixaria a baixa desfeita sem rastro.
   await ctx.repos.withTransaction(async (tx) => {
     await tx.receipts.update(receipt);
     await tx.receivables.update(receivable);
-  });
-
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "receipt.reversed",
-    entityType: "receipt",
-    entityId: receipt.id,
-    before: receiptBefore,
-    after: { ...receipt, reverseReason: input.reason },
-    correlationId: ctx.correlationId,
-  });
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "receivable.updated",
-    entityType: "receivable",
-    entityId: receivable.id,
-    before: receivableBefore,
-    after: receivable,
-    correlationId: ctx.correlationId,
+    const audit = ctx.audit.withTx(tx);
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "receipt.reversed",
+      entityType: "receipt",
+      entityId: receipt.id,
+      before: receiptBefore,
+      after: { ...receipt, reverseReason: input.reason },
+      correlationId: ctx.correlationId,
+    });
+    await audit.record(ctx.companyId, {
+      actor: ctx.actor,
+      action: "receivable.updated",
+      entityType: "receivable",
+      entityId: receivable.id,
+      before: receivableBefore,
+      after: receivable,
+      correlationId: ctx.correlationId,
+    });
   });
   await ctx.events.publish({
     companyId: ctx.companyId,

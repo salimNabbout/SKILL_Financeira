@@ -50,10 +50,34 @@ cp deploy/.env.prod.example deploy/.env.prod
 # Gere o segredo de sessão e uma senha forte de banco:
 openssl rand -base64 48        # → SESSION_SECRET
 openssl rand -base64 24        # → POSTGRES_PASSWORD
-nano deploy/.env.prod          # preencha SESSION_SECRET e POSTGRES_PASSWORD
+openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32; echo   # → APP_DB_PASSWORD (só alfanumérico: entra numa URL)
+nano deploy/.env.prod          # preencha os três
 ```
 
 `deploy/.env.prod` está no `.gitignore` — **nunca** é versionado.
+
+### Duas credenciais de banco, de propósito
+
+`POSTGRES_USER` é **superusuário** (a imagem oficial do Postgres o cria assim) e
+fica só para o container `migrate`, que cria e altera tabelas.
+
+`APP_DB_USER` é a role **restrita** que o `app` e o `scheduler` usam: sem
+superpoderes e **sem permissão de alterar ou apagar a trilha de auditoria**.
+Superusuário ignora `GRANT`/`REVOKE` e pode desligar gatilho — por isso a
+separação existe. Detalhes em [docs/auditoria-hardening.md](../docs/auditoria-hardening.md).
+
+Crie a role uma vez por ambiente, depois de preencher o `.env.prod` e de o banco
+estar de pé:
+
+```bash
+deploy/criar-role-app.sh
+```
+
+O script cria a role, aplica os privilégios e confere, conectando **como ela**,
+que um `UPDATE` na trilha é recusado. Rodar de novo é seguro: só troca a senha.
+
+Enquanto `APP_DB_USER`/`APP_DB_PASSWORD` não existirem, `publicar.sh` cai no
+usuário dono e avisa — o deploy funciona, sem esta proteção.
 
 ## 4. Subir app + banco
 

@@ -83,6 +83,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "user.password_reset": "Senha redefinida pelo administrador",
   "user.deactivated": "Usuário desativado",
   "user.reactivated": "Usuário reativado",
+  "user.totp_setup_started": "Segredo de duas etapas gerado",
   "user.totp_enabled": "Verificação em duas etapas ativada",
   "user.totp_disabled": "Verificação em duas etapas desativada",
   "membership.created": "Acesso de usuário concedido",
@@ -119,8 +120,10 @@ export const ACTION_LABELS: Record<string, string> = {
   "supplier_category.deleted": "Categoria de fornecedor excluída",
 
   // Contas a pagar e pagamentos
+  "document.created": "Documento fiscal registrado",
   "payable.created": "Título a pagar criado",
   "payable.updated": "Título a pagar alterado",
+  "payable.due_date_adjusted": "Vencimento do título corrigido",
   "payable.canceled": "Título a pagar cancelado",
   "payable.settled_via_reconciliation": "Título baixado pela conciliação",
   "payment.requested": "Pagamento solicitado",
@@ -149,6 +152,10 @@ export const ACTION_LABELS: Record<string, string> = {
   "invoice.issued": "Nota fiscal emitida",
   "invoice.canceled": "Nota fiscal cancelada",
 
+  // Empresa
+  "company.created": "Empresa criada",
+  "company.updated": "Empresa alterada",
+
   // Conciliação bancária
   "statement.imported": "Extrato importado",
   "statement.synced": "Extrato sincronizado",
@@ -167,6 +174,8 @@ export const ACTION_LABELS: Record<string, string> = {
   // Aprovações
   "approval.requested": "Aprovação solicitada",
   "approval.partially_approved": "Aprovação parcial registrada",
+  "approval.approved": "Aprovação concedida",
+  "approval.rejected": "Aprovação rejeitada",
 
   // Alertas e controles
   "alert.created": "Alerta gerado",
@@ -187,4 +196,6 @@ export const ACTION_LABELS: Record<string, string> = {
   "flow.started": "Fluxo iniciado",
   "flow.completed": "Fluxo concluído",
   "flow.failed": "Fluxo interrompido por erro",
+  "flow.reaped": "Fluxo travado liberado pelo sistema",
+  "audit.exported": "Trilha de auditoria exportada",
 };

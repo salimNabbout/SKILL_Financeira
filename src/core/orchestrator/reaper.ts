@@ -8,8 +8,12 @@
  * em fluxos já terminais. É idempotente e seguro para rodar periodicamente.
  */
 
-import type { ID } from "../entities";
+import type { AuditTrail } from "../audit";
+import type { Actor, ID } from "../entities";
 import type { Repositories } from "../repositories";
+
+/** Mesmo ator de sistema que o scheduler usa (scripts/scheduler.ts). */
+const REAPER_ACTOR: Actor = { type: "system", id: "scheduler" };
 
 export interface ReapOptions {
   /** Idade mínima (ms) desde updatedAt para considerar um "running" preso. */
@@ -24,7 +28,8 @@ export async function reapStuckFlowRuns(
   repos: Repositories,
   companyId: ID,
   now: number,
-  options: ReapOptions
+  options: ReapOptions,
+  audit?: AuditTrail
 ): Promise<number> {
   const all = await repos.flowRuns.listAll(companyId);
   let reaped = 0;
@@ -32,10 +37,22 @@ export async function reapStuckFlowRuns(
     if (flowRun.status !== "running") continue;
     const age = now - new Date(flowRun.updatedAt).getTime();
     if (age < options.olderThanMs) continue;
-    await repos.flowRuns.update({
+    const before = { ...flowRun };
+    const after = {
       ...flowRun,
-      status: "failed",
+      status: "failed" as const,
       updatedAt: new Date(now).toISOString(),
+    };
+    await repos.flowRuns.update(after);
+    // running → failed é uma mudança de estado feita por ninguém: sem registro,
+    // um fluxo "que falhou sozinho" não tem como ser explicado depois.
+    await audit?.record(companyId, {
+      actor: REAPER_ACTOR,
+      action: "flow.reaped",
+      entityType: "flow_run",
+      entityId: flowRun.id,
+      before,
+      after,
     });
     reaped += 1;
   }

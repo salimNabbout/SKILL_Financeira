@@ -10,6 +10,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import { addDays, addMonths, diffDays, formatBR, type ISODate } from "@/core/dates";
 import type { CollectionMessage, Receivable } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
@@ -216,20 +217,7 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
 
 /** Persiste alerta apenas se não houver outro ABERTO com mesmo code+entityId (dedupe). */
 async function persistAlertDeduped(ctx: SkillContext, alert: SkillAlert): Promise<void> {
-  const open = await ctx.repos.alerts.listOpen(ctx.companyId);
-  if (open.some((a) => a.code === alert.code && a.entityId === alert.entityId)) return;
-  await ctx.repos.alerts.create({
-    id: ctx.ids.next("alr"),
-    companyId: ctx.companyId,
-    severity: alert.severity,
-    code: alert.code,
-    message: alert.message,
-    entityType: alert.entityType,
-    entityId: alert.entityId,
-    source: SKILL,
-    status: "open",
-    createdAt: ctx.clock.now().toISOString(),
-  });
+  await persistAlert(ctx, alert, SKILL);
 }
 
 // ---------------------------------------------------------------------------

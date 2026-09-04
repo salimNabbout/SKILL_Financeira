@@ -23,7 +23,7 @@ export async function switchCompanyAction(formData: FormData): Promise<void> {
   await audit.record(companyId, {
     actor: { type: "user", id: session.user.id, role: membership.role },
     action: "auth.switch_company",
-    entityType: "Company",
+    entityType: "company",
     entityId: companyId,
     after: { from: session.company.id },
   });

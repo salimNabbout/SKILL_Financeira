@@ -12,6 +12,7 @@
  */
 
 import { z } from "zod";
+import { AUDIT_ENTITIES, type AuditEntityType } from "@/core/audit-actions";
 import type { AiClassifier } from "@/core/ai";
 import type { AuditTrail } from "@/core/audit";
 import { hasPermission, type Permission } from "@/core/auth";
@@ -193,7 +194,7 @@ export async function login(
   await deps.audit.record(companyId, {
     actor: { type: "user", id: user.id },
     action: "auth.login",
-    entityType: "User",
+    entityType: "user",
     entityId: user.id,
   });
   return { user: publicUser(user), companyId };
@@ -261,16 +262,25 @@ export interface CreateOutcome<T> {
   created: boolean;
 }
 
+/**
+ * Registro de criação vindo da API.
+ *
+ * Antes recebia o nome da entidade em PascalCase e derivava a ação com
+ * `toLowerCase()` — o que produzia `costcenter.created` e `bankaccount.created`,
+ * enquanto a UI gravava `cost_center.created`. O mesmo fato virava dois nomes e
+ * os filtros da tela não achavam os dois. Agora o tipo canônico entra pronto
+ * (snake_case) e a ação sai dele.
+ */
 async function auditCreation(
   deps: ApiDeps,
   session: ApiSession,
-  entityType: string,
+  entityType: AuditEntityType,
   entityId: string,
   after: unknown
 ): Promise<void> {
   await deps.audit.record(session.company.id, {
     actor: session.actor,
-    action: `${entityType.toLowerCase()}.created`,
+    action: `${entityType}.created`,
     entityType,
     entityId,
     after,
@@ -332,7 +342,7 @@ export async function createSupplier(
     updatedAt: now,
   };
   const created = await deps.repos.suppliers.create(supplier);
-  await auditCreation(deps, session, "Supplier", created.id, {
+  await auditCreation(deps, session, AUDIT_ENTITIES.SUPPLIER, created.id, {
     name: created.name,
     document: created.document,
     // Apenas as versões mascaradas entram na trilha — nunca o dado bancário cru.
@@ -384,7 +394,7 @@ export async function createCustomer(
     updatedAt: now,
   };
   const created = await deps.repos.customers.create(customer);
-  await auditCreation(deps, session, "Customer", created.id, {
+  await auditCreation(deps, session, AUDIT_ENTITIES.CUSTOMER, created.id, {
     name: created.name,
     document: created.document,
   });
@@ -438,7 +448,7 @@ export async function createCategory(
     active: true,
   };
   const created = await deps.repos.categories.create(category);
-  await auditCreation(deps, session, "Category", created.id, {
+  await auditCreation(deps, session, AUDIT_ENTITIES.CATEGORY, created.id, {
     name: created.name,
     kind: created.kind,
     dreGroup: created.dreGroup,
@@ -481,7 +491,7 @@ export async function createCostCenter(
     scope: "both",
   };
   const created = await deps.repos.costCenters.create(costCenter);
-  await auditCreation(deps, session, "CostCenter", created.id, {
+  await auditCreation(deps, session, AUDIT_ENTITIES.COST_CENTER, created.id, {
     code: created.code,
     name: created.name,
   });
@@ -543,7 +553,7 @@ export async function createBankAccount(
     updatedAt: now,
   };
   const created = await deps.repos.bankAccounts.create(account);
-  await auditCreation(deps, session, "BankAccount", created.id, {
+  await auditCreation(deps, session, AUDIT_ENTITIES.BANK_ACCOUNT, created.id, {
     name: created.name,
     bankCode: created.bankCode,
     agency: created.agency,
@@ -818,7 +828,7 @@ export async function acknowledgeAlert(
   await deps.audit.record(session.company.id, {
     actor: session.actor,
     action: "alert.acknowledged",
-    entityType: "Alert",
+    entityType: "alert",
     entityId: alert.id,
     before: { status: alert.status },
     after: { status: updated.status },

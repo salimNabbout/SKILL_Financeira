@@ -26,6 +26,8 @@ import type { Actor } from "../src/core/entities";
 import { InMemoryEventBus } from "../src/core/events";
 import { RandomIdGenerator } from "../src/core/ids";
 import { Orchestrator } from "../src/core/orchestrator/orchestrator";
+import { buildAnchorLines } from "./audit-anchor";
+import { HashChainAuditTrail } from "../src/core/audit";
 import { reapStuckFlowRuns } from "../src/core/orchestrator/reaper";
 import { collectDueJobs } from "../src/core/scheduler";
 import { buildIntegrations } from "../src/integrations/registry";
@@ -40,6 +42,8 @@ async function main(): Promise<void> {
   const clock = new SystemClock();
   const ids = new RandomIdGenerator();
   const events = new InMemoryEventBus(repos.events, clock, ids);
+  // O reaper muda flowRun running → failed: passa a deixar rastro na trilha.
+  const audit = new HashChainAuditTrail(repos.audit, clock, ids);
   const orchestrator = new Orchestrator({
     repos,
     events,
@@ -54,16 +58,41 @@ async function main(): Promise<void> {
   const lastRuns = new Map<string, string>();
   let stopping = false;
 
+  // Dia (no fuso UTC) em que a âncora externa já foi impressa — 1x/dia basta,
+  // e o tique roda a cada minuto.
+  let ancoraDoDia: string | undefined;
+
   async function tick(): Promise<void> {
     const nowUtc = clock.now();
     const companies = (await repos.companies.listAll()).filter((c) => c.active);
+
+    // Âncora EXTERNA da trilha: imprime seq+hash do head no stdout, para o log
+    // do provedor guardar uma cópia fora do banco. Sem isso, quem apaga o fim
+    // da trilha apaga também a âncora que denunciaria o truncamento.
+    const hojeUtc = nowUtc.toISOString().slice(0, 10);
+    if (ancoraDoDia !== hojeUtc) {
+      try {
+        for (const linha of await buildAnchorLines(repos, nowUtc)) {
+          console.log(`audit-anchor ${JSON.stringify(linha)}`);
+        }
+        ancoraDoDia = hojeUtc;
+      } catch (error) {
+        console.error(
+          `[${nowUtc.toISOString()}] audit-anchor FALHOU: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     for (const company of companies) {
       // Recupera fluxos travados em "running" há mais de 30 min (crash no meio
       // de um passo) marcando-os como "failed" — libera para reprocessamento.
       try {
-        const reaped = await reapStuckFlowRuns(repos, company.id, nowUtc.getTime(), {
-          olderThanMs: 30 * 60_000,
-        });
+        const reaped = await reapStuckFlowRuns(
+          repos,
+          company.id,
+          nowUtc.getTime(),
+          { olderThanMs: 30 * 60_000 },
+          audit
+        );
         if (reaped > 0) {
           console.log(`[${nowUtc.toISOString()}] ${company.id} reaper: ${reaped} flowRun(s) presos → failed`);
         }

@@ -15,14 +15,20 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import { assertPermission } from "@/core/auth";
 import { addDays, diffDays, endOfMonth, monthOf, startOfMonth, type ISODate } from "@/core/dates";
 import type {
+  AccountingEntry,
   BankTransaction,
   ID,
   Receipt,
   ReconciliationMatch,
+  ReconciliationTargetType,
 } from "@/core/entities";
+// Plano de contas compartilhado com a skill contábil: a despesa bancária usa as
+// MESMAS contas de despesa e caixa (ver applyBankFee).
+import { ACCOUNT_CASH, ACCOUNT_DEFAULT_EXPENSE } from "@/skills/contabil";
 import { NotFoundError, ValidationError } from "@/core/errors";
 import { hashPayload } from "@/core/ids";
 import { formatBRL, payableRemainingCents, receivableRemainingCents } from "@/core/money";
@@ -173,20 +179,7 @@ export type ConciliacaoData =
 
 /** Persiste alerta apenas se não houver outro ABERTO com mesmo code+entityId. */
 async function persistAlertDeduped(ctx: SkillContext, alert: SkillAlert): Promise<void> {
-  const open = await ctx.repos.alerts.listOpen(ctx.companyId);
-  if (open.some((a) => a.code === alert.code && a.entityId === alert.entityId)) return;
-  await ctx.repos.alerts.create({
-    id: ctx.ids.next("alr"),
-    companyId: ctx.companyId,
-    severity: alert.severity,
-    code: alert.code,
-    message: alert.message,
-    entityType: alert.entityType,
-    entityId: alert.entityId,
-    source: SKILL,
-    status: "open",
-    createdAt: ctx.clock.now().toISOString(),
-  });
+  await persistAlert(ctx, alert, SKILL);
 }
 
 /** Arredonda a 2 casas para evitar ruído de ponto flutuante na soma dos pesos. */
@@ -194,9 +187,47 @@ function roundScore(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-// Sufixos societários não contam como "parte do nome" (evita falso positivo
-// com descrições que contêm "LTDA", "SA" etc. de outras empresas).
-const NAME_STOPWORDS = new Set(["ltda", "eireli", "epp", "cia", "sa", "mei", "me"]);
+// Palavras que NÃO identificam a contraparte: sufixos societários e termos
+// genéricos de razão social. Sem isso, "servicos" de "LIGHT SERVICOS DE
+// ELETRICIDADE" casava com "TARIFA PACOTE SERVICOS" e virava falso positivo.
+const NAME_STOPWORDS = new Set([
+  // sufixos societários
+  "ltda",
+  "eireli",
+  "epp",
+  "cia",
+  "sa",
+  "mei",
+  "me",
+  // termos genéricos de razão social
+  "servicos",
+  "servico",
+  "comercio",
+  "comercial",
+  "industria",
+  "industrial",
+  "brasil",
+  "engenharia",
+  "manutencao",
+  "distribuidora",
+  "consultoria",
+  "tecnologia",
+  "participacoes",
+  "empreendimentos",
+  "solucoes",
+  "sistemas",
+  "construtora",
+  "transportes",
+  "logistica",
+]);
+
+/**
+ * Débito do próprio banco (tarifa, IOF, juros, encargo, cesta/pacote, anuidade):
+ * não tem título a pagar do outro lado. Antes caía na baixa parcial e virava
+ * falso positivo, ou ficava órfão em "não conciliadas".
+ */
+const BANK_FEE_RE =
+  /\btarifa|\biof\b|\bjuros\b|\bencargo|\bcesta\b|\bpacote de servicos|\banuidade\b/;
 
 function nameTokens(name: string | undefined): string[] {
   if (!name) return [];
@@ -217,7 +248,9 @@ function confidenceFormula(ctx: SkillContext): string {
     `+ data + palavra-chave transf/ted/doc +0,20); rateio 1 transação ↔ 2..4 parcelas da mesma ` +
     `contraparte com soma exata (0,55 + nome +0,20 + vencimentos na tolerância +0,15); baixa ` +
     `parcial sobre título maior (0,45 + nome obrigatório +0,20 + data) — parcial NUNCA é ` +
-    `automática, sempre exige revisão humana.`
+    `automática, sempre exige revisão humana e está DESATIVADA por padrão ` +
+    `(config reconciliationEnablePartial${ctx.config.reconciliationEnablePartial ? " = true, ligada" : " = false"}); ` +
+    `despesa bancária (tarifa/IOF/juros/encargo/cesta/pacote/anuidade em débito sem título) = 0,80, sempre sugestão.`
   );
 }
 
@@ -290,11 +323,79 @@ async function markTransactionReconciled(ctx: SkillContext, tx: BankTransaction)
  *   Payment retroativo (o dinheiro já saiu — fato bancário, não ordem futura);
  * - débito casando pagamento executado → nada a baixar (só marca conciliado).
  */
+/**
+ * Lança a DESPESA BANCÁRIA de uma tarifa conciliada. O app não tinha rota para
+ * despesa sem título, então esta é a mínima: um lançamento contábil de ajuste
+ * (débito em despesa operacional, crédito em caixa) usando o MESMO plano de
+ * contas da skill contábil — nada de conta mágica duplicada.
+ *
+ * Idempotente pela origem (`fee:<txId>`): confirmar a mesma tarifa duas vezes
+ * não lança duas despesas.
+ */
+async function applyBankFee(
+  ctx: SkillContext,
+  tx: BankTransaction,
+  amountCents: number
+): Promise<{ receipt?: Receipt; assumptions: string[] }> {
+  if (tx.amountCents >= 0) {
+    throw new ValidationError(
+      `Transação ${tx.id} não é um débito; não pode ser lançada como despesa bancária.`
+    );
+  }
+  const sourceId = `fee:${tx.id}`;
+  const jaLancado = (await ctx.repos.accountingEntries.listAll(ctx.companyId)).some(
+    (e) => e.sourceType === "adjustment" && e.sourceId === sourceId
+  );
+  if (jaLancado) {
+    return {
+      assumptions: [
+        `Despesa bancária de ${formatBRL(amountCents)} já havia sido lançada para esta transação; nada foi duplicado.`,
+      ],
+    };
+  }
+
+  const entry: AccountingEntry = {
+    id: ctx.ids.next("ae"),
+    companyId: ctx.companyId,
+    entryDate: tx.date,
+    debitAccount: ACCOUNT_DEFAULT_EXPENSE,
+    creditAccount: ACCOUNT_CASH,
+    amountCents,
+    memo: `Despesa bancária: ${tx.description}`,
+    sourceType: "adjustment",
+    sourceId,
+    exported: false,
+    createdAt: ctx.clock.now().toISOString(),
+  };
+  await ctx.repos.accountingEntries.create(entry);
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "accounting.entry_prepared",
+    entityType: "accounting_entry",
+    entityId: entry.id,
+    after: entry,
+    correlationId: ctx.correlationId,
+  });
+
+  return {
+    assumptions: [
+      `Despesa bancária de ${formatBRL(amountCents)} lançada (débito ${ACCOUNT_DEFAULT_EXPENSE}, crédito ${ACCOUNT_CASH}) — tarifa do próprio banco, sem título a pagar correspondente.`,
+      "Classificação contábil da tarifa exige validação do contador (conta padrão de despesa operacional).",
+    ],
+  };
+}
+
 async function applySettlement(
   ctx: SkillContext,
   tx: BankTransaction,
   match: Pick<ReconciliationMatch, "targetType" | "targetId" | "amountCents">
 ): Promise<{ receipt?: Receipt; assumptions: string[] }> {
+  // Despesa bancária não tem alvo de título: a baixa é o próprio lançamento
+  // contábil da tarifa. Tratada ANTES do guarda de targetId, que existe para os
+  // demais tipos.
+  if (match.targetType === "bank_fee") {
+    return applyBankFee(ctx, tx, match.amountCents ?? Math.abs(tx.amountCents));
+  }
   if (!match.targetId) {
     throw new ValidationError("Conciliação sem alvo definido não pode ser aplicada.");
   }
@@ -705,10 +806,17 @@ interface Candidate extends ScoreResult {
 
 // Empate: pagamento executado tem prioridade sobre baixar o título de novo
 // (evita dupla baixa quando o mesmo valor tem pagamento já registrado).
-const TARGET_PRIORITY: Record<Candidate["targetType"], number> = {
+// Exaustivo sobre ReconciliationTargetType: os tipos que não disputam com um
+// candidato de título (entram por caminho próprio) ficam no fim, e o mapa não
+// quebra se alguém ampliar Candidate.
+const TARGET_PRIORITY: Record<ReconciliationTargetType, number> = {
   payment: 0,
   payable: 1,
   receivable: 1,
+  receipt: 1,
+  transfer: 2,
+  bank_fee: 3,
+  unknown: 9,
 };
 
 function bestFirst(a: Candidate, b: Candidate): number {
@@ -1130,17 +1238,23 @@ async function autoMatch(
     for (const item of pool) {
       if (item.remaining <= txAbs + tolerance) continue; // não é parcial (fase 1 cobre)
       if (rejectedPairs.has(`${tx.id}|${item.id}`)) continue;
-      const token = nameTokens(item.name).find((t) => description.includes(t));
-      if (!token) continue; // nome é obrigatório para propor baixa parcial
+      // A data precisa estar DENTRO da tolerância: antes, um vencimento 77 dias
+      // longe pontuava 0,00 em data e a sugestão nascia mesmo assim.
       const dateDiff = Math.abs(diffDays(item.dueDate, tx.date));
-      const dateComponent =
-        dateDiff === 0 ? 0.25 : dateDiff <= ctx.config.reconciliationDateToleranceDays ? 0.15 : 0;
+      if (dateDiff > ctx.config.reconciliationDateToleranceDays) continue;
+      // Um token genérico não identifica a contraparte. Exige-se DOIS tokens do
+      // nome na descrição, ou um único suficientemente específico (>= 6 letras).
+      const tokens = nameTokens(item.name).filter((t) => description.includes(t));
+      const especifico = tokens.find((t) => t.length >= 6);
+      if (tokens.length < 2 && !especifico) continue;
+      const evidencia = tokens.length >= 2 ? tokens.slice(0, 2).join('", "') : (especifico as string);
+      const dateComponent = dateDiff === 0 ? 0.25 : 0.15;
       found.push({
         targetId: item.id,
         score: roundScore(0.45 + 0.2 + dateComponent),
         dateDiff,
         breakdown:
-          `baixa parcial=0,45; nome=0,20 ("${token}"); data=${dateComponent.toFixed(2)} (${dateDiff} dia(s)); ` +
+          `baixa parcial=0,45; nome=0,20 ("${evidencia}"); data=${dateComponent.toFixed(2)} (${dateDiff} dia(s)); ` +
           `porção ${formatBRL(txAbs)} sobre saldo maior`,
       });
     }
@@ -1167,6 +1281,39 @@ async function autoMatch(
     await registerSuggestion(
       match,
       `baixa PARCIAL de ${formatBRL(txAbs)} no ${targetType} ${best.targetId} (confiança ${best.score.toFixed(2)}; sempre exige revisão humana).`
+    );
+    suggested++;
+    return true;
+  }
+
+  /**
+   * Despesa bancária: débito de tarifa/IOF/juros/encargo/cesta/pacote/anuidade,
+   * que não tem título a pagar do outro lado. Sugestão (nunca automática) com
+   * alvo próprio `bank_fee` — sem alvo de título, portanto sem `targetId`.
+   * Roda ANTES dos demais fallbacks: um débito assim não é transferência, nem
+   * rateio, nem baixa parcial de título de fornecedor.
+   */
+  async function tryBankFeeSuggestion(tx: BankTransaction): Promise<boolean> {
+    if (tx.amountCents >= 0) return false;
+    const description = normalizeText(tx.description);
+    const hit = BANK_FEE_RE.exec(description);
+    if (!hit) return false;
+
+    const match = await createMatchRecord(
+      tx,
+      {
+        targetType: "bank_fee",
+        targetId: undefined,
+        amountCents: Math.abs(tx.amountCents),
+        groupId: undefined,
+        confidence: 0.8,
+        notes: `despesa bancária: palavra-chave "${hit[0].trim()}"=0,80`,
+      },
+      false // despesa bancária NUNCA é automática
+    );
+    await registerSuggestion(
+      match,
+      `despesa bancária de ${formatBRL(Math.abs(tx.amountCents))} ("${tx.description}") sem título a pagar correspondente (confiança 0,80).`
     );
     suggested++;
     return true;
@@ -1209,11 +1356,13 @@ async function autoMatch(
     }
 
     if (candidates.length === 0) {
-      // Fases de fallback: transferência entre contas → rateio multi-parcela →
-      // baixa parcial (sempre sugestão). Ordem deterministicamente documentada.
+      // Fases de fallback, nesta ordem: despesa bancária → transferência entre
+      // contas → rateio multi-parcela → baixa parcial (esta só com a flag
+      // reconciliationEnablePartial ligada; ver o comentário da config).
+      if (await tryBankFeeSuggestion(tx)) continue;
       if (await tryTransferPair(tx)) continue;
       if (await tryInstallmentGroup(tx)) continue;
-      if (await tryPartialSuggestion(tx)) continue;
+      if (ctx.config.reconciliationEnablePartial && (await tryPartialSuggestion(tx))) continue;
       unmatched++;
       continue;
     }

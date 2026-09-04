@@ -16,6 +16,7 @@
  */
 
 import { z } from "zod";
+import { persistAlert } from "@/core/alerts";
 import type { Alert, Approval, Payable, Payment, Receipt, Receivable } from "@/core/entities";
 import {
   addDays,
@@ -876,27 +877,14 @@ async function persistAlertOnce(
     assumptions.push(`Alerta '${spec.code}' já está aberto (${existing.id}); não foi duplicado.`);
     return;
   }
-  const alert: Alert = {
-    id: ctx.ids.next("alr"),
-    companyId: ctx.companyId,
+  const alert: SkillAlert = {
     severity: spec.severity,
     code: spec.code,
     message: spec.message,
     entityType: spec.entityType,
     entityId: spec.entityId,
-    source: SKILL_NAME,
-    status: "open",
-    createdAt: ctx.clock.now().toISOString(),
   };
-  await ctx.repos.alerts.create(alert);
-  await ctx.audit.record(ctx.companyId, {
-    actor: ctx.actor,
-    action: "alert.created",
-    entityType: "alert",
-    entityId: alert.id,
-    after: alert,
-    correlationId: ctx.correlationId,
-  });
+  await persistAlert(ctx, alert, SKILL_NAME);
 }
 
 async function registerReportGeneration(

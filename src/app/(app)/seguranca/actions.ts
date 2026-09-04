@@ -11,6 +11,11 @@ import { errorMessage, fdString } from "@/app/(app)/cadastros/_lib/form-utils";
 
 const PATH = "/seguranca";
 
+/** Nunca auditar material de segredo: só se havia ou não um segredo. */
+function mascarar(secret: string | undefined): string {
+  return secret ? "[definido]" : "[ausente]";
+}
+
 function fail(message: string): never {
   redirect(`${PATH}?erro=${encodeURIComponent(message)}`);
 }
@@ -49,7 +54,7 @@ export async function changePasswordAction(formData: FormData): Promise<void> {
     await audit.record(session.company.id, {
       actor: session.actor,
       action: "user.password_changed",
-      entityType: "User",
+      entityType: "user",
       entityId: session.user.id,
     });
   } catch (error) {
@@ -60,17 +65,28 @@ export async function changePasswordAction(formData: FormData): Promise<void> {
 
 export async function startTotpSetupAction(): Promise<void> {
   const session = await requireSession();
-  const { repos, clock } = await getContainer();
+  const { repos, clock, audit } = await getContainer();
   if (session.user.totpEnabled) {
     fail("2FA já está ativo — desative antes de gerar um novo segredo.");
   }
   try {
     // Segredo fica PENDENTE (totpEnabled=false) até a confirmação com um código.
-    await repos.users.update({
+    const atualizado = await repos.users.update({
       ...session.user,
       totpSecret: generateTotpSecret(),
       totpEnabled: false,
       updatedAt: clock.now().toISOString(),
+    });
+    // Gerar/substituir o segundo fator é ação sensível e passava sem rastro:
+    // dava para trocar o segredo de 2FA sem deixar nenhum registro.
+    // O SEGREDO nunca entra na trilha — só a marca de que existe um pendente.
+    await audit.record(session.company.id, {
+      actor: session.actor,
+      action: "user.totp_setup_started",
+      entityType: "user",
+      entityId: session.user.id,
+      before: { totpEnabled: session.user.totpEnabled, totpSecret: mascarar(session.user.totpSecret) },
+      after: { totpEnabled: atualizado.totpEnabled, totpSecret: mascarar(atualizado.totpSecret) },
     });
   } catch (error) {
     fail(errorMessage(error));
@@ -101,7 +117,7 @@ export async function confirmTotpAction(formData: FormData): Promise<void> {
     await audit.record(session.company.id, {
       actor: session.actor,
       action: "user.totp_enabled",
-      entityType: "User",
+      entityType: "user",
       entityId: session.user.id,
     });
   } catch (error) {
@@ -134,7 +150,7 @@ export async function disableTotpAction(formData: FormData): Promise<void> {
     await audit.record(session.company.id, {
       actor: session.actor,
       action: "user.totp_disabled",
-      entityType: "User",
+      entityType: "user",
       entityId: session.user.id,
     });
   } catch (error) {

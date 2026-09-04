@@ -1906,6 +1906,24 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     async append(record: AuditRecord) {
       await prisma.auditRecord.create({ data: auditToDb(record) });
     },
+    // Append + head numa unidade só. Fora de transação, abre uma; DENTRO de uma
+    // (cliente sem $transaction, vindo de withTransaction), as duas escritas já
+    // pertencem ao escopo do chamador e não se aninha nada.
+    async appendWithHead(record: AuditRecord) {
+      const escrever = async (client: PrismaLike) => {
+        await client.auditRecord.create({ data: auditToDb(record) });
+        await client.auditHead.upsert({
+          where: { companyId: record.companyId },
+          create: { companyId: record.companyId, seq: record.seq, hash: record.hash },
+          update: { seq: record.seq, hash: record.hash },
+        });
+      };
+      if (typeof (prisma as PrismaClient).$transaction !== "function") {
+        await escrever(prisma);
+        return;
+      }
+      await (prisma as PrismaClient).$transaction(async (tx) => escrever(tx as PrismaLike));
+    },
     async last(companyId: ID) {
       const row = await prisma.auditRecord.findFirst({
         where: { companyId },
@@ -1930,10 +1948,19 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       // de `to` (senão "Até" no mesmo dia excluiria tudo daquele dia).
       const where = {
         companyId,
-        ...(query.entityType ? { entityType: query.entityType } : {}),
+        // Lista ⇒ `in` (nome canônico + legados; ver core/audit-actions.ts).
+        ...(query.entityType
+          ? {
+              entityType: Array.isArray(query.entityType)
+                ? { in: query.entityType }
+                : query.entityType,
+            }
+          : {}),
         ...(query.entityId ? { entityId: query.entityId } : {}),
         ...(query.actorId ? { actorId: query.actorId } : {}),
-        ...(query.action ? { action: query.action } : {}),
+        ...(query.action
+          ? { action: Array.isArray(query.action) ? { in: query.action } : query.action }
+          : {}),
         ...(query.from || query.to
           ? {
               timestamp: {

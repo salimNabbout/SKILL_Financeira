@@ -69,21 +69,12 @@ export async function updateSupplierCategoryAction(formData: FormData): Promise<
 
   let mensagem;
   try {
-    const result = await renameSupplierCategory(container, companyId, id, name);
+    const result = await renameSupplierCategory(container, companyId, id, name, session.actor);
     if (result.semMudanca) {
       mensagem = `Categoria "${result.after.name}" já tinha esse nome.`;
     } else {
-      // O create registra apenas `after`; aqui o `before` é essencial — sem ele
-      // a trilha não mostra de que nome a categoria veio.
-      await container.audit.record(companyId, {
-        actor: session.actor,
-        action: "supplier_category.updated",
-        entityType: "supplier_category",
-        entityId: result.after.id,
-        before: result.before,
-        after: result.after,
-      });
-
+      // A trilha (com `before` e os ids afetados pela cascata) é gravada DENTRO
+      // da transação, em renameSupplierCategory — aqui só a mensagem.
       const propagados = result.suppliersAtualizados + result.recorrenciasAtualizadas;
       mensagem =
         propagados === 0

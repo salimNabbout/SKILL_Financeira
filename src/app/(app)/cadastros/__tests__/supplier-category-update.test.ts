@@ -4,12 +4,16 @@ import { createMemoryRepositories } from "@/adapters/memory/repos";
 import { hasPermission } from "@/core/auth";
 import type { RecurringTemplate, Supplier, SupplierCategory } from "@/core/entities";
 import { ValidationError } from "@/core/errors";
+import { HashChainAuditTrail } from "@/core/audit";
+import { SequentialIdGenerator } from "@/core/ids";
+import type { Actor } from "@/core/entities";
 import { renameSupplierCategory } from "@/app/(app)/cadastros/categorias-fornecedores/_lib/update";
 
 const CO = "co_test";
 const AGORA = "2026-08-24T12:00:00.000Z";
 
 const clock = { now: () => new Date(AGORA) };
+const ATOR: Actor = { type: "user", id: "usr_admin", role: "admin" };
 
 function categoria(id: string, name: string): SupplierCategory {
   return {
@@ -62,14 +66,16 @@ function cenario() {
     fornecedor("sup_4", undefined)
   );
   db.recurringTemplates.push(recorrencia("rec_1", "Serviços"), recorrencia("rec_2", "Insumos"));
-  return { db, deps: { repos: createMemoryRepositories(db), clock } };
+  const repos = createMemoryRepositories(db);
+  const audit = new HashChainAuditTrail(repos.audit, clock, new SequentialIdGenerator());
+  return { db, deps: { repos, clock, audit } };
 }
 
 describe("renameSupplierCategory", () => {
   it("renomeia e propaga o nome novo para fornecedores e recorrências", async () => {
     const { db, deps } = cenario();
 
-    const r = await renameSupplierCategory(deps, CO, "cat_1", "Serviços Terceirizados");
+    const r = await renameSupplierCategory(deps, CO, "cat_1", "Serviços Terceirizados", ATOR);
 
     expect(r.semMudanca).toBe(false);
     expect(r.before.name).toBe("Serviços");
@@ -92,14 +98,14 @@ describe("renameSupplierCategory", () => {
 
   it("normaliza o nome para Title Case, como no cadastro", async () => {
     const { deps } = cenario();
-    const r = await renameSupplierCategory(deps, CO, "cat_1", "  serviços   GERAIS ");
+    const r = await renameSupplierCategory(deps, CO, "cat_1", "  serviços   GERAIS ", ATOR);
     expect(r.after.name).toBe("Serviços Gerais");
   });
 
   it("recusa nome duplicado, ignorando a caixa", async () => {
     const { db, deps } = cenario();
 
-    await expect(renameSupplierCategory(deps, CO, "cat_1", "insumos")).rejects.toThrow(
+    await expect(renameSupplierCategory(deps, CO, "cat_1", "insumos", ATOR)).rejects.toThrow(
       ValidationError
     );
 
@@ -110,7 +116,7 @@ describe("renameSupplierCategory", () => {
 
   it("aceita renomear para o mesmo nome sem escrever nada", async () => {
     const { db, deps } = cenario();
-    const r = await renameSupplierCategory(deps, CO, "cat_1", "Serviços");
+    const r = await renameSupplierCategory(deps, CO, "cat_1", "Serviços", ATOR);
     expect(r.semMudanca).toBe(true);
     expect(r.suppliersAtualizados).toBe(0);
     expect(db.supplierCategories.find((c) => c.id === "cat_1")?.updatedAt).toBe(
@@ -120,8 +126,8 @@ describe("renameSupplierCategory", () => {
 
   it("recusa nome vazio e categoria inexistente", async () => {
     const { deps } = cenario();
-    await expect(renameSupplierCategory(deps, CO, "cat_1", "   ")).rejects.toThrow(ValidationError);
-    await expect(renameSupplierCategory(deps, CO, "cat_999", "Qualquer")).rejects.toThrow(
+    await expect(renameSupplierCategory(deps, CO, "cat_1", "   ", ATOR)).rejects.toThrow(ValidationError);
+    await expect(renameSupplierCategory(deps, CO, "cat_999", "Qualquer", ATOR)).rejects.toThrow(
       ValidationError
     );
   });

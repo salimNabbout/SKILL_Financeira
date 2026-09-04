@@ -518,6 +518,11 @@ class MemAuditRepo implements AuditRepo {
     }
     this.items.push(clone(record));
   }
+  /** Append + head juntos (single-thread: o append valida antes de ancorar). */
+  async appendWithHead(record: AuditRecord) {
+    await this.append(record);
+    await this.setHead({ companyId: record.companyId, seq: record.seq, hash: record.hash });
+  }
   async last(companyId: ID) {
     const filtered = this.items.filter((r) => r.companyId === companyId);
     if (filtered.length === 0) return null;
@@ -538,14 +543,17 @@ class MemAuditRepo implements AuditRepo {
     query: {
       offset?: number;
       limit?: number;
-      entityType?: string;
+      entityType?: string | string[];
       entityId?: ID;
       actorId?: ID;
-      action?: string;
+      action?: string | string[];
       from?: string;
       to?: string;
     }
   ) {
+    // Lista ⇒ casa com qualquer um dos nomes (canônico + legados).
+    const casa = (valor: string, filtro?: string | string[]): boolean =>
+      !filtro || (Array.isArray(filtro) ? filtro.includes(valor) : filtro === valor);
     // timestamp é string ISO completa; from/to são "YYYY-MM-DD". Comparação
     // lexicográfica cobre o DIA INTEIRO (00:00:00 de `from` a 23:59:59.999 de
     // `to`). Filtros aplicados ANTES do slice para que `total` reflita o filtro.
@@ -555,10 +563,10 @@ class MemAuditRepo implements AuditRepo {
       .filter(
         (r) =>
           r.companyId === companyId &&
-          (!query.entityType || r.entityType === query.entityType) &&
+          casa(r.entityType, query.entityType) &&
           (!query.entityId || r.entityId === query.entityId) &&
           (!query.actorId || r.actorId === query.actorId) &&
-          (!query.action || r.action === query.action) &&
+          casa(r.action, query.action) &&
           (fromTs === undefined || r.timestamp >= fromTs) &&
           (toTs === undefined || r.timestamp <= toTs)
       )

@@ -13,8 +13,9 @@
  * deixaria parte da base órfã, que é exatamente o que se quer evitar.
  */
 
+import type { AuditTrail } from "@/core/audit";
 import type { Clock } from "@/core/clock";
-import type { ID, SupplierCategory } from "@/core/entities";
+import type { Actor, ID, SupplierCategory } from "@/core/entities";
 import { ValidationError } from "@/core/errors";
 import type { Repositories } from "@/core/repositories";
 import { toTitleCase } from "@/app/(app)/cadastros/_lib/form-utils";
@@ -22,6 +23,7 @@ import { toTitleCase } from "@/app/(app)/cadastros/_lib/form-utils";
 export interface RenameCategoryDeps {
   repos: Repositories;
   clock: Clock;
+  audit: AuditTrail;
 }
 
 export interface RenameCategoryResult {
@@ -31,6 +33,9 @@ export interface RenameCategoryResult {
   suppliersAtualizados: number;
   /** Quantas recorrências tiveram o campo `category` atualizado. */
   recorrenciasAtualizadas: number;
+  /** Ids afetados pela cascata — vão para o `after` da trilha. */
+  affectedSupplierIds: ID[];
+  affectedTemplateIds: ID[];
   /** true quando o nome enviado é igual ao atual (nada foi escrito). */
   semMudanca: boolean;
 }
@@ -43,7 +48,8 @@ export async function renameSupplierCategory(
   deps: RenameCategoryDeps,
   companyId: ID,
   id: ID,
-  rawName: string
+  rawName: string,
+  actor: Actor
 ): Promise<RenameCategoryResult> {
   const name = toTitleCase(rawName);
   if (!name) throw new ValidationError("Informe o nome da categoria.");
@@ -57,6 +63,8 @@ export async function renameSupplierCategory(
       after: before,
       suppliersAtualizados: 0,
       recorrenciasAtualizadas: 0,
+      affectedSupplierIds: [],
+      affectedTemplateIds: [],
       semMudanca: true,
     };
   }
@@ -77,22 +85,42 @@ export async function renameSupplierCategory(
   return deps.repos.withTransaction(async (tx) => {
     const after = await tx.supplierCategories.update({ ...before, name, updatedAt: agora });
 
-    let suppliersAtualizados = 0;
+    const affectedSupplierIds: ID[] = [];
     for (const fornecedor of await tx.suppliers.listAll(companyId)) {
       if (fornecedor.category && fornecedor.category.toLowerCase() === nomeAntigo) {
         await tx.suppliers.update({ ...fornecedor, category: name, updatedAt: agora });
-        suppliersAtualizados += 1;
+        affectedSupplierIds.push(fornecedor.id);
       }
     }
 
-    let recorrenciasAtualizadas = 0;
+    const affectedTemplateIds: ID[] = [];
     for (const recorrencia of await tx.recurringTemplates.listAll(companyId)) {
       if (recorrencia.category && recorrencia.category.toLowerCase() === nomeAntigo) {
         await tx.recurringTemplates.update({ ...recorrencia, category: name, updatedAt: agora });
-        recorrenciasAtualizadas += 1;
+        affectedTemplateIds.push(recorrencia.id);
       }
     }
 
-    return { before, after, suppliersAtualizados, recorrenciasAtualizadas, semMudanca: false };
+    // A trilha entra DENTRO da transação: a cascata renomeia registros de duas
+    // outras tabelas, e um registro sem rastro aqui esconderia exatamente o que
+    // é difícil de reconstruir depois — quem foi afetado.
+    await deps.audit.withTx(tx).record(companyId, {
+      actor,
+      action: "supplier_category.updated",
+      entityType: "supplier_category",
+      entityId: after.id,
+      before,
+      after: { ...after, affectedSupplierIds, affectedTemplateIds },
+    });
+
+    return {
+      before,
+      after,
+      suppliersAtualizados: affectedSupplierIds.length,
+      recorrenciasAtualizadas: affectedTemplateIds.length,
+      affectedSupplierIds,
+      affectedTemplateIds,
+      semMudanca: false,
+    };
   });
 }
