@@ -50,7 +50,7 @@ cp deploy/.env.prod.example deploy/.env.prod
 # Gere o segredo de sessão e uma senha forte de banco:
 openssl rand -base64 48        # → SESSION_SECRET
 openssl rand -base64 24        # → POSTGRES_PASSWORD
-openssl rand -base64 24        # → APP_DB_PASSWORD
+openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32; echo   # → APP_DB_PASSWORD (só alfanumérico: entra numa URL)
 nano deploy/.env.prod          # preencha os três
 ```
 

@@ -13,7 +13,9 @@
 #   /opt/financeira/deploy/criar-role-app.sh
 #
 # Pré-requisito: APP_DB_USER e APP_DB_PASSWORD preenchidos em deploy/.env.prod.
-# Gere a senha com:  openssl rand -base64 24
+# Gere a senha SEM caracteres especiais: ela entra numa URL de conexao, e
+# / + = quebrariam o parsing.
+#   openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32; echo
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
