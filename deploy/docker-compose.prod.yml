@@ -61,6 +61,12 @@ services:
       # Integrações continuam mock por padrão (ver docs/DEPLOY.md §8 para ligar reais).
       AI_PROVIDER: ${AI_PROVIDER:-mock}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Dados bancários reais via Pluggy (Open Finance) — docs/DEPLOY.md §8.
+      # Os valores vivem só no .env.prod; vazios mantêm o mock.
+      INTEGRATION_BANK: ${INTEGRATION_BANK:-mock}
+      PLUGGY_CLIENT_ID: ${PLUGGY_CLIENT_ID:-}
+      PLUGGY_CLIENT_SECRET: ${PLUGGY_CLIENT_SECRET:-}
+      PLUGGY_ACCOUNT_MAP: ${PLUGGY_ACCOUNT_MAP:-}
     # Só localhost: o nginx da VPS faz o proxy para cá. Não exposto na rede.
     ports:
       - "127.0.0.1:${APP_PORT:-3000}:3000"
@@ -87,6 +93,11 @@ services:
       DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-America/Sao_Paulo}
       AI_PROVIDER: ${AI_PROVIDER:-mock}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # O bank_sync diário (6h) usa o mesmo provedor bancário do app.
+      INTEGRATION_BANK: ${INTEGRATION_BANK:-mock}
+      PLUGGY_CLIENT_ID: ${PLUGGY_CLIENT_ID:-}
+      PLUGGY_CLIENT_SECRET: ${PLUGGY_CLIENT_SECRET:-}
+      PLUGGY_ACCOUNT_MAP: ${PLUGGY_ACCOUNT_MAP:-}
     command: ["npx", "tsx", "scripts/scheduler.ts"]
 
 volumes:
