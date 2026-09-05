@@ -241,7 +241,7 @@ model BankTransaction {
   // lotes anteriores à migração 0019 não têm linha lá, e uma FK exigiria
   // backfill ou quebraria a migração. A referência fica solta.
   importBatchId String?
-  source        String // ofx | csv | api_mock | manual
+  source        String // ofx | csv | cnab240 | api | api_mock | manual
   reconciled    Boolean  @default(false)
   createdAt     DateTime @default(now())
 
