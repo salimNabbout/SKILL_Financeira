@@ -732,9 +732,11 @@ async function importStatement(
 }
 
 /**
- * Sincronização via porta BankDataProvider (Open Finance/agregador — MOCK no
- * MVP). Idempotente: externalId "sync:<provider>:<idNoProvedor>" deduplica;
- * sincronizar duas vezes o mesmo período não cria nada novo.
+ * Sincronização via porta BankDataProvider (mock por padrão; Pluggy/Open
+ * Finance quando INTEGRATION_BANK=pluggy). Idempotente: externalId
+ * "sync:<provider>:<idNoProvedor>" deduplica; sincronizar duas vezes o mesmo
+ * período não cria nada novo. Provedor com getBalance() grava o saldo de
+ * referência no lote (mesmo papel do <LEDGERBAL> do OFX).
  */
 async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillResult<SyncBankData>> {
   assertPermission(ctx.actor, "reconciliation.manage");
@@ -782,7 +784,8 @@ async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillR
       description: t.description,
       externalId,
       importBatchId,
-      source: "api_mock", // fonte de sincronização; provedores reais ganham source próprio na v1.2
+      // Fonte real ("api") vs. sintética ("api_mock") — distinguível para sempre.
+      source: provider.provider === "mock" ? "api_mock" : "api",
       reconciled: false,
       createdAt: nowIso,
     };
@@ -790,8 +793,23 @@ async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillR
     created.push(tx);
   }
 
-  // Mesmo registro de lote da importação por arquivo. Sem saldo: o provedor
-  // (mock, e os reais da v1.2) não declara saldo contábil.
+  // Saldo declarado pelo provedor (equivalente ao <LEDGERBAL> do OFX), quando a
+  // porta o expõe. Falha ao obter o saldo NÃO derruba a sincronização: vira
+  // aviso no lote (as transações já importadas continuam valendo).
+  const warnings: string[] = [];
+  let balance: Awaited<ReturnType<NonNullable<typeof provider.getBalance>>> = null;
+  if (provider.getBalance) {
+    try {
+      balance = await provider.getBalance({ bankAccountId: account.id });
+    } catch (error) {
+      warnings.push(
+        `Saldo do provedor indisponível: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // Mesmo registro de lote da importação por arquivo, com o saldo de referência
+  // quando o provedor declara (o mock não declara).
   await ctx.repos.statementImports.create({
     id: importBatchId,
     companyId: ctx.companyId,
@@ -800,7 +818,9 @@ async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillR
     source: "sync",
     imported: created.length,
     duplicates,
-    warnings: [],
+    warnings,
+    ledgerBalanceCents: balance?.amountCents,
+    ledgerBalanceDate: balance?.date,
     createdBy: ctx.actor.id,
     createdAt: nowIso,
   });
@@ -850,7 +870,9 @@ async function syncBank(ctx: SkillContext, input: SyncBankInput): Promise<SkillR
     },
     {
       assumptions: [
-        `Transações obtidas pela porta de dados bancários "${provider.provider}" — no provedor mock o extrato é sintético e determinístico; Open Finance/agregador real entra na v1.2 com credenciais.`,
+        provider.provider === "mock"
+          ? `Transações obtidas pela porta de dados bancários "mock" — extrato sintético e determinístico; nenhum banco real foi consultado.`
+          : `Transações reais obtidas do agregador "${provider.provider}" (Open Finance) — somente lançamentos liquidados (POSTED), em BRL.`,
       ],
       confidence: 1.0,
       dataSources: [...DATA_SOURCES, "integration:bank_data"],

@@ -66,7 +66,11 @@ export default async function ConciliacaoPage({
   const sp = await searchParams;
   const { ok, erro, pt } = sp;
   const session = await requireSession();
-  const { repos, clock } = await getContainer();
+  const { repos, clock, integrations } = await getContainer();
+  // Nome do provedor de dados bancários na seção 1b (mock vs. real).
+  const bankProvider = integrations.bankData.provider;
+  const bankProviderLabel =
+    bankProvider === "mock" ? "mock" : bankProvider === "pluggy" ? "Pluggy" : bankProvider;
   const companyId = session.company.id;
   // Fuso da empresa, nunca UTC: na virada do mês o default do filtro pularia
   // um dia. Declarado aqui porque o saldo e o card de pagamentos usam o mesmo.
@@ -965,7 +969,7 @@ export default async function ConciliacaoPage({
         )}
       </Card>
 
-      <Card className="mb-6" title="1b — Sincronizar com o banco (mock)">
+      <Card className="mb-6" title={`1b — Sincronizar com o banco (${bankProviderLabel})`}>
         {contasAtivas.length === 0 ? (
           <p className="text-sm text-[var(--ink-muted)]">
             Nenhuma conta bancária ativa.{" "}
@@ -1002,10 +1006,20 @@ export default async function ConciliacaoPage({
             <Button>Sincronizar e conciliar</Button>
           </div>
           <p className="md:col-span-3 text-xs text-[var(--ink-muted)]">
-            Busca transações via provedor de dados bancários configurado (porta de integração). No
-            MVP o provedor é <strong>mock</strong>: gera um extrato sintético determinístico —
-            nenhum banco real é consultado. Sincronizar de novo o mesmo período não duplica
-            transações.
+            {bankProvider === "mock" ? (
+              <>
+                Busca transações via provedor de dados bancários configurado (porta de integração).
+                O provedor atual é <strong>mock</strong>: gera um extrato sintético determinístico —
+                nenhum banco real é consultado.
+              </>
+            ) : (
+              <>
+                Busca as transações <strong>reais</strong> da conta via{" "}
+                <strong>{bankProviderLabel}</strong> (Open Finance) — somente lançamentos
+                liquidados, em BRL — e grava o saldo declarado pelo banco no lote.
+              </>
+            )}{" "}
+            Sincronizar de novo o mesmo período não duplica transações.
           </p>
         </form>
         )}
