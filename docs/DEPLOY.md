@@ -203,6 +203,57 @@ das quatro.
 | **Fiscal** (NF-e/NFS-e) | `INTEGRATION_FISCAL` | **certificado digital**, inscrição na SEFAZ/prefeitura | **obrigatória** | opcional (status) |
 | **Mensageria** (e-mail/WhatsApp) | `INTEGRATION_MESSAGING` | credenciais do provedor de envio + opt-in/descadastro | opcional | opcional (entrega) |
 
+### Dados bancários via Pluggy (extrato real do Itaú/Open Finance)
+
+O primeiro adaptador real implementado é o **Pluggy** (`INTEGRATION_BANK=pluggy`,
+`src/integrations/providers/pluggy-bank-data-provider.ts`). Ele busca as
+transações liquidadas (POSTED, BRL) da conta conectada e o saldo declarado pelo
+banco — que passa a ser gravado no lote (`StatementImport`), como o `<LEDGERBAL>`
+do OFX.
+
+**1. Credenciais** — em [dashboard.pluggy.ai](https://dashboard.pluggy.ai) →
+*API Keys*: copie `CLIENT_ID` e `CLIENT_SECRET`. Só no `.env` de produção,
+NUNCA em git/log/chat.
+
+**2. Conectar a conta** — o Itaú é conectado pelo **Pluggy Connect**
+(widget/dashboard), com o **consentimento Open Finance dado pelo titular da
+conta PJ**. Sem item conectado não há o que sincronizar.
+
+**3. Descobrir os ids** — com `PLUGGY_CLIENT_ID`/`PLUGGY_CLIENT_SECRET` (e
+opcionalmente `DATABASE_URL`) no ambiente:
+
+```bash
+npm run pluggy:accounts
+```
+
+Imprime as contas no Pluggy (`itemId`, banco, `accountId`, número, saldo) e as
+`BankAccount` locais — sem nenhum segredo. Se `GET /items` não estiver
+disponível para a sua chave, rode com `PLUGGY_ITEM_IDS="<itemId>"` (id visível
+no dashboard).
+
+**4. Configurar** — no `.env` de produção:
+
+```bash
+INTEGRATION_BANK=pluggy
+PLUGGY_CLIENT_ID=...
+PLUGGY_CLIENT_SECRET=...
+# BankAccount.id local = accountId no Pluggy (pares separados por vírgula):
+PLUGGY_ACCOUNT_MAP="ba_xxx=00000000-0000-0000-0000-000000000000"
+```
+
+Sem qualquer uma das três variáveis o boot **falha alto** (mock nunca é
+fallback). O serviço `scheduler` precisa do mesmo env (o `bank_sync` diário
+passa a chamar o Pluggy).
+
+**5. Smoke pós-ativação** — em `/conciliacao`:
+
+- [ ] O card "1b — Sincronizar com o banco" mostra **(Pluggy)**, não (mock).
+- [ ] Sincronizar 30 dias cria transações com `source='api'`, `externalId`
+      `sync:pluggy:<id>` e descrições reais — nada de "(SYNC MOCK)".
+- [ ] Sincronizar de novo o mesmo período: `imported = 0`, `duplicates = N`.
+- [ ] O lote registra o saldo declarado (o aviso "Sem saldo de referência"
+      da auditoria de conciliação some para a conta).
+
 ### Webhook de confirmação de pagamento (cobrança) — peça NOVA
 
 O mock só **emite** o código de cobrança. Com um PSP real, a **baixa automática**
