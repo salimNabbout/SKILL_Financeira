@@ -4,6 +4,33 @@ Registro das mudanças relevantes. Datas em ISO (AAAA-MM-DD).
 
 ---
 
+## 2026-09-05 — Provedor bancário real via Pluggy (Open Finance)
+
+A seção "1b — Sincronizar com o banco" deixa de ser só mock: com
+`INTEGRATION_BANK=pluggy` (+ `PLUGGY_CLIENT_ID`, `PLUGGY_CLIENT_SECRET`,
+`PLUGGY_ACCOUNT_MAP`), a sincronização busca as transações **reais** da conta
+conectada por Open Finance — só lançamentos liquidados (POSTED), só BRL,
+centavos com sinal derivado de DEBIT/CREDIT e data no dia BRT.
+
+Três consequências práticas:
+
+- **`source` distingue real de sintético.** Provedor real grava `source="api"`;
+  o mock continua `api_mock`. O `externalId sync:pluggy:<id>` mantém a
+  sincronização idempotente.
+- **O saldo do banco entra no lote.** A porta ganhou `getBalance()` opcional
+  (equivalente ao `<LEDGERBAL>` do OFX); quando o provedor declara, o lote
+  (`StatementImport`) guarda `ledgerBalanceCents/Date` e a auditoria de
+  conciliação ganha a referência externa também no caminho de sincronização.
+  Falha ao obter o saldo NÃO derruba a sincronização — vira aviso no lote.
+- **Mock nunca é fallback.** `INTEGRATION_BANK=pluggy` sem as três variáveis
+  falha alto no boot, como as demais integrações.
+
+Ferramentas: `npm run pluggy:accounts` lista itens/contas do Pluggy e as
+`BankAccount` locais para montar o `PLUGGY_ACCOUNT_MAP` (sem imprimir
+segredos). Passo a passo completo em `docs/DEPLOY.md` §8.
+
+---
+
 ## 2026-09-04 — Auditoria de conciliação: extrato × baixas
 
 A conciliação só olhava numa direção — do extrato para os títulos. Quatro perguntas ficavam sem

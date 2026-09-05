@@ -22,6 +22,13 @@ export interface ExternalBankTransaction {
   description: string;
 }
 
+/** Saldo declarado pelo provedor — equivalente ao <LEDGERBAL> do OFX. */
+export interface ExternalBankBalance {
+  amountCents: number; // com sinal
+  /** Data de referência do saldo. */
+  date: ISODate;
+}
+
 export interface BankDataProvider {
   readonly provider: string;
   /** Transações da conta desde a data (inclusive), em ordem de data. */
@@ -32,6 +39,12 @@ export interface BankDataProvider {
     since: ISODate;
     until: ISODate;
   }): Promise<ExternalBankTransaction[]>;
+  /**
+   * Saldo atual da conta no provedor (opcional — nem todo agregador expõe).
+   * Quando declarado, a sincronização grava o saldo no lote (StatementImport),
+   * habilitando a auditoria de saldo divergente — mesmo papel do LEDGERBAL.
+   */
+  getBalance?(params: { bankAccountId: string }): Promise<ExternalBankBalance | null>;
 }
 
 // ---------------------------------------------------------------------------
