@@ -347,6 +347,140 @@ export default async function ContasAReceberPage({
       />
       <Flash ok={ok} erro={erro} />
 
+      <Card className="mb-6" title="Novo título">
+        {filterCustomers.length === 0 ? (
+          // Cliente é obrigatório e não há nenhum ativo: em vez de um form
+          // impossível de enviar, aponta para o cadastro de clientes.
+          <p className="text-sm text-[var(--ink-muted)]">
+            Nenhum cliente ativo.{" "}
+            <a href="/cadastros/clientes" className="text-[var(--brand)] underline">
+              Cadastrar cliente
+            </a>{" "}
+            antes de criar títulos a receber.
+          </p>
+        ) : (
+        <>
+        {/* Em falha de validação, os campos voltam preenchidos (nt_* → defaultValue),
+            inclusive o campo errado; no erro de datas, Emissão/Vencimento ganham
+            borda de atenção e o Vencimento recebe autoFocus. Sucesso não propaga. */}
+        <form action={createReceivableAction} className="grid gap-4 md:grid-cols-3">
+          <Field label="Cliente">
+            {/* Autocompletar nativo (mesma abordagem do Fornecedor em /contas-a-pagar):
+                <input list> filtra por digitação (substring, acha o nome no meio).
+                Submete o NOME; a action resolve nome → id (nomes são únicos por empresa). */}
+            <input
+              list="clientes"
+              name="customerName"
+              required
+              defaultValue={sp.nt_cliente ?? ""}
+              className={inputClass}
+              placeholder="Digite as primeiras letras..."
+              autoComplete="off"
+            />
+            <datalist id="clientes">
+              {filterCustomers.map((c) => (
+                <option key={c.id} value={c.name} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Descrição">
+            <input
+              name="description"
+              required
+              defaultValue={sp.nt_descricao ?? ""}
+              className={inputClass}
+              placeholder="Ex.: Venda pedido 987"
+            />
+          </Field>
+          <Field label="Valor total (R$)">
+            <MoneyInput name="amount" required defaultValue={sp.nt_valor ?? ""} className={inputClass} placeholder="1.234,56" />
+          </Field>
+          <Field label="Emissão">
+            <input
+              type="date"
+              name="issueDate"
+              required
+              defaultValue={sp.nt_emissao ?? today}
+              className={ntDateFieldClass}
+            />
+          </Field>
+          <Field label="Vencimento">
+            <input
+              type="date"
+              name="dueDate"
+              required
+              defaultValue={sp.nt_vencimento ?? ""}
+              className={ntDateFieldClass}
+              autoFocus={ntDateError}
+            />
+          </Field>
+          <Field label="Parcelas">
+            <input
+              type="number"
+              name="installmentCount"
+              min={1}
+              max={120}
+              defaultValue={sp.nt_parcelas ?? "1"}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Categoria (opcional)">
+            <select name="categoryId" className={inputClass} defaultValue={sp.nt_categoria ?? ""}>
+              <option value="">Sugerir automaticamente</option>
+              {incomeCategories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {/* Centro de custo OPCIONAL (.optional() na skill) — não pode ser required.
+              value é o id; exibição "CÓDIGO — Nome". Lista só os ativos. */}
+          <Field label="Centro de Custo (opcional)">
+            <select name="costCenterId" className={inputClass} defaultValue={sp.nt_centrocusto ?? ""}>
+              <option value="">— sem centro de custo —</option>
+              {costCenterOptions.map((cc) => (
+                <option key={cc.id} value={cc.id}>
+                  {cc.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Método previsto (opcional)">
+            <select name="method" className={inputClass} defaultValue={sp.nt_metodo ?? ""}>
+              <option value="">Não informado</option>
+              <option value="pix">Pix</option>
+              <option value="boleto">Boleto</option>
+              <option value="card">Cartão</option>
+              <option value="transfer">Transferência</option>
+              <option value="cash">Dinheiro</option>
+            </select>
+          </Field>
+          {/* Observação: a entidade e a skill já aceitavam `notes`; faltava a
+              caixa. Ocupa a linha por ser mais longa que os demais campos. */}
+          <div className="md:col-span-3">
+            <Field label="Observação (opcional)">
+              <textarea
+                name="notes"
+                rows={2}
+                defaultValue={sp.nt_observacao ?? ""}
+                className={inputClass}
+                placeholder="Anotações sobre este título."
+              />
+            </Field>
+          </div>
+          <div className="flex items-end">
+            <Button>Criar título</Button>
+          </div>
+        </form>
+        <p className="mt-3 text-xs text-[var(--ink-muted)]">
+          Criação e baixa são registradas com auditoria automática pela skill de contas a receber
+          (idempotente: reenviar o mesmo formulário não duplica títulos).
+        </p>
+        </>
+        )}
+      </Card>
+
       {/* Barra de ações da listagem. Os links levam os filtros ativos na URL,
           então o arquivo gerado corresponde ao recorte que está na tela. */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -811,139 +945,6 @@ export default async function ContasAReceberPage({
         <Pager page={page} basePath="/contas-a-receber" extraQuery={extraQuery} />
       </Card>
 
-      <Card title="Novo título">
-        {filterCustomers.length === 0 ? (
-          // Cliente é obrigatório e não há nenhum ativo: em vez de um form
-          // impossível de enviar, aponta para o cadastro de clientes.
-          <p className="text-sm text-[var(--ink-muted)]">
-            Nenhum cliente ativo.{" "}
-            <a href="/cadastros/clientes" className="text-[var(--brand)] underline">
-              Cadastrar cliente
-            </a>{" "}
-            antes de criar títulos a receber.
-          </p>
-        ) : (
-        <>
-        {/* Em falha de validação, os campos voltam preenchidos (nt_* → defaultValue),
-            inclusive o campo errado; no erro de datas, Emissão/Vencimento ganham
-            borda de atenção e o Vencimento recebe autoFocus. Sucesso não propaga. */}
-        <form action={createReceivableAction} className="grid gap-4 md:grid-cols-3">
-          <Field label="Cliente">
-            {/* Autocompletar nativo (mesma abordagem do Fornecedor em /contas-a-pagar):
-                <input list> filtra por digitação (substring, acha o nome no meio).
-                Submete o NOME; a action resolve nome → id (nomes são únicos por empresa). */}
-            <input
-              list="clientes"
-              name="customerName"
-              required
-              defaultValue={sp.nt_cliente ?? ""}
-              className={inputClass}
-              placeholder="Digite as primeiras letras..."
-              autoComplete="off"
-            />
-            <datalist id="clientes">
-              {filterCustomers.map((c) => (
-                <option key={c.id} value={c.name} />
-              ))}
-            </datalist>
-          </Field>
-          <Field label="Descrição">
-            <input
-              name="description"
-              required
-              defaultValue={sp.nt_descricao ?? ""}
-              className={inputClass}
-              placeholder="Ex.: Venda pedido 987"
-            />
-          </Field>
-          <Field label="Valor total (R$)">
-            <MoneyInput name="amount" required defaultValue={sp.nt_valor ?? ""} className={inputClass} placeholder="1.234,56" />
-          </Field>
-          <Field label="Emissão">
-            <input
-              type="date"
-              name="issueDate"
-              required
-              defaultValue={sp.nt_emissao ?? today}
-              className={ntDateFieldClass}
-            />
-          </Field>
-          <Field label="Vencimento">
-            <input
-              type="date"
-              name="dueDate"
-              required
-              defaultValue={sp.nt_vencimento ?? ""}
-              className={ntDateFieldClass}
-              autoFocus={ntDateError}
-            />
-          </Field>
-          <Field label="Parcelas">
-            <input
-              type="number"
-              name="installmentCount"
-              min={1}
-              max={120}
-              defaultValue={sp.nt_parcelas ?? "1"}
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Categoria (opcional)">
-            <select name="categoryId" className={inputClass} defaultValue={sp.nt_categoria ?? ""}>
-              <option value="">Sugerir automaticamente</option>
-              {incomeCategories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {/* Centro de custo OPCIONAL (.optional() na skill) — não pode ser required.
-              value é o id; exibição "CÓDIGO — Nome". Lista só os ativos. */}
-          <Field label="Centro de Custo (opcional)">
-            <select name="costCenterId" className={inputClass} defaultValue={sp.nt_centrocusto ?? ""}>
-              <option value="">— sem centro de custo —</option>
-              {costCenterOptions.map((cc) => (
-                <option key={cc.id} value={cc.id}>
-                  {cc.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Método previsto (opcional)">
-            <select name="method" className={inputClass} defaultValue={sp.nt_metodo ?? ""}>
-              <option value="">Não informado</option>
-              <option value="pix">Pix</option>
-              <option value="boleto">Boleto</option>
-              <option value="card">Cartão</option>
-              <option value="transfer">Transferência</option>
-              <option value="cash">Dinheiro</option>
-            </select>
-          </Field>
-          {/* Observação: a entidade e a skill já aceitavam `notes`; faltava a
-              caixa. Ocupa a linha por ser mais longa que os demais campos. */}
-          <div className="md:col-span-3">
-            <Field label="Observação (opcional)">
-              <textarea
-                name="notes"
-                rows={2}
-                defaultValue={sp.nt_observacao ?? ""}
-                className={inputClass}
-                placeholder="Anotações sobre este título."
-              />
-            </Field>
-          </div>
-          <div className="flex items-end">
-            <Button>Criar título</Button>
-          </div>
-        </form>
-        <p className="mt-3 text-xs text-[var(--ink-muted)]">
-          Criação e baixa são registradas com auditoria automática pela skill de contas a receber
-          (idempotente: reenviar o mesmo formulário não duplica títulos).
-        </p>
-        </>
-        )}
-      </Card>
 
       {/* POP-UP de confirmação do estorno. Sobreposição renderizada no servidor
           (sem estado de cliente), aberta por ?estornar=<receiptId> e fechada
