@@ -134,7 +134,10 @@ export function assertPermission(actor: Actor, permission: Permission): void {
  * auditoria registra solicitante e aprovador, então o caso fica visível — mas o
  * bloqueio não existe mais para essas pessoas. Para revogar, remova o e-mail.
  */
-export const SELF_APPROVAL_EXEMPT_EMAILS: readonly string[] = ["salim@cetemrj.com.br"];
+export const SELF_APPROVAL_EXEMPT_EMAILS: readonly string[] = [
+  "salim@cetemrj.com.br",
+  "diego.reis@cetemrj.com.br",
+];
 
 /** Este e-mail pode aprovar a própria solicitação? */
 export function canSelfApprove(email?: string | null): boolean {
