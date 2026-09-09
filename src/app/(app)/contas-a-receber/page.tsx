@@ -245,6 +245,10 @@ export default async function ContasAReceberPage({
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
   const incomeCategories = categories.filter((c) => c.kind === "income" && c.active);
   const activeAccounts = bankAccounts.filter((b) => b.active);
+  // Com uma única conta ativa não há escolha a fazer: já vem marcada. Com várias,
+  // o campo fica vazio de propósito — a skill recusa recebimento não-dinheiro sem
+  // conta, então o erro aparece em vez de gravar um recibo órfão em silêncio.
+  const contaPadraoRecebimento = activeAccounts.length === 1 ? activeAccounts[0].id : "";
   const rows = page.items;
   // Código do centro de custo por id (para a coluna da listagem — todos, não só ativos,
   // pois um título antigo pode apontar para um centro já desativado).
@@ -690,9 +694,18 @@ export default async function ContasAReceberPage({
                           <option value="transfer">Transferência</option>
                           <option value="cash">Dinheiro</option>
                         </select>
+                        {/* "Sem conta" era a primeira opção e vinha marcada: quem
+                            não mexia neste campo gravava um recibo órfão, que
+                            some do saldo conciliado. Com uma única conta ativa
+                            ela já vem escolhida — o caminho de menor esforço
+                            passa a ser o certo. */}
                         <select
                           name="bankAccountId"
-                          defaultValue={rcErro ? (sp.rc_conta ?? "") : ""}
+                          defaultValue={
+                            rcErro
+                              ? (sp.rc_conta ?? contaPadraoRecebimento)
+                              : contaPadraoRecebimento
+                          }
                           className={`${inputClass} !w-28 shrink-0 !px-2 !text-xs`}
                         >
                           <option value="">Sem conta</option>

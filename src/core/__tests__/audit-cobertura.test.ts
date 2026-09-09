@@ -106,6 +106,23 @@ describe("cobertura da trilha — escritas que passavam sem registro", () => {
   it("recibo manual registra receipt.created com método, principal e encargos", async () => {
     const env = createTestEnv();
     const receivable = seedReceivable(env, { dueDate: "2026-08-01" }); // vencido
+    const agora = env.clock.now().toISOString();
+    // Recebimento por Pix exige conta bancária: sem ela o recibo fica órfão.
+    env.db.bankAccounts.push({
+      id: "ba_1",
+      companyId: env.company.id,
+      name: "Itaú",
+      bankCode: "341",
+      agency: "0001",
+      accountNumberMasked: "****0135",
+      type: "checking",
+      currency: "BRL",
+      openingBalanceCents: 0,
+      openingBalanceDate: "2026-08-01",
+      active: true,
+      createdAt: agora,
+      updatedAt: agora,
+    });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
       action: "register_receipt",
@@ -113,6 +130,7 @@ describe("cobertura da trilha — escritas que passavam sem registro", () => {
       amountCents: 100_000,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     expect(res.status).toBe("success");
 

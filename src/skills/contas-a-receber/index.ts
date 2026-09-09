@@ -710,6 +710,19 @@ async function registerReceipt(
     );
   }
 
+  // Pix, boleto, cartão e transferência NECESSARIAMENTE caem numa conta
+  // bancária. Sem ela, o recibo fica órfão: existe no título, mas some do saldo
+  // por conta — que é calculado por conta e não tem como atribuir o valor a
+  // nenhuma. Só "dinheiro" dispensa, porque de fato não passa por banco.
+  if (input.method !== "cash" && !input.bankAccountId) {
+    return errorResult(
+      SKILL_NAME,
+      ctx,
+      "bank_account_required",
+      `Informe a conta bancária que recebeu o valor. Recebimento por ${input.method} sempre entra numa conta, e sem ela o valor não aparece no saldo conciliado. Use o método "dinheiro" para recebimento em espécie.`
+    );
+  }
+
   if (input.bankAccountId) {
     const account = await ctx.repos.bankAccounts.getById(ctx.companyId, input.bankAccountId);
     if (!account) {

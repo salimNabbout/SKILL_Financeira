@@ -28,6 +28,30 @@ const TODAY = "2026-08-18";
 
 let seedSeq = 0;
 
+/**
+ * Conta bancária do recebimento. Recebimento que não é em dinheiro EXIGE conta:
+ * sem ela o recibo fica órfão e some do saldo conciliado.
+ */
+function seedBankAccount(env: TestEnv): string {
+  const now = env.clock.now().toISOString();
+  env.db.bankAccounts.push({
+    id: "ba_1",
+    companyId: env.company.id,
+    name: "Itaú",
+    bankCode: "341",
+    agency: "0001",
+    accountNumberMasked: "****0135",
+    type: "checking",
+    currency: "BRL",
+    openingBalanceCents: 0,
+    openingBalanceDate: "2026-08-01",
+    active: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return "ba_1";
+}
+
 function seedCustomer(env: TestEnv, over: Partial<Customer> = {}): Customer {
   const now = env.clock.now().toISOString();
   const customer: Customer = {
@@ -120,6 +144,7 @@ describe("contas_a_receber / create_receivable", () => {
   it("cria título à vista com dados corretos, publica evento e audita", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
 
     const res = await runSkill(
       contasAReceberSkill,
@@ -152,6 +177,7 @@ describe("contas_a_receber / create_receivable", () => {
   it("rejeita vencimento anterior à emissão (paridade com contas a pagar)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
 
     const res = await runSkill(
       contasAReceberSkill,
@@ -167,6 +193,7 @@ describe("contas_a_receber / create_receivable", () => {
   it("divide parcelas somando exatamente o total e vence mês a mês", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
 
     const res = await runSkill(
       contasAReceberSkill,
@@ -191,6 +218,7 @@ describe("contas_a_receber / create_receivable", () => {
   it("é idempotente: repetir a mesma entrada não duplica títulos nem eventos", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
 
     const first = await runSkill(
       contasAReceberSkill,
@@ -230,6 +258,7 @@ describe("contas_a_receber / create_receivable", () => {
   it("sem categoria informada, aplica sugestão heurística sobre categorias de receita", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedIncomeCategory(env); // "Vendas de Mercadorias" casa com o padrão /venda/.
     // Categoria de despesa homônima NÃO pode ser candidata.
     env.db.categories.push({
@@ -256,6 +285,7 @@ describe("contas_a_receber / create_receivable", () => {
   it("sem categoria e sem correspondência heurística, cria pendência de classificação", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), baseCreateInput());
     const data = res.data as CreateReceivableData;
@@ -268,6 +298,7 @@ describe("contas_a_receber / create_from_invoice", () => {
   it("exige fatura existente e emitida", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
 
     const missing = await runSkill(contasAReceberSkill, env.ctx(), {
       action: "create_from_invoice",
@@ -288,6 +319,7 @@ describe("contas_a_receber / create_from_invoice", () => {
   it("sem parcelas: cria 1 parcela com vencimento hoje+30 e valor total, com suposição explícita", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const invoice = seedInvoice(env, { totalCents: 250_000 });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), {
@@ -313,6 +345,7 @@ describe("contas_a_receber / create_from_invoice", () => {
   it("com parcelas: a soma deve bater com o total da fatura", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const invoice = seedInvoice(env, { totalCents: 100_000 });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), {
@@ -332,6 +365,7 @@ describe("contas_a_receber / create_from_invoice", () => {
   it("com parcelas válidas cria os títulos e é idempotente (rodar 2x não duplica)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const invoice = seedInvoice(env, { totalCents: 100_000 });
     const installments = [
       { dueDate: "2026-09-01", amountCents: 60_000 },
@@ -365,6 +399,7 @@ describe("contas_a_receber / create_from_invoice", () => {
   it("[D3] rejeita refaturar a mesma fatura com plano de parcelas DIFERENTE (evita duplicar títulos)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const invoice = seedInvoice(env, { totalCents: 90_000 });
 
     // Primeiro faturamento: 2 parcelas.
@@ -407,6 +442,7 @@ describe("contas_a_receber / create_from_invoice", () => {
   it("[D3] refaturar com o MESMO plano continua idempotente (reutiliza, não duplica)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const invoice = seedInvoice(env, { totalCents: 90_000 });
     const installments = [
       { dueDate: "2026-09-01", amountCents: 50_000 },
@@ -437,6 +473,7 @@ describe("contas_a_receber / list_overdue", () => {
   it("calcula dias de atraso, saldo e encargos exatos e publica um único evento com a lista", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     // 10 dias de atraso, saldo integral de R$ 1.000,00.
     const r1 = seedReceivable(env, { id: "rcv_a", dueDate: "2026-08-08", amountCents: 100_000 });
     // 30 dias de atraso, parcialmente recebido: saldo de R$ 300,00.
@@ -490,6 +527,7 @@ describe("contas_a_receber / list_overdue", () => {
   it("não duplica alertas abertos ao reexecutar (dedupe por code+entityId)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedReceivable(env, { dueDate: "2026-08-08" });
 
     await runSkill(contasAReceberSkill, env.ctx(), { action: "list_overdue" });
@@ -501,6 +539,7 @@ describe("contas_a_receber / list_overdue", () => {
   it("sem vencidos: lista vazia, nenhum evento e nenhum alerta", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedReceivable(env, { dueDate: TODAY }); // vence hoje: ainda não é atraso
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), { action: "list_overdue" });
@@ -513,10 +552,72 @@ describe("contas_a_receber / list_overdue", () => {
   });
 });
 
+describe("contas_a_receber / register_receipt — conta bancária obrigatória", () => {
+  it("recusa Pix sem conta: o recibo ficaria órfão e sumiria do saldo", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedBankAccount(env);
+    const r = seedReceivable(env, { amountCents: 100_000 });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "register_receipt",
+      receivableId: r.id,
+      amountCents: 100_000,
+      receivedDate: TODAY,
+      method: "pix",
+      // sem bankAccountId de propósito
+    });
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0]?.code).toBe("bank_account_required");
+    // Nada gravado: o título continua em aberto.
+    expect(env.db.receipts).toHaveLength(0);
+    expect(env.db.receivables[0].receivedCents).toBe(0);
+  });
+
+  it("recusa também boleto, cartão e transferência sem conta", async () => {
+    for (const method of ["boleto", "card", "transfer"] as const) {
+      const env = createTestEnv();
+      seedCustomer(env);
+      seedBankAccount(env);
+      const r = seedReceivable(env, { amountCents: 10_000 });
+
+      const res = await runSkill(contasAReceberSkill, env.ctx(), {
+        action: "register_receipt",
+        receivableId: r.id,
+        amountCents: 10_000,
+        receivedDate: TODAY,
+        method,
+      });
+
+      expect(res.status, `método ${method}`).toBe("error");
+    }
+  });
+
+  it("DINHEIRO dispensa a conta: espécie não passa por banco", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedBankAccount(env);
+    const r = seedReceivable(env, { amountCents: 10_000 });
+
+    const res = await runSkill(contasAReceberSkill, env.ctx(), {
+      action: "register_receipt",
+      receivableId: r.id,
+      amountCents: 10_000,
+      receivedDate: TODAY,
+      method: "cash",
+    });
+
+    expect(res.status).toBe("success");
+    expect(env.db.receipts[0].bankAccountId).toBeUndefined();
+  });
+});
+
 describe("contas_a_receber / register_receipt", () => {
   it("baixa parcial e depois total, com valores e status exatos", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { amountCents: 100_000 });
 
     const partial = await runSkill(contasAReceberSkill, env.ctx(), {
@@ -525,6 +626,7 @@ describe("contas_a_receber / register_receipt", () => {
       amountCents: 40_000,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     const partialData = partial.data as RegisterReceiptData;
     expect(partial.status).toBe("success");
@@ -540,6 +642,7 @@ describe("contas_a_receber / register_receipt", () => {
       amountCents: 60_000,
       receivedDate: "2026-08-19",
       method: "transfer",
+      bankAccountId: "ba_1",
     });
     const totalData = total.data as RegisterReceiptData;
     expect(totalData.receivable.status).toBe("received");
@@ -559,6 +662,7 @@ describe("contas_a_receber / register_receipt", () => {
   it("não permite exceder o saldo nem baixar título quitado/cancelado", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { amountCents: 50_000, receivedCents: 20_000, status: "partially_received" });
 
     const exceeds = await runSkill(contasAReceberSkill, env.ctx(), {
@@ -567,6 +671,7 @@ describe("contas_a_receber / register_receipt", () => {
       amountCents: 40_000,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     expect(exceeds.status).toBe("error");
     expect(exceeds.alerts[0].code).toBe("receipt_exceeds_balance");
@@ -579,6 +684,7 @@ describe("contas_a_receber / register_receipt", () => {
       amountCents: 1,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     expect(alreadySettled.status).toBe("error");
     expect(alreadySettled.alerts[0].code).toBe("receivable_already_settled");
@@ -590,6 +696,7 @@ describe("contas_a_receber / register_receipt", () => {
       amountCents: 1,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     expect(onCanceled.status).toBe("error");
     expect(onCanceled.alerts[0].code).toBe("receivable_canceled");
@@ -598,6 +705,7 @@ describe("contas_a_receber / register_receipt", () => {
   it("[D6] aceita recebimento acima do saldo quando o excedente corresponde aos encargos (multa+juros)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     // R$ 100.000, 10 dias de atraso (venceu em 2026-08-08, recebido em 2026-08-18).
     const r = seedReceivable(env, {
       id: "rcv_encargos",
@@ -617,6 +725,7 @@ describe("contas_a_receber / register_receipt", () => {
       amountCents: totalWithCharges,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
 
     expect(res.status).toBe("success");
@@ -641,6 +750,7 @@ describe("contas_a_receber / register_receipt", () => {
   it("[D6] recebimento acima do saldo que NÃO corresponde aos encargos continua sendo rejeitado", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, {
       id: "rcv_excesso",
       amountCents: 10_000_000,
@@ -653,6 +763,7 @@ describe("contas_a_receber / register_receipt", () => {
       amountCents: 10_500_000,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     expect(res.status).toBe("error");
     expect(res.alerts[0].code).toBe("receipt_exceeds_balance");
@@ -663,6 +774,7 @@ describe("contas_a_receber / register_receipt", () => {
   it("valida conta bancária quando informada", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env);
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), {
@@ -682,6 +794,7 @@ describe("contas_a_receber / projection", () => {
   it("agrupa entradas previstas por semana com valores exatos (horizonte padrão 30 dias)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedReceivable(env, { dueDate: "2026-08-20", amountCents: 100_000 }); // semana 1
     seedReceivable(env, {
       dueDate: "2026-08-30",
@@ -721,6 +834,7 @@ describe("contas_a_receber / projection", () => {
   it("aceita horizonte customizado", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedReceivable(env, { dueDate: "2026-08-20", amountCents: 30_000 });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), {
@@ -755,6 +869,7 @@ describe("contas_a_receber / issue_charge", () => {
   it("gera código pix determinístico pelo saldo em aberto, anota no título, audita e publica evento", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const receivable = seedReceivable(env, {
       id: "rcv_chg",
       amountCents: 100_000,
@@ -788,6 +903,7 @@ describe("contas_a_receber / issue_charge", () => {
   it("reemitir é idempotente: mesmo chargeId, anotação única, sem novo evento", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedReceivable(env, { id: "rcv_chg2", amountCents: 50_000 });
     const input = { action: "issue_charge", receivableId: "rcv_chg2", kind: "boleto" };
 
@@ -807,6 +923,7 @@ describe("contas_a_receber / issue_charge", () => {
   it("rejeita título sem saldo em aberto ou inexistente", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedReceivable(env, { id: "rcv_done", amountCents: 30_000, receivedCents: 30_000, status: "received" });
 
     const settled = await runSkill(contasAReceberSkill, env.ctx(), {
@@ -852,6 +969,7 @@ describe("contas_a_receber — generate_recurring", () => {
   it("gera o título a receber do mês corrente com vencimento no dueDay", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedTemplate(env, { dueDay: 10, amountCents: 50_000 });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), { action: "generate_recurring" });
@@ -868,6 +986,7 @@ describe("contas_a_receber — generate_recurring", () => {
   it("é idempotente: gerar duas vezes no mesmo mês não duplica", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedTemplate(env);
 
     await runSkill(contasAReceberSkill, env.ctx(), { action: "generate_recurring" });
@@ -880,6 +999,7 @@ describe("contas_a_receber — generate_recurring", () => {
   it("ignora templates de kind=payable (esses são do contas a pagar)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     seedTemplate(env, { kind: "payable", counterpartyId: "sup_1" });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(), { action: "generate_recurring" });
@@ -893,6 +1013,7 @@ describe("contas_a_receber / cancel_receivable", () => {
   it("cancela título em aberto e registra auditoria com before, after e motivo", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { status: "open", receivedCents: 0 });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
@@ -920,6 +1041,7 @@ describe("contas_a_receber / cancel_receivable", () => {
   it("bloqueia cancelamento com recebimento parcial (receivedCents > 0)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { status: "partially_received", receivedCents: 40_000 });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
@@ -935,6 +1057,7 @@ describe("contas_a_receber / cancel_receivable", () => {
   it("bloqueia título originado de nota fiscal (cancele pela fatura)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { status: "open", receivedCents: 0, invoiceId: "inv_1" });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
@@ -951,6 +1074,7 @@ describe("contas_a_receber / cancel_receivable", () => {
   it("é idempotente ao cancelar duas vezes (sem erro)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { status: "open", receivedCents: 0 });
 
     const first = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
@@ -975,6 +1099,7 @@ describe("contas_a_receber / cancel_receivable", () => {
   it("rejeita motivo vazio (schema)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { status: "open" });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
@@ -989,6 +1114,7 @@ describe("contas_a_receber / cancel_receivable", () => {
   it("recusa cancelamento por ator sem permissão (analista)", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const r = seedReceivable(env, { status: "open" });
 
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("analyst")), {
@@ -1019,6 +1145,7 @@ describe("contas_a_receber — edição de título", () => {
   it("edita título sem recebimento", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const receivable = seedReceivable(env);
 
     const res = await editar(env, receivable.id, { notes: "combinado por e-mail" });
@@ -1035,6 +1162,7 @@ describe("contas_a_receber — edição de título", () => {
   it("recusa título COM recebimento — o caminho é estornar antes", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const receivable = seedReceivable(env, { receivedCents: 40_000, status: "partially_received" });
 
     const res = await editar(env, receivable.id);
@@ -1046,6 +1174,7 @@ describe("contas_a_receber — edição de título", () => {
   it("recusa título recebido ou cancelado e vencimento anterior à emissão", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const quitado = seedReceivable(env, { receivedCents: 100_000, status: "received" });
     expect((await editar(env, quitado.id)).status).toBe("error");
 
@@ -1058,6 +1187,7 @@ describe("contas_a_receber — edição de título", () => {
   it("papel sem receivable.create não edita", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     const receivable = seedReceivable(env);
 
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("viewer")), {
@@ -1080,6 +1210,7 @@ describe("contas_a_receber — estorno de recebimento", () => {
   /** Registra um recebimento e devolve o título e o recibo. */
   async function comRecebimento(env: TestEnv, amountCents = 100_000, over: Partial<Receivable> = {}) {
     seedCustomer(env);
+    seedBankAccount(env);
     const receivable = seedReceivable(env, over);
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
       action: "register_receipt",
@@ -1087,6 +1218,7 @@ describe("contas_a_receber — estorno de recebimento", () => {
       amountCents,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     const data = res.data as RegisterReceiptData;
     return { receivable, receipt: data.receipt };
@@ -1126,6 +1258,7 @@ describe("contas_a_receber — estorno de recebimento", () => {
       amountCents: 60_000,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     const doSegundo = (segundo.data as RegisterReceiptData).receipt;
     expect(env2.db.receivables.find((r) => r.id === receivable.id)?.status).toBe("received");
@@ -1165,6 +1298,7 @@ describe("contas_a_receber — estorno de recebimento", () => {
   it("devolve só o PRINCIPAL quando o recebimento incluiu multa e juros", async () => {
     const env = createTestEnv();
     seedCustomer(env);
+    seedBankAccount(env);
     // Vencido: recebimento acima do saldo é aceito se o excedente = encargos.
     const receivable = seedReceivable(env, { dueDate: "2026-08-01", amountCents: 100_000 });
     const reg = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
@@ -1173,6 +1307,7 @@ describe("contas_a_receber — estorno de recebimento", () => {
       amountCents: 100_000,
       receivedDate: TODAY,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     const receipt = (reg.data as RegisterReceiptData).receipt;
     expect(receipt.principalCents).toBe(100_000);
@@ -1187,6 +1322,7 @@ describe("contas_a_receber — estorno de recebimento", () => {
 describe("contas_a_receber — correção da data de recebimento", () => {
   async function conciliadoEm(env: TestEnv, receivedDate: string, over: Partial<Receivable> = {}) {
     seedCustomer(env);
+    seedBankAccount(env);
     const receivable = seedReceivable(env, over);
     const res = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
       action: "register_receipt",
@@ -1194,6 +1330,7 @@ describe("contas_a_receber — correção da data de recebimento", () => {
       amountCents: 100_000,
       receivedDate,
       method: "pix",
+      bankAccountId: "ba_1",
     });
     return { receivable, receipt: (res.data as RegisterReceiptData).receipt };
   }
