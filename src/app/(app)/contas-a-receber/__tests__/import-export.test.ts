@@ -32,7 +32,7 @@ function categoria(name: string, active = true): Category {
   };
 }
 function centro(over: Partial<CostCenter> & { id: string; code: string }): CostCenter {
-  return { companyId: CO, name: `Centro ${over.code}`, active: true, ...over };
+  return { companyId: CO, name: `Centro ${over.code}`, active: true, scope: "both", ...over };
 }
 function receivable(over: Partial<Receivable> & { id: string }): Receivable {
   return {

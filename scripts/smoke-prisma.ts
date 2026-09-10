@@ -2,7 +2,8 @@
  * Smoke do adaptador Prisma contra um PostgreSQL REAL (usado no CI).
  * Percorre o caminho completo de produção: repositórios Prisma + orquestrador +
  * skills reais — criação de título (4 skills), idempotência, aprovação humana
- * com segregação de funções, execução (mock) e trilha de auditoria íntegra.
+ * com segregação de funções, conciliação que executa o pagamento e trilha de
+ * auditoria íntegra.
  *
  * Pré-requisitos: DATABASE_URL apontando para um banco migrado e semeado
  * (prisma migrate deploy + npm run db:seed). Sai com código 1 em qualquer falha.
@@ -35,6 +36,8 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const CARLA: Actor = { type: "user", id: "usr_carla", role: "finance_analyst" };
 const DIEGO: Actor = { type: "user", id: "usr_diego", role: "approver" };
+// Concilia (executa) o pagamento — exige payment.execute, que o aprovador não tem.
+const BRUNO: Actor = { type: "user", id: "usr_bruno", role: "finance_manager" };
 
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
@@ -130,10 +133,27 @@ async function main(): Promise<void> {
   })) as OrchestratorResponse;
   assert(resumed.status === "completed", `fluxo retomado e concluído (${resumed.status})`);
 
+  // A aprovação NÃO executa mais o pagamento: ele fica "approved" e a execução
+  // acontece na conciliação contra o extrato (fluxo reconcile_payment).
   const payments = await repos.payments.listByPayable(DEMO_COMPANY_ID, payable.id);
-  const executed = payments.filter((p) => p.status === "executed");
-  assert(executed.length === 1, "pagamento executado (mock) persistido");
-  assert(executed[0].executedBy === DIEGO.id, "executor registrado = aprovador");
+  const approved = payments.filter((p) => p.status === "approved");
+  assert(approved.length === 1, "pagamento aprovado (aguardando conciliação) persistido");
+
+  console.log("\n3b) Conciliação executa o pagamento e baixa o título");
+  const reconciled = await orchestrator.execute({
+    flow: "reconcile_payment",
+    companyId: DEMO_COMPANY_ID,
+    actor: BRUNO,
+    payload: { paymentId: approved[0].id, paymentDate: today },
+    idempotencyKey: `${runTag}-reconcile`,
+  });
+  assert(reconciled.status === "completed", `conciliação concluída (${reconciled.status})`);
+
+  const executed = (await repos.payments.listByPayable(DEMO_COMPANY_ID, payable.id)).filter(
+    (p) => p.status === "executed"
+  );
+  assert(executed.length === 1, "pagamento executado persistido");
+  assert(executed[0].executedBy === BRUNO.id, "executor registrado = quem conciliou");
   const paidPayable = await repos.payables.getById(DEMO_COMPANY_ID, payable.id);
   assert(paidPayable?.status === "paid", "título baixado como pago");
 
