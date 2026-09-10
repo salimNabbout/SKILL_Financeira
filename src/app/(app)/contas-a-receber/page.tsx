@@ -31,7 +31,6 @@ import {
   adjustReceiptDateAction,
   cancelReceivableAction,
   createReceivableAction,
-  issueChargeAction,
   registerReceiptAction,
   reverseReceiptAction,
   updateReceivableAction,
@@ -615,9 +614,13 @@ export default async function ContasAReceberPage({
             }
           />
         ) : (
+          // Cabeçalhos com padding compacto SÓ nesta tabela (as células já usam
+          // !px-2): junto com a remoção de Cobrança/método, o objetivo é a
+          // página inteira caber sem rolagem horizontal em telas ≥ ~1500px.
+          <div className="[&_th]:!px-2">
           <Table
-            headers={["Cliente", "Descrição", "Parc.", "Vencimento", "Valor", "Recebido", "C. Custo", "Status", "Receber", "Cobrança", "Ações"]}
-            align={["l", "l", "l", "l", "r", "r", "l", "l", "l", "l", "l"]}
+            headers={["Cliente", "Descrição", "Vencimento", "Valor", "Recebido", "C. Custo", "Status", "Receber", "Ações"]}
+            align={["l", "l", "l", "r", "r", "l", "l", "l", "l"]}
           >
             {rows.map((r) => {
               const overdue = r.dueDate < today && RECEIVABLE_OPEN.includes(r.status);
@@ -644,10 +647,22 @@ export default async function ContasAReceberPage({
                       {customerName.get(r.customerId) ?? r.customerId}
                     </span>
                   </Td>
-                  <Td className="max-w-[240px] truncate whitespace-nowrap !px-2 !py-1 text-xs">
-                    <span title={r.description}>{r.description}</span>
+                  {/* Parcela (n/m) vira sufixo da descrição — só quando há mais de
+                      uma, para não poluir com "1/1" a linha inteira. */}
+                  <Td className="max-w-[200px] truncate whitespace-nowrap !px-2 !py-1 text-xs">
+                    <span
+                      title={
+                        r.installmentCount > 1
+                          ? `${r.description} (${r.installmentNumber}/${r.installmentCount})`
+                          : r.description
+                      }
+                    >
+                      {r.description}
+                      {r.installmentCount > 1 ? (
+                        <span className="text-[var(--ink-muted)]">{` ${r.installmentNumber}/${r.installmentCount}`}</span>
+                      ) : null}
+                    </span>
                   </Td>
-                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">{`${r.installmentNumber}/${r.installmentCount}`}</Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     <span className={overdue ? "font-semibold text-[var(--crit)]" : ""}>
                       {formatBR(r.dueDate)}
@@ -665,14 +680,14 @@ export default async function ContasAReceberPage({
                   </Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     {RECEIVABLE_OPEN.includes(r.status) ? (
-                      <form action={registerReceiptAction} className="flex flex-nowrap items-center gap-1">
+                      <form action={registerReceiptAction} className="flex flex-nowrap items-center gap-0.5">
                         <input type="hidden" name="receivableId" value={r.id} />
                         {/* Em erro, reidrata com rc_*; senão, valor = saldo restante e hoje. */}
                         <MoneyInput
                           name="amount"
                           required
                           defaultValue={rcErro ? (sp.rc_valor ?? "") : (remaining / 100).toFixed(2).replace(".", ",")}
-                          className={`${inputClass} !w-24 shrink-0 !px-2 !text-xs`}
+                          className={`${inputClass} !w-20 shrink-0 !px-1.5 !text-xs`}
                           title="Valor recebido (R$)"
                         />
                         <input
@@ -680,20 +695,13 @@ export default async function ContasAReceberPage({
                           name="receivedDate"
                           required
                           defaultValue={rcErro ? (sp.rc_data ?? today) : today}
-                          className={`${inputClass} !w-32 shrink-0 !px-2 !text-xs`}
+                          className={`${inputClass} !w-28 shrink-0 !px-2 !text-xs`}
                         />
-                        <select
-                          name="method"
-                          required
-                          defaultValue={rcErro ? (sp.rc_metodo ?? "pix") : "pix"}
-                          className={`${inputClass} !w-24 shrink-0 !px-2 !text-xs`}
-                        >
-                          <option value="pix">Pix</option>
-                          <option value="boleto">Boleto</option>
-                          <option value="card">Cartão</option>
-                          <option value="transfer">Transferência</option>
-                          <option value="cash">Dinheiro</option>
-                        </select>
+                        {/* Método fixo: todos os recebimentos entram por depósito
+                            bancário via Pix (decisão de 2026-09-10). Com método
+                            ≠ "cash", a skill exige a conta bancária — o caminho
+                            sem conta deixa de existir nesta tela de propósito. */}
+                        <input type="hidden" name="method" value="pix" />
                         {/* "Sem conta" era a primeira opção e vinha marcada: quem
                             não mexia neste campo gravava um recibo órfão, que
                             some do saldo conciliado. Com uma única conta ativa
@@ -706,7 +714,7 @@ export default async function ContasAReceberPage({
                               ? (sp.rc_conta ?? contaPadraoRecebimento)
                               : contaPadraoRecebimento
                           }
-                          className={`${inputClass} !w-28 shrink-0 !px-2 !text-xs`}
+                          className={`${inputClass} !w-24 shrink-0 !px-1.5 !text-xs`}
                         >
                           <option value="">Sem conta</option>
                           {activeAccounts.map((b) => (
@@ -717,27 +725,6 @@ export default async function ContasAReceberPage({
                         </select>
                         <span className="shrink-0 [&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
                           <Button variant="secondary">Registrar</Button>
-                        </span>
-                      </form>
-                    ) : (
-                      <span className="text-xs text-[var(--ink-muted)]">—</span>
-                    )}
-                  </Td>
-                  <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
-                    {RECEIVABLE_OPEN.includes(r.status) ? (
-                      <form action={issueChargeAction} className="flex flex-nowrap items-center gap-1">
-                        <input type="hidden" name="receivableId" value={r.id} />
-                        <select
-                          name="kind"
-                          required
-                          className={`${inputClass} !w-20 shrink-0 !px-2 !text-xs`}
-                          title="Tipo de cobrança"
-                        >
-                          <option value="pix">Pix</option>
-                          <option value="boleto">Boleto</option>
-                        </select>
-                        <span className="shrink-0 [&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
-                          <Button variant="secondary">Gerar</Button>
                         </span>
                       </form>
                     ) : (
@@ -802,7 +789,7 @@ export default async function ContasAReceberPage({
                 {editandoReceivable && editarId === r.id ? (
                   <tr>
                     {/* <td> cru por causa do colSpan, que o Td não expõe. */}
-                    <td className="px-2 py-2 align-middle" colSpan={11}>
+                    <td className="px-2 py-2 align-middle" colSpan={9}>
                       <EditReceivableForm
                         receivable={{
                           id: r.id,
@@ -836,7 +823,7 @@ export default async function ContasAReceberPage({
                 ) : null}
                 {recebimentosId === r.id ? (
                   <tr>
-                    <td className="px-2 py-2 align-middle" colSpan={11}>
+                    <td className="px-2 py-2 align-middle" colSpan={9}>
                       {/* Recebimentos do título: um lugar só para corrigir a data
                           (que decide Recebido / no Vencimento / em Atraso) e para
                           estornar. Estornados não aparecem — saíram das contas. */}
@@ -915,7 +902,7 @@ export default async function ContasAReceberPage({
                   <tr>
                     {/* Form de cancelamento inline. <td> cru p/ colSpan (o Td compartilhado
                         não o expõe). Motivo obrigatório; em erro reabre com ?f_motivo. */}
-                    <td className="px-2 py-2 align-middle" colSpan={11}>
+                    <td className="px-2 py-2 align-middle" colSpan={9}>
                       <form
                         action={cancelReceivableAction}
                         className="rounded-lg border border-red-200 bg-red-50 p-3"
@@ -924,7 +911,6 @@ export default async function ContasAReceberPage({
                         <p className="mb-2 text-sm text-[var(--crit)]">
                           O título será cancelado e permanecerá no histórico para auditoria.
                           Mensagens de cobrança pendentes vinculadas também serão canceladas.
-                          Cobranças já emitidas (Pix/boleto mock) não são revogadas.
                         </p>
                         <Field label="Motivo do cancelamento">
                           <input
@@ -954,6 +940,7 @@ export default async function ContasAReceberPage({
               );
             })}
           </Table>
+          </div>
         )}
         <Pager page={page} basePath="/contas-a-receber" extraQuery={extraQuery} />
       </Card>
