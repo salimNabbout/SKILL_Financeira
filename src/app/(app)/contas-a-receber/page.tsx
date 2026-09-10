@@ -61,13 +61,16 @@ const SITUACAO_FILTERS: Array<{ value: SituacaoFiltro; label: string }> = [
 const RECEIVABLE_OPEN: ReceivableStatus[] = ["open", "partially_received"];
 
 // Tom do Badge por situação (usa as CSS vars do design system via Badge tone).
+// Na COLUNA STATUS, todo título quitado exibe só "Recebido" — quem distingue é
+// a cor: laranja (antes ou no vencimento) e vermelho (depois do vencimento).
+// Exportação e impressão seguem com os rótulos completos (lá não há cor).
 const SITUACAO_TONE: Record<ReceivableSituation, "neutral" | "ok" | "warn" | "crit"> = {
   Atrasado: "crit",
   Hoje: "warn",
   "A Vencer": "neutral",
-  Recebido: "ok", // recebido ANTES do vencimento — verde
-  "Recebido no Vencimento": "warn", // recebido no dia do vencimento — amarelo
-  "Recebido em Atraso": "crit", // recebido depois do vencimento — vermelho
+  Recebido: "warn", // recebido antes do vencimento — laranja
+  "Recebido no Vencimento": "warn", // recebido no dia do vencimento — laranja
+  "Recebido em Atraso": "crit", // recebido depois do vencimento — letras/borda vermelhas
   Cancelado: "neutral", // apagado
 };
 
@@ -629,7 +632,11 @@ export default async function ContasAReceberPage({
               // recebimento que quitou o título (Map montado acima).
               const situacao = deriveReceivableSituation(r, today, receivedAtByReceivable.get(r.id));
               const situacaoLabel =
-                situacao === "Atrasado" && hasPartialReceipt(r) ? "Atrasado (parcial)" : situacao;
+                situacao === "Atrasado" && hasPartialReceipt(r)
+                  ? "Atrasado (parcial)"
+                  : situacao.startsWith("Recebido")
+                    ? "Recebido" // a cor do badge diz se foi em dia (laranja) ou em atraso (vermelho)
+                    : situacao;
               // Recebimento em erro nesta linha: reidrata com o que foi digitado.
               const rcErro = rcErroId === r.id;
               // Cancelável na UI = status open, sem recebimento, NÃO de nota fiscal,
