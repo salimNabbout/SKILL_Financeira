@@ -21,7 +21,7 @@ function categoria(name: string, active = true): SupplierCategory {
   return { id: `cat_${name}`, companyId: CO, name, active, createdAt: "", updatedAt: "" };
 }
 function centro(over: Partial<CostCenter> & { id: string; code: string }): CostCenter {
-  return { companyId: CO, name: `Centro ${over.code}`, active: true, ...over };
+  return { companyId: CO, name: `Centro ${over.code}`, active: true, scope: "both", ...over };
 }
 function payable(over: Partial<Payable> & { id: string }): Payable {
   return {
