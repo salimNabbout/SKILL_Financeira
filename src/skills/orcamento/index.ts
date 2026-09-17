@@ -567,8 +567,8 @@ async function checkImpact(
   const assumptions: string[] = [REALIZED_LIMITATION];
   const alerts: SkillAlert[] = [];
   const formula =
-    "comprometido = Σ saldo restante (amountCents - paidCents) de payables abertos/agendados/parciais da mesma categoria com vencimento no mês (inclui o próprio título) " +
-    "+ Σ payments executados da categoria no mês; restante = orçado - comprometido; estouro quando restante < 0";
+    "comprometido = Σ saldo restante (amountCents - paidCents) de payables abertos/agendados/parciais com vencimento no mês nas mesmas dimensões da linha orçada casada (categoria e/ou centro de custo; inclui o próprio título) " +
+    "+ Σ payments executados no mês nas mesmas dimensões; restante = orçado - comprometido; estouro quando restante < 0";
 
   if (input.payableIds.length === 0) {
     assumptions.push("Nenhum título informado; nada a verificar.");
@@ -606,17 +606,28 @@ async function checkImpact(
       payable.costCenterId
     );
 
+    // O comprometido é somado nas MESMAS dimensões da linha orçada que foi
+    // casada: linha por categoria soma a categoria; linha por categoria +
+    // centro soma só aquele centro; linha só por centro soma o centro inteiro.
+    // Antes somava sempre só por categoria, o que superestimava (linha por
+    // centro específico) ou subestimava (linha só por centro) o estouro.
+    // Sem linha orçada, mantém a categoria do título (valor só informativo).
+    const sameDims = line
+      ? (categoryId?: ID, costCenterId?: ID) =>
+          (line.categoryId === undefined || categoryId === line.categoryId) &&
+          (line.costCenterId === undefined || costCenterId === line.costCenterId)
+      : (categoryId?: ID) => categoryId === payable.categoryId;
     const committedOpen = allPayables
       .filter(
         (p) =>
           (COMMITTED_STATUSES as readonly string[]).includes(p.status) &&
           monthOf(p.dueDate) === period &&
-          p.categoryId === payable.categoryId
+          sameDims(p.categoryId, p.costCenterId)
       )
       .reduce((acc, p) => acc + payableRemainingCents(p), 0);
     const executed = items
       .filter(
-        (i) => i.kind === "expense" && i.period === period && i.categoryId === payable.categoryId
+        (i) => i.kind === "expense" && i.period === period && sameDims(i.categoryId, i.costCenterId)
       )
       .reduce((acc, i) => acc + i.amountCents, 0);
     const committedCents = committedOpen + executed;
