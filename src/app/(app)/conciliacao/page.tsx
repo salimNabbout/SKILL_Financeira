@@ -16,6 +16,7 @@ import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { filtersToQuery, resolveFilters } from "./_lib/filters";
+import { conciliadosPage } from "./_lib/conciliados-page";
 import { MonthNav, formatMonthBR, isISOMonth } from "@/app/(app)/_lib/month-nav";
 import { runSkillForSession } from "@/app/(app)/_lib/run-skill";
 import type { ReconciliationAuditData } from "@/skills/conciliacao";
@@ -46,6 +47,8 @@ export default async function ConciliacaoPage({
     ok?: string;
     erro?: string;
     pt?: string;
+    /** Página do card "Conciliados" (30 por página). */
+    pc?: string;
     /** Título conciliado com o formulário de vencimento aberto. */
     editar?: string;
     f_pagamento?: string;
@@ -309,17 +312,20 @@ export default async function ConciliacaoPage({
       : undefined;
   const excluirPayable = excluirPayment ? payableById.get(excluirPayment.payableId) : undefined;
 
-  // Pagamentos JÁ conciliados, do mais recente para o mais antigo. A data
-  // exibida é a do pagamento informada na conciliação (executedAt), convertida
-  // para o fuso da empresa — nunca UTC, senão a data pularia um dia.
-  const CONCILIADOS_RECENTES = 30;
+  // Pagamentos JÁ conciliados, do mais recente para o mais antigo, PAGINADOS
+  // (?pc=N, 30 por página): o card mostrava só os 30 mais recentes e não havia
+  // como chegar aos demais. A data exibida é a do pagamento informada na
+  // conciliação (executedAt), convertida para o fuso da empresa — nunca UTC,
+  // senão a data pularia um dia.
   const executados = payments.filter((pay) => pay.status === "executed" && pay.executedAt);
-  // O título do card conta TODOS os executados; a tabela mostra os 30 mais
-  // recentes (antes o contador era o tamanho da lista já cortada: travava em 30).
+  // O título do card conta TODOS os executados; a tabela mostra a página pedida.
   const conciliadosTotal = executados.length;
+  const conciliadosPagina = conciliadosPage(conciliadosTotal, sp.pc);
+  // Os botões e links do card carregam a página para a tela voltar à MESMA.
+  const conciliadosQuery = sp.pc ? `&pc=${encodeURIComponent(sp.pc)}` : "";
   const conciliados = executados
     .sort((a, b) => (b.executedAt ?? "").localeCompare(a.executedAt ?? ""))
-    .slice(0, CONCILIADOS_RECENTES)
+    .slice(conciliadosPagina.offset, conciliadosPagina.offset + conciliadosPagina.limit)
     .map((pay) => ({
       pay,
       payable: payableById.get(pay.payableId),
@@ -739,11 +745,7 @@ export default async function ConciliacaoPage({
           registro dos pagamentos conciliados aqui. */}
       <Card
         className="mb-6"
-        title={
-          conciliadosTotal > CONCILIADOS_RECENTES
-            ? `Conciliados (${conciliadosTotal} · ${CONCILIADOS_RECENTES} mais recentes exibidos)`
-            : `Conciliados (${conciliadosTotal})`
-        }
+        title={`Conciliados (${conciliadosTotal})`}
       >
         {conciliados.length === 0 ? (
           <EmptyState message="Nenhum pagamento conciliado ainda." />
@@ -788,6 +790,7 @@ export default async function ConciliacaoPage({
                           <input type="hidden" name="conta" value={sp.conta ?? ""} />
                           <input type="hidden" name="de" value={sp.de ?? ""} />
                           <input type="hidden" name="ate" value={sp.ate ?? ""} />
+                          <input type="hidden" name="pc" value={sp.pc ?? ""} />
                           <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
                             <Button variant="warn" type="submit">
                               {editarId === pay.id ? "Fechar" : "✎"}
@@ -801,6 +804,7 @@ export default async function ConciliacaoPage({
                           <input type="hidden" name="conta" value={sp.conta ?? ""} />
                           <input type="hidden" name="de" value={sp.de ?? ""} />
                           <input type="hidden" name="ate" value={sp.ate ?? ""} />
+                          <input type="hidden" name="pc" value={sp.pc ?? ""} />
                           <span className="[&>button]:!px-2 [&>button]:!py-1 [&>button]:!text-xs">
                             <Button variant="danger" type="submit">
                               🗑
@@ -846,7 +850,7 @@ export default async function ConciliacaoPage({
                           paymentDateMax: today,
                         }}
                         prefill={{ paymentDate: sp.f_pagamento }}
-                        cancelHref={`/conciliacao?${filtrosQuery.slice(1)}`}
+                        cancelHref={`/conciliacao?${filtrosQuery.slice(1)}${conciliadosQuery}`}
                         hiddenFields={{ paymentId: pay.id }}
                       />
                     </td>
@@ -856,6 +860,13 @@ export default async function ConciliacaoPage({
             ))}
           </Table>
         )}
+        {/* Paginação por links (?pc=N), como a tabela de não conciliadas (?pt=). */}
+        <Pager
+          page={conciliadosPagina}
+          basePath="/conciliacao"
+          param="pc"
+          extraQuery={{ conta: sp.conta, de: sp.de, ate: sp.ate }}
+        />
       </Card>
 
       {/* POP-UP de confirmação da exclusão do conciliado. Mesmo padrão do
@@ -900,7 +911,7 @@ export default async function ConciliacaoPage({
                   Confirmar exclusão
                 </Button>
                 <Link
-                  href={`/conciliacao?${filtrosQuery.slice(1)}`}
+                  href={`/conciliacao?${filtrosQuery.slice(1)}${conciliadosQuery}`}
                   className="rounded-lg border border-[var(--line)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
                 >
                   Voltar
