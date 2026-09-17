@@ -258,6 +258,58 @@ export async function updatePayableAction(formData: FormData): Promise<void> {
   ok("Título atualizado.");
 }
 
+/**
+ * Reclassifica um título JÁ PAGO: Categoria, Classificação do CUSTO e Centro
+ * de Custo. Os demais campos chegam desabilitados do formulário (o navegador
+ * não os submete) e a skill `reclassify_payable` não os aceita. Em falha,
+ * reabre a MESMA linha com o que foi escolhido (f_* → prefill), como a edição
+ * normal.
+ */
+export async function reclassifyPayableAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const payableId = fdString(formData, "payableId");
+  const supplierCategory = fdOptional(formData, "supplierCategory");
+  const costRaw = fdOptional(formData, "costClassification");
+  const costCenterId = fdOptional(formData, "costCenterId");
+
+  function failReclassify(message: string): never {
+    const qs = new URLSearchParams({ editar: payableId, erro: message });
+    if (supplierCategory) qs.set("f_categoria", supplierCategory);
+    if (costRaw) qs.set("f_custo", costRaw);
+    if (costCenterId) qs.set("f_centrocusto", costCenterId);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!payableId) fail("Título não identificado para reclassificação.");
+  if (costRaw !== undefined && costRaw !== "fixed" && costRaw !== "variable") {
+    failReclassify("Classificação de custo inválida (Fixo ou Variável).");
+  }
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "reclassify_payable",
+      companyId: session.company.id,
+      actor: session.actor,
+      // Vazio vira undefined e MANTÉM o atual — a skill só limpa com null.
+      payload: {
+        payableId,
+        supplierCategory,
+        costClassification: costRaw as "fixed" | "variable" | undefined,
+        costCenterId,
+      },
+    });
+  } catch (error) {
+    failReclassify(errorMessage(error));
+  }
+
+  if (response.status === "failed") failReclassify(flowErrorMessage(response));
+
+  ok("Classificação do título atualizada (categoria, classificação do custo e centro de custo).");
+}
+
 export async function cancelPayableAction(formData: FormData): Promise<void> {
   const session = await requireSession();
   const { orchestrator } = await getContainer();

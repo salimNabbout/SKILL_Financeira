@@ -17,10 +17,20 @@ import {
   type ISODate,
 } from "@/core/dates";
 import type { PayableStatus } from "@/core/entities";
-import { derivePayableSituation, hasPartialPayment, type PayableSituation } from "@/lib/payable-situation";
+import {
+  derivePayableSituation,
+  hasPartialPayment,
+  isSettledSituation,
+  type PayableSituation,
+} from "@/lib/payable-situation";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
-import { cancelPayableAction, schedulePaymentAction, updatePayableAction } from "./actions";
+import {
+  cancelPayableAction,
+  reclassifyPayableAction,
+  schedulePaymentAction,
+  updatePayableAction,
+} from "./actions";
 import {
   NewPayableForm,
   type CostCenterOption,
@@ -127,6 +137,9 @@ export default async function ContasAPagarPage({
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
   const canCancel = hasPermission(session.membership.role, "payable.cancel");
+  // Reclassificar título pago (categoria/custo/centro) exige a mesma permissão
+  // da edição normal; sem ela o badge de Status fica como texto.
+  const canReclassify = hasPermission(session.membership.role, "payable.create");
   const today = todayInTz(clock.now(), session.config.timezone);
 
   const filter: SituacaoFiltro = SITUACAO_FILTERS.some((f) => f.value === status)
@@ -605,6 +618,10 @@ export default async function ContasAPagarPage({
               const situacaoLabel =
                 situacao === "Atrasado" && hasPartialPayment(p) ? "Atrasado (parcial)" : situacao;
               const editing = editar === p.id;
+              // Título QUITADO: o badge de Status vira o botão que abre a
+              // reclassificação (só Categoria, Classificação do CUSTO e
+              // Centro de Custo). Os demais continuam com o ✎ da coluna Ações.
+              const reclassificavel = canReclassify && isSettledSituation(situacao);
               return (
                 <Fragment key={p.id}>
                 <tr>
@@ -632,7 +649,32 @@ export default async function ContasAPagarPage({
                   <Td right className="whitespace-nowrap !px-2 !py-1 text-xs">{formatBRL(p.amountCents)}</Td>
                   <Td right className="whitespace-nowrap !px-2 !py-1 text-xs">{formatBRL(p.paidCents)}</Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
-                    <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
+                    {reclassificavel ? (
+                      // Badge-botão: GET que abre/fecha o form inline (?editar=)
+                      // com os MESMOS hidden inputs do ✎ (filtros + página). O
+                      // <button> só envolve o Badge compartilhado — o visual é o
+                      // dele; o preflight do Tailwind zera fundo/borda do botão.
+                      <form method="get" action="/contas-a-pagar" className="inline">
+                        {Object.entries(extraQuery).map(([k, v]) =>
+                          v ? <input key={k} type="hidden" name={k} value={v} /> : null
+                        )}
+                        {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
+                        <input type="hidden" name="editar" value={editing ? "" : p.id} />
+                        <button
+                          type="submit"
+                          title="Alterar categoria, classificação do custo e centro de custo"
+                          aria-label={`${situacaoLabel} — alterar categoria, classificação do custo e centro de custo`}
+                          aria-expanded={editing}
+                          className={`cursor-pointer rounded-full hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ${
+                            editing ? "ring-2 ring-[var(--brand)] ring-offset-1" : ""
+                          }`}
+                        >
+                          <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
+                        </button>
+                      </form>
+                    ) : (
+                      <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
+                    )}
                   </Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     {SCHEDULABLE.includes(p.status) && activeAccounts.length === 0 ? (
@@ -729,7 +771,10 @@ export default async function ContasAPagarPage({
                       {/* Formulário de edição: espelho do "Novo título" (mesmos campos,
                           mesma ordem), com Observação e com os campos de identidade do
                           título só em leitura. Em erro de validação, a action reabre
-                          esta linha com o que foi digitado (?f_*= → prefill). */}
+                          esta linha com o que foi digitado (?f_*= → prefill).
+                          Título já pago: modo "classificationOnly" — só Categoria,
+                          Classificação do CUSTO e Centro de Custo, via
+                          reclassifyPayableAction (update_payable recusa título pago). */}
                       <EditPayableForm
                         payable={{
                           id: p.id,
@@ -748,7 +793,8 @@ export default async function ContasAPagarPage({
                           recurrenceFrequency: editingRecurrenceFrequency,
                           scheduled: p.status === "scheduled",
                         }}
-                        action={updatePayableAction}
+                        mode={reclassificavel ? "classificationOnly" : "full"}
+                        action={reclassificavel ? reclassifyPayableAction : updatePayableAction}
                         categories={categoryOptions}
                         costCenters={editCostCenterOptions}
                         prefill={editPrefill}
