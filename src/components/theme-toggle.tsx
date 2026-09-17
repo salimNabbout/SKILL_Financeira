@@ -1,16 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-type Theme = "light" | "dark";
+import { parseTheme, themeCookie, type Theme } from "@/lib/theme";
 
 /**
- * Botão de tema claro/escuro.
+ * Botão de tema claro/escuro — o ÚNICO lugar do app que muda o tema.
  *
- * A escolha vale para o navegador (localStorage), não para a conta: é
- * preferência de exibição, não dado da empresa — por isso não vai ao banco nem
- * aparece na auditoria. O tema é aplicado antes da primeira pintura pelo script
- * inline do layout raiz; aqui só alternamos o atributo e persistimos.
+ * A escolha vale para o navegador, não para a conta: é preferência de
+ * exibição, não dado da empresa — por isso não vai ao banco nem aparece na
+ * auditoria. Ela é gravada no cookie `theme`, que o layout raiz lê no servidor
+ * para renderizar toda página já com o tema certo (ver src/lib/theme.ts);
+ * nenhuma outra navegação, botão ou ação altera esse cookie. O localStorage
+ * é mantido só como cópia legada.
  */
 export function ThemeToggle() {
   // Começa nulo: o servidor não sabe qual tema o navegador escolheu, e assumir
@@ -23,12 +24,17 @@ export function ThemeToggle() {
   }, []);
 
   function toggle() {
-    const next: Theme = theme === "dark" ? "light" : "dark";
+    // Parte do que está na tela (atributo), não do estado: se o clique vier
+    // antes do efeito ler o tema, ainda assim alterna o tema certo.
+    const atual = parseTheme(document.documentElement.getAttribute("data-theme")) ?? "light";
+    const next: Theme = atual === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
+    // Cookie = fonte da verdade (o servidor renderiza a próxima página com ele).
+    document.cookie = themeCookie(next, window.location.protocol === "https:");
     try {
       window.localStorage.setItem("theme", next);
     } catch {
-      // Navegador com armazenamento bloqueado: o tema vale só nesta aba.
+      // Armazenamento bloqueado: o cookie já garante a escolha nas próximas páginas.
     }
     setTheme(next);
   }
