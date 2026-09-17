@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Badge, Button, Card, EmptyState, Field, PageHeader, Table, Td, inputClass } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, PageHeader, StatCard, Table, Td, inputClass } from "@/components/ui";
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { hasPermission } from "@/core/auth";
@@ -28,6 +28,7 @@ import {
 } from "./_lib/new-payable-form";
 import { EditPayableForm } from "./_lib/edit-payable-form";
 import { filtersToQuery } from "./_lib/filters";
+import { resolveDuePeriod, sumPaidInDuePeriod } from "./_lib/period-totals";
 import { IconeExportar, IconeImportar, IconeImprimir } from "./_lib/icons";
 
 // Situações DERIVADAS usadas como filtro. Cada uma vira um recorte de
@@ -296,6 +297,16 @@ export default async function ContasAPagarPage({
   const isCancelable = (pv: (typeof rows)[number]): boolean =>
     canCancel && CANCELABLE.includes(pv.status);
 
+  // Totalizadores do bloco Filtros: período de VENCIMENTO das caixas De/Até
+  // (limpas = mês completo do Ano/Mês escolhido ou o corrente). Somam o valor
+  // pago de TODOS os títulos do período (não só a página), sem cancelados.
+  const periodoTotais = resolveDuePeriod(
+    { de: deIso, ate: ateIso, ano: anoNum, mes: mesNum },
+    today
+  );
+  const totaisPeriodo = sumPaidInDuePeriod(allPayables, periodoTotais);
+  const rotuloPeriodo = `${formatBR(periodoTotais.from)} a ${formatBR(periodoTotais.to)}`;
+
   // Link para abrir/fechar o formulário inline de edição, preservando os
   // filtros e a página atuais (searchParam ?editar=<id>).
   const editHref = (id: string | null): string => {
@@ -548,6 +559,28 @@ export default async function ContasAPagarPage({
           Todos os filtros incidem sobre o <strong>vencimento</strong>. Se preencher “De/Até”, o
           Ano e o Mês são ignorados.
         </p>
+        <div className="mt-4 grid gap-3 md:grid-cols-3" data-testid="totais-periodo">
+          <StatCard
+            label="Total Pago no Período"
+            value={formatBRL(totaisPeriodo.paidCents)}
+            tone="crit"
+            hint={`Vencimento ${rotuloPeriodo} · ${totaisPeriodo.titulos} título(s) · valor pago, sem cancelados`}
+          />
+          <StatCard
+            label="Total de Custo FIXO"
+            value={formatBRL(totaisPeriodo.fixedCents)}
+            hint={`Pago no período com classificação Custo Fixo`}
+          />
+          <StatCard
+            label="Total de Custo VARIÁVEL"
+            value={formatBRL(totaisPeriodo.variableCents)}
+            hint={
+              totaisPeriodo.unclassifiedCents > 0
+                ? `Pago no período com classificação Custo Variável · não classificado: ${formatBRL(totaisPeriodo.unclassifiedCents)}`
+                : "Pago no período com classificação Custo Variável"
+            }
+          />
+        </div>
       </Card>
 
       <Card className="mb-6">
