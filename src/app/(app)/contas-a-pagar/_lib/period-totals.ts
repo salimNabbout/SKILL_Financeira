@@ -2,10 +2,12 @@
  * Totalizadores do bloco Filtros de Contas a pagar: "Total Pago no Período",
  * "Total de Custo FIXO" e "Total de Custo VARIÁVEL". Funções puras.
  *
- * Período = VENCIMENTO, vindo das caixas "De (vencimento)" / "Até (vencimento)".
- * Com as caixas limpas, vale o mês completo (calendário oficial: 28/29/30/31
- * dias) — o mês escolhido em Ano/Mês, ou o mês corrente. Só "De": até o fim
- * do mês da data; só "Até": desde o início do mês da data; só "Ano": o ano.
+ * Período = VENCIMENTO. A referência é sempre um MÊS completo (calendário
+ * oficial: 28/29/30/31 dias): o selecionado na caixa "Mês" (no ano da caixa
+ * "Ano", ou no ano corrente) ou, sem seleção, o mês corrente. Só quando as
+ * caixas "De (vencimento)" e "Até (vencimento)" estão preenchidas o período
+ * passa a ser exatamente o delas. Só "De": até o fim do mês da data; só
+ * "Até": desde o início do mês da data.
  *
  * Fórmulas:
  * - Total Pago no Período   = Σ paidCents dos títulos com dueDate em [de, até] e status ≠ canceled
@@ -18,7 +20,7 @@
 import { endOfMonth, monthOf, startOfMonth, type ISODate } from "@/core/dates";
 import type { Payable } from "@/core/entities";
 
-export type DuePeriodOrigin = "de-ate" | "de" | "ate" | "mes" | "ano" | "mes-corrente";
+export type DuePeriodOrigin = "de-ate" | "de" | "ate" | "mes" | "mes-corrente";
 
 export interface DuePeriod {
   /** Inclusivo. */
@@ -40,13 +42,12 @@ export function resolveDuePeriod(input: DuePeriodInput, today: ISODate): DuePeri
   if (de && ate) return { from: de, to: ate, origin: "de-ate" };
   if (de) return { from: de, to: endOfMonth(monthOf(de)), origin: "de" };
   if (ate) return { from: startOfMonth(monthOf(ate)), to: ate, origin: "ate" };
-  if (ano && mes) {
-    const key = `${ano}-${String(mes).padStart(2, "0")}`;
-    return { from: startOfMonth(key), to: endOfMonth(key), origin: "mes" };
-  }
-  if (ano) return { from: `${ano}-01-01`, to: `${ano}-12-31`, origin: "ano" };
-  const key = monthOf(today);
-  return { from: startOfMonth(key), to: endOfMonth(key), origin: "mes-corrente" };
+  // Mês de referência: o selecionado (no ano selecionado ou no corrente);
+  // sem Mês, o mês corrente — sempre do primeiro ao último dia.
+  const anoRef = ano ?? Number(today.slice(0, 4));
+  const mesRef = mes ?? Number(today.slice(5, 7));
+  const key = `${anoRef}-${String(mesRef).padStart(2, "0")}`;
+  return { from: startOfMonth(key), to: endOfMonth(key), origin: mes ? "mes" : "mes-corrente" };
 }
 
 export interface PeriodTotals {

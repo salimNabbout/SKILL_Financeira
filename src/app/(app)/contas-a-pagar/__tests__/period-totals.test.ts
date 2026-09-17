@@ -37,9 +37,11 @@ describe("Filtros de Contas a pagar — período dos totalizadores", () => {
     expect(resolveDuePeriod({ ate: "2026-02-10" }, "2026-01-01")).toEqual({ from: "2026-02-01", to: "2026-02-10", origin: "ate" });
   });
 
-  it("Ano + Mês: o mês escolhido completo; só Ano: o ano inteiro", () => {
+  it("a referência é sempre o MÊS: Ano + Mês = o mês escolhido completo; só Mês = esse mês no ano corrente; só Ano = mês corrente nesse ano", () => {
     expect(resolveDuePeriod({ ano: 2026, mes: 6 }, "2026-09-17")).toEqual({ from: "2026-06-01", to: "2026-06-30", origin: "mes" });
-    expect(resolveDuePeriod({ ano: 2025 }, "2026-09-17")).toEqual({ from: "2025-01-01", to: "2025-12-31", origin: "ano" });
+    expect(resolveDuePeriod({ mes: 8 }, "2026-09-17")).toEqual({ from: "2026-08-01", to: "2026-08-31", origin: "mes" });
+    expect(resolveDuePeriod({ mes: 2 }, "2028-09-17")).toEqual({ from: "2028-02-01", to: "2028-02-29", origin: "mes" });
+    expect(resolveDuePeriod({ ano: 2025 }, "2026-09-17")).toEqual({ from: "2025-09-01", to: "2025-09-30", origin: "mes-corrente" });
   });
 
   it("De/Até têm precedência sobre Ano/Mês", () => {
