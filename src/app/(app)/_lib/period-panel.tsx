@@ -95,11 +95,15 @@ export function PeriodPanel({
   function update(patch: Partial<PanelQueryState>) {
     setQuery((prev) => {
       const next = { ...prev, ...patch };
-      // Ajuste automático ao trocar para mês mais curto; dia inicial ≤ dia final.
+      // Ajuste automático ao trocar de mês: dia final que estava no último dia
+      // do mês anterior acompanha o último dia do novo mês (intenção "mês
+      // inteiro"); dias além do tamanho do mês são reduzidos; dia inicial ≤ final.
       if (next.mes !== "todos") {
         const max = daysInMonthOf(next.ano, next.mes);
+        const mudouMes = (patch.mes !== undefined || patch.ano !== undefined) && prev.mes !== "todos";
+        const estavaNoFim = mudouMes && prev.ate === daysInMonthOf(prev.ano, prev.mes as number);
         next.de = Math.min(Math.max(next.de, 1), max);
-        next.ate = Math.min(Math.max(next.ate, 1), max);
+        next.ate = estavaNoFim ? max : Math.min(Math.max(next.ate, 1), max);
         if (patch.de !== undefined && next.de > next.ate) next.ate = next.de;
         if (patch.ate !== undefined && next.ate < next.de) next.de = next.ate;
       }

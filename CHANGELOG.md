@@ -4,6 +4,52 @@ Registro das mudanças relevantes. Datas em ISO (AAAA-MM-DD).
 
 ---
 
+## 2026-09-17 — Auditoria de fórmulas + Painel por Período no Dashboard
+
+**Painel por Período** no topo do Dashboard, em regime de **caixa** (vale a
+data do pagamento/recebimento efetivo, nunca o vencimento): Total Recebido,
+Total Pago, Custo Fixo pago, Custo Variável pago (+ linha "Não classificado"),
+Total Gasto no Centro de Custo e Total Gasto por Categoria (select em cascata,
+ranking com % do centro), gráfico de 4 barras com rótulo em R$ e estado vazio
+explícito. Filtros ano/mês ("Todos" = ano inteiro)/dia inicial/dia final na
+query string (recarregar mantém), atualização sem recarregar a página via
+`GET /api/v1/dashboard/period-panel` (endpoint único, Zod, mesma autenticação
+do dashboard). A agregação é feita **no banco** (`GROUP BY`, `executedAt`
+convertido UTC → fuso da empresa); a skill `relatorios_gerenciais` ganhou a
+ação `period_panel`, que devolve fórmulas, suposições (regime de caixa,
+cancelados fora, não classificados, transferências entre contas incluídas) e
+fontes. Títulos baixados pela conciliação sem `Payment` ficam fora, com aviso
+e contagem. Identidades testadas: Fixo + Variável + Não classificado = Total
+Pago; Σ centros + Sem centro = Total Pago; Σ categorias = total do centro.
+
+**Card "Saldo disponível"** mantém a fórmula (abertura + extrato importado) e
+ganha "Ver detalhes (fonte)": tabelas de origem, contas ativas (banco, número
+mascarado, saldo, lançamentos, último lote de extrato), provedor bancário
+ativo e última sincronização — tudo derivado dos dados; a soma das contas é
+conferida contra o total.
+
+**Auditoria de fórmulas** (`docs/relatorio-formulas.md`): 190 linhas em 12
+módulos, com origem dos dados, filtros, testes e conferência tela × SQL numa
+cópia dos dados reais. Correções (cada uma em commit próprio, com teste):
+
+- `computeLateFee`: juros pró-rata em aritmética inteira (meio centavo
+  arredondava para baixo em ponto flutuante).
+- Saldo conciliado: débito casado com título a pagar volta a contar como saída
+  (a baixa por conciliação não cria `Payment`; o dinheiro sumia do saldo).
+- Orçamento: mês do realizado de despesas no fuso da empresa (era UTC) e
+  comprometido do `check_impact` somado nas dimensões da linha orçada
+  (categoria e/ou centro de custo).
+- Impressão/PDF de Contas a pagar/receber: TOTAL deixa títulos cancelados fora
+  da soma e informa quantos ficaram de fora.
+- DRE: linhas subtrativas zeradas exibiam "-R$ 0,00".
+- Conciliação: contador "Conciliados (N)" travava em 30.
+
+Cálculos que viviam nas páginas (Dashboard, Agenda, DRE) foram extraídos para
+módulos puros testáveis, sem mudar comportamento. Decisões de regra de negócio
+pendentes (17) estão na seção 14 do relatório.
+
+---
+
 ## 2026-09-05 — Provedor bancário real via Pluggy (Open Finance)
 
 A seção "1b — Sincronizar com o banco" deixa de ser só mock: com

@@ -247,6 +247,9 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
     installmentNumber?: number;
     installmentCount?: number;
     paid?: boolean;
+    /** Categoria de fornecedor e classificação do custo (Painel por Período). */
+    supplierCategory?: string;
+    costClassification?: "fixed" | "variable";
   }
 
   const lastMonth = addMonths(today, -1);
@@ -270,8 +273,8 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
     { id: "pv_f_2", supplierId: "sup_torrefacao", description: "Lote de café verde — parcela 2/2", dueDate: addDays(today, 35), amountCents: 980_000, categoryId: "cat_insumos", costCenterId: "cc_loja", originKey: "sup_torrefacao:NF-1290:2/2", installmentNumber: 2, installmentCount: 2 },
     { id: "pv_f_3", supplierId: "sup_software", description: "Renovação anual da licença de BI", dueDate: addDays(today, 45), amountCents: 432_000, categoryId: "cat_software", costCenterId: "cc_adm", originKey: "sup_software:FAT-3400:1/1" },
     // Pagos no mês passado (alimentam DRE/contabilidade)
-    { id: "pv_paid_1", supplierId: "sup_torrefacao", description: "Lote de café verde — mês anterior", dueDate: paidDate1, amountCents: 780_000, categoryId: "cat_insumos", costCenterId: "cc_loja", originKey: "sup_torrefacao:NF-1105:1/1", paid: true },
-    { id: "pv_paid_2", supplierId: "sup_energia", description: "Conta de energia elétrica — mês anterior", dueDate: paidDate2, amountCents: 139_520, categoryId: "cat_energia", costCenterId: "cc_loja", originKey: "sup_energia:FAT-76410:1/1", paid: true },
+    { id: "pv_paid_1", supplierId: "sup_torrefacao", description: "Lote de café verde — mês anterior", dueDate: paidDate1, amountCents: 780_000, categoryId: "cat_insumos", costCenterId: "cc_loja", originKey: "sup_torrefacao:NF-1105:1/1", paid: true, supplierCategory: "Insumos", costClassification: "variable" },
+    { id: "pv_paid_2", supplierId: "sup_energia", description: "Conta de energia elétrica — mês anterior", dueDate: paidDate2, amountCents: 139_520, categoryId: "cat_energia", costCenterId: "cc_loja", originKey: "sup_energia:FAT-76410:1/1", paid: true, supplierCategory: "Energia", costClassification: "fixed" },
   ];
 
   for (const p of payableSeeds) {
@@ -288,6 +291,8 @@ export async function seedDemoData(repos: Repositories, clock: Clock): Promise<v
       status: p.paid ? "paid" : "open",
       categoryId: p.categoryId,
       costCenterId: p.costCenterId,
+      supplierCategory: p.supplierCategory,
+      costClassification: p.costClassification,
       installmentNumber: p.installmentNumber ?? 1,
       installmentCount: p.installmentCount ?? 1,
       originKey: p.originKey,
