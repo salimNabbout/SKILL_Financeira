@@ -407,6 +407,30 @@ describe("orcamento_planejamento — variance_report", () => {
     expect(naoOrcado[0].description).toMatch(/R\$\s?200,00/);
   });
 
+  it("pagamento executado às 22h30 de 31/07 (São Paulo) é realizado de JULHO, não de agosto", async () => {
+    // Auditoria de fórmulas (ORC-02): o mês do realizado usava executedAt em
+    // UTC; 2026-08-01T01:30Z é 31/07 22:30 em America/Sao_Paulo.
+    const env = createTestEnv();
+    const cat = seedCategory(env, { id: "cat_tz", name: "Fuso" });
+    await run(env, {
+      action: "upsert_budget",
+      name: "Orçamento 2026",
+      year: 2026,
+      lines: [
+        { period: "2026-07", categoryId: cat.id, amountCents: 100_000 },
+        { period: "2026-08", categoryId: cat.id, amountCents: 100_000 },
+      ],
+    });
+    const payable = seedPayable(env, { categoryId: cat.id, dueDate: "2026-07-31", amountCents: 60_000 });
+    seedExecutedPayment(env, payable.id, 60_000, "2026-08-01T01:30:00.000Z");
+
+    const jul = (await run(env, { action: "variance_report", period: "2026-07" })).data as VarianceReportData;
+    const ago = (await run(env, { action: "variance_report", period: "2026-08" })).data as VarianceReportData;
+    expect(jul.lines.find((l) => l.categoryId === cat.id)?.actualCents).toBe(60_000);
+    expect(ago.lines.find((l) => l.categoryId === cat.id)?.actualCents).toBe(0);
+    expect(jul.formula).toContain("no fuso da empresa");
+  });
+
   it("não duplica o alerta persistido em reexecução (dedupe por code+entityId)", async () => {
     const env = createTestEnv();
     await seedVarianceScenario(env);

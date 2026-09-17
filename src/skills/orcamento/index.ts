@@ -6,7 +6,7 @@
  *
  * Definição de REALIZADO (limitação declarada em assumptions):
  * - despesas = Payments com status "executed" no período (mês extraído de
- *   executedAt, tratado em UTC; categoria/centro herdados do payable);
+ *   executedAt no fuso da empresa; categoria/centro herdados do payable);
  * - receitas = Receipts com receivedDate no período (categoria/centro
  *   herdados do receivable).
  * Baixas de payable via conciliação sem Payment (paidCents) NÃO entram.
@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { persistAlert } from "@/core/alerts";
 import { assertPermission } from "@/core/auth";
-import { addMonths, monthOf, startOfMonth, type ISOMonth } from "@/core/dates";
+import { addMonths, monthOf, startOfMonth, todayInTz, type ISOMonth } from "@/core/dates";
 import type { Budget, BudgetLine, ID } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
 import { formatBRL, payableRemainingCents, receiptIsActive } from "@/core/money";
@@ -153,7 +153,7 @@ export type OrcamentoData = UpsertBudgetData | VarianceReportData | CheckImpactD
 // ---------------------------------------------------------------------------
 
 const REALIZED_FORMULA =
-  "realizado(despesa) = Σ payments executados no mês (mês de executedAt em UTC, categoria/centro do payable); " +
+  "realizado(despesa) = Σ payments executados no mês (mês de executedAt no fuso da empresa, categoria/centro do payable); " +
   "realizado(receita) = Σ receipts com receivedDate no mês (categoria/centro do receivable)";
 
 const REALIZED_LIMITATION =
@@ -184,7 +184,10 @@ async function loadRealizedItems(ctx: SkillContext): Promise<RealizedItem[]> {
     if (payment.status !== "executed" || !payment.executedAt) continue;
     const payable = payableById.get(payment.payableId);
     items.push({
-      period: payment.executedAt.slice(0, 7),
+      // Mês no fuso da empresa, como fazem bank-balance, conciliação e
+      // contábil: em UTC, um pagamento das 21h às 24h do último dia do mês
+      // caía no mês seguinte só aqui.
+      period: monthOf(todayInTz(new Date(payment.executedAt), ctx.config.timezone)),
       categoryId: payable?.categoryId,
       costCenterId: payable?.costCenterId,
       amountCents: payment.amountCents,
