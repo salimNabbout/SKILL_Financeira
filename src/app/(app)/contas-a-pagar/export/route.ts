@@ -9,6 +9,7 @@ import { describeFilters, parsePayableFilters } from "../_lib/filters";
 import {
   PAYABLE_EXPORT_COLUMNS,
   payablesToExportRows,
+  totalsLabel,
   totalsOf,
 } from "../_lib/export-rows";
 import { loadFilteredPayables } from "../_lib/load-filtered";
@@ -67,14 +68,14 @@ export async function GET(req: Request): Promise<Response> {
     filtersLabel: describeFilters(filtros, dados.supplierNameFiltrado),
     sections: [
       {
-        heading: `${totais.quantidade} título(s)`,
+        heading: `${rows.length} título(s)`,
         table: {
           headers: [...PAYABLE_EXPORT_COLUMNS],
           rows: rows.map((r) => PAYABLE_EXPORT_COLUMNS.map((c) => r[c])),
           // Colore a coluna Status conforme a situação do título.
           statusColumnIndex: PAYABLE_EXPORT_COLUMNS.indexOf("Status"),
           totalsRow: [
-            `TOTAL — ${totais.quantidade} título(s)`,
+            totalsLabel(totais),
             "",
             "",
             "",

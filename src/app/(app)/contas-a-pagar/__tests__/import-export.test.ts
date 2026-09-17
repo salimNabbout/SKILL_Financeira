@@ -3,7 +3,7 @@ import type { CostCenter, Payable, Supplier, SupplierCategory } from "@/core/ent
 import { parsePayableFilters, describeFilters, filtersToQuery } from "../_lib/filters";
 
 const HOJE = "2026-08-20";
-import { PAYABLE_EXPORT_COLUMNS, payablesToExportRows, totalsOf } from "../_lib/export-rows";
+import { PAYABLE_EXPORT_COLUMNS, payablesToExportRows, totalsLabel, totalsOf } from "../_lib/export-rows";
 import {
   buildErrorLogCsv,
   buildImportTemplate,
@@ -142,7 +142,24 @@ describe("linhas de exportação", () => {
       payable({ id: "a", amountCents: 1000, paidCents: 500 }),
       payable({ id: "b", amountCents: 2500, paidCents: 0 }),
     ]);
-    expect(t).toEqual({ quantidade: 2, valorCents: 3500, pagoCents: 500 });
+    expect(t).toEqual({ quantidade: 2, valorCents: 3500, pagoCents: 500, cancelados: 0 });
+    expect(totalsLabel(t)).toBe("TOTAL — 2 título(s)");
+  });
+
+  it("título cancelado fica fora de Σ Valor e Σ Pago e é contado à parte no rótulo", () => {
+    // Auditoria de fórmulas (CAP-09): com situação "Todos" o rodapé da
+    // impressão e a linha TOTAL do PDF somavam títulos cancelados.
+    const t = totalsOf([
+      payable({ id: "a", amountCents: 1000, paidCents: 500 }),
+      payable({ id: "c", amountCents: 9_999, paidCents: 0, status: "canceled", canceledAt: "2026-07-01T12:00:00.000Z" }),
+      payable({ id: "b", amountCents: 2500, paidCents: 0 }),
+    ]);
+    expect(t).toEqual({ quantidade: 2, valorCents: 3500, pagoCents: 500, cancelados: 1 });
+    expect(totalsLabel(t)).toBe("TOTAL — 2 título(s) (1 cancelado(s) fora da soma)");
+  });
+
+  it("base vazia: totais zerados", () => {
+    expect(totalsOf([])).toEqual({ quantidade: 0, valorCents: 0, pagoCents: 0, cancelados: 0 });
   });
 });
 

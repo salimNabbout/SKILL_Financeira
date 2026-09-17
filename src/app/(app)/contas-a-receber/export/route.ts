@@ -6,7 +6,12 @@ import { toCsv } from "@/lib/exporters/csv";
 import { buildPdfReport } from "@/lib/exporters/pdf";
 import { formatBRL } from "@/lib/format";
 import { describeFilters, parseReceivableFilters } from "../_lib/filters";
-import { RECEIVABLE_EXPORT_COLUMNS, receivablesToExportRows, totalsOf } from "../_lib/export-rows";
+import {
+  RECEIVABLE_EXPORT_COLUMNS,
+  receivablesToExportRows,
+  totalsLabel,
+  totalsOf,
+} from "../_lib/export-rows";
 import { loadFilteredReceivables } from "../_lib/load-filtered";
 
 export const runtime = "nodejs";
@@ -55,7 +60,7 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const totalsRow = RECEIVABLE_EXPORT_COLUMNS.map((coluna) => {
-    if (coluna === "Cliente") return `TOTAL — ${totais.quantidade} título(s)`;
+    if (coluna === "Cliente") return totalsLabel(totais);
     if (coluna === "Valor (R$)") return formatBRL(totais.valorCents).replace("R$", "").trim();
     if (coluna === "Valor Recebido (R$)") {
       return formatBRL(totais.recebidoCents).replace("R$", "").trim();
@@ -70,7 +75,7 @@ export async function GET(req: Request): Promise<Response> {
     filtersLabel: describeFilters(filtros, dados.customerNameFiltrado),
     sections: [
       {
-        heading: `${totais.quantidade} título(s)`,
+        heading: `${rows.length} título(s)`,
         table: {
           headers: [...RECEIVABLE_EXPORT_COLUMNS],
           rows: rows.map((r) => RECEIVABLE_EXPORT_COLUMNS.map((c) => r[c])),
