@@ -3,6 +3,7 @@ import type { Payable } from "@/core/entities";
 import {
   derivePayableSituation,
   hasPartialPayment,
+  isSettledSituation,
 } from "@/lib/payable-situation";
 
 const TODAY = "2026-08-25";
@@ -83,5 +84,26 @@ describe("hasPartialPayment", () => {
     expect(hasPartialPayment({ status: "open", paidCents: 0 })).toBe(false);
     expect(hasPartialPayment({ status: "paid", paidCents: 10_000 })).toBe(false);
     expect(hasPartialPayment({ status: "canceled", paidCents: 3_000 })).toBe(false);
+  });
+});
+
+describe("isSettledSituation", () => {
+  it("true só para as três quitações (Pago, Pago no Vencimento, Pago Atrasado)", () => {
+    expect(isSettledSituation("Pago")).toBe(true);
+    expect(isSettledSituation("Pago no Vencimento")).toBe(true);
+    expect(isSettledSituation("Pago Atrasado")).toBe(true);
+    expect(isSettledSituation("A Vencer")).toBe(false);
+    expect(isSettledSituation("Hoje")).toBe(false);
+    expect(isSettledSituation("Atrasado")).toBe(false);
+    expect(isSettledSituation("Cancelado")).toBe(false);
+  });
+
+  it("coincide com derivePayableSituation: todo título pago é quitado, qualquer que seja a data", () => {
+    const pago = payable({ status: "paid", paidCents: 10_000 });
+    for (const paidAt of ["2026-08-20", TODAY, "2026-08-30"]) {
+      expect(isSettledSituation(derivePayableSituation(pago, TODAY, paidAt))).toBe(true);
+    }
+    expect(isSettledSituation(derivePayableSituation(payable({}), TODAY))).toBe(false);
+    expect(isSettledSituation(derivePayableSituation(payable({ status: "canceled" }), TODAY))).toBe(false);
   });
 });

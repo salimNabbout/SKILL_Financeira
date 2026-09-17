@@ -530,6 +530,40 @@ const updatePayable: FlowDefinition = {
 };
 
 /**
+ * Reclassificação de título JÁ PAGO (categoria de fornecedor, custo fixo/
+ * variável, centro de custo). Passo único — a skill exige status "paid" (os
+ * demais usam update_payable), valida o centro e registra payable.reclassified.
+ * Não há passo contábil: o lançamento do pagamento não carrega essas dimensões.
+ * payload: { payableId, supplierCategory?, costClassification?, costCenterId? }
+ */
+const reclassifyPayableFlow: FlowDefinition = {
+  name: "reclassify_payable",
+  description:
+    "Altera categoria, classificação do custo e centro de custo de um título já pago, sem tocar em valor, datas, baixa ou status, e registra a alteração na auditoria.",
+  requiredPermission: "payable.create",
+  // A chave padrão é hash(fluxo + payload): reclassificar A→B, voltar B→A e
+  // pedir A→B de novo repetiria a 1ª chave e cairia no replay (nada aplicado,
+  // com mensagem de sucesso). O updatedAt do título muda a cada gravação e
+  // faz cada pedido sobre um estado novo ser uma tentativa nova. Repetir o
+  // MESMO pedido depois de gravado não duplica nada: a skill devolve no-op
+  // (classificação igual à atual) sem tocar na auditoria.
+  async idempotencyScope(repos, { companyId, payload }) {
+    const payableId = (payload as { payableId?: string } | null)?.payableId;
+    if (!payableId) return null;
+    const payable = await repos.payables.getById(companyId, payableId);
+    return payable ? payable.updatedAt : null;
+  },
+  steps: [
+    {
+      id: "ap_reclassify",
+      skill: "contas_a_pagar",
+      description: "Reclassificar título pago (categoria, custo, centro de custo)",
+      buildInput: (f) => ({ action: "reclassify_payable", ...f.payload }),
+    },
+  ],
+};
+
+/**
  * Cancelamento (lógico) de título a pagar. Fluxo de um único passo — a skill
  * exige permissão payable.cancel, valida o status (open/scheduled), bloqueia
  * títulos com pagamento executado, cancela pagamentos pendentes vinculados e
@@ -833,6 +867,7 @@ export const BUILTIN_FLOWS: FlowDefinition[] = [
   supplierInvoiceIntake,
   schedulePayment,
   updatePayable,
+  reclassifyPayableFlow,
   cancelPayableFlow,
   cancelReceivableFlow,
   updateReceivableFlow,

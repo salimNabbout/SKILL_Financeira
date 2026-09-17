@@ -128,6 +128,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "payable.created": "Título a pagar criado",
   "payable.updated": "Título a pagar alterado",
   "payable.due_date_adjusted": "Vencimento do título corrigido",
+  "payable.reclassified": "Título pago reclassificado (categoria/custo/centro)",
   "payable.canceled": "Título a pagar cancelado",
   "payable.settled_via_reconciliation": "Título baixado pela conciliação",
   "payment.requested": "Pagamento solicitado",

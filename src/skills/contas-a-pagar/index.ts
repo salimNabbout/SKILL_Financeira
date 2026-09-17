@@ -155,6 +155,19 @@ const adjustPaymentDateSchema = z.object({
   paymentDate: isoDateSchema,
 });
 
+// RECLASSIFICAÇÃO de título JÁ PAGO: só as três dimensões de análise
+// (categoria de fornecedor, custo fixo/variável e centro de custo). Existe
+// porque `update_payable` recusa título pago — e deve continuar recusando —
+// e porque valor, datas e descrição de um título quitado são fato consumado.
+// Contrato dos opcionais: undefined mantém o atual, null limpa (como no update).
+const reclassifyPayableSchema = z.object({
+  action: z.literal("reclassify_payable"),
+  payableId: z.string().min(1),
+  supplierCategory: z.string().min(1).nullable().optional(),
+  costClassification: z.enum(["fixed", "variable"]).nullable().optional(),
+  costCenterId: z.string().min(1).nullable().optional(),
+});
+
 // Conciliação do pagamento aprovado: informa a data em que o dinheiro saiu de
 // fato e baixa o título. É esta data — não a da aprovação — que decide se o
 // título fica "Pago" ou "Pago Atrasado".
@@ -186,6 +199,7 @@ export const contasAPagarInputSchema = z.discriminatedUnion("action", [
   cancelPayableSchema,
   updatePayableSchema,
   adjustPaymentDateSchema,
+  reclassifyPayableSchema,
   reconcilePaymentSchema,
   reversePaymentSchema,
   generateRecurringSchema,
@@ -199,6 +213,7 @@ export type DetectDuplicatesInput = z.infer<typeof detectDuplicatesSchema>;
 export type CancelPayableInput = z.infer<typeof cancelPayableSchema>;
 export type UpdatePayableInput = z.infer<typeof updatePayableSchema>;
 export type AdjustPaymentDateInput = z.infer<typeof adjustPaymentDateSchema>;
+export type ReclassifyPayableInput = z.infer<typeof reclassifyPayableSchema>;
 export type ReconcilePaymentInput = z.infer<typeof reconcilePaymentSchema>;
 export type ReversePaymentInput = z.infer<typeof reversePaymentSchema>;
 export type GenerateRecurringInput = z.infer<typeof generateRecurringSchema>;
@@ -280,6 +295,10 @@ export interface AdjustPaymentDateData {
   payable: Payable;
 }
 
+export interface ReclassifyPayableData {
+  payable: Payable;
+}
+
 export interface ReconcilePaymentData {
   payment: Payment;
   payable: Payable;
@@ -305,6 +324,7 @@ export type ContasAPagarData =
   | CancelPayableData
   | UpdatePayableData
   | AdjustPaymentDateData
+  | ReclassifyPayableData
   | ReconcilePaymentData
   | ReversePaymentData
   | GenerateRecurringData;
@@ -354,10 +374,22 @@ async function assertPayableFieldsValid(
     const category = await ctx.repos.categories.getById(ctx.companyId, fields.categoryId);
     if (!category) throw new NotFoundError("Categoria", fields.categoryId);
   }
-  if (fields.costCenterId) {
-    const costCenter = await ctx.repos.costCenters.getById(ctx.companyId, fields.costCenterId);
-    if (!costCenter) throw new NotFoundError("Centro de custo", fields.costCenterId);
-  }
+  await assertCostCenterExists(ctx, fields.costCenterId);
+}
+
+/** Centro de custo informado precisa existir (comum a create, update e reclassify). */
+async function assertCostCenterExists(
+  ctx: SkillContext,
+  costCenterId?: string | null
+): Promise<void> {
+  if (!costCenterId) return;
+  const costCenter = await ctx.repos.costCenters.getById(ctx.companyId, costCenterId);
+  if (!costCenter) throw new NotFoundError("Centro de custo", costCenterId);
+}
+
+/** Campo opcional de edição: `null` limpa, `undefined` mantém o atual. */
+function applyOptional<T>(incoming: T | null | undefined, current: T | undefined): T | undefined {
+  return incoming === undefined ? current : incoming ?? undefined;
 }
 
 type RecurrenceFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
@@ -1292,9 +1324,6 @@ async function updatePayable(
 
   // Aplica apenas os campos editáveis; supplierId/documentId/parcela/originKey
   // permanecem intactos. Campos opcionais com null limpam; undefined mantém.
-  const applyOptional = <T>(incoming: T | null | undefined, current: T | undefined): T | undefined =>
-    incoming === undefined ? current : incoming ?? undefined;
-
   payable.description = input.description;
   payable.issueDate = input.issueDate;
   payable.dueDate = input.dueDate;
@@ -1332,6 +1361,112 @@ async function updatePayable(
     {
       assumptions: [
         "Edição registrada na trilha de auditoria (payable.updated) com estado anterior e novo. Fornecedor, documento e parcela não são editáveis (preservam a chave de idempotência).",
+      ],
+      dataSources: DATA_SOURCES,
+    }
+  );
+}
+
+/**
+ * RECLASSIFICAÇÃO de título JÁ PAGO: categoria de fornecedor, classificação do
+ * custo (fixo/variável) e centro de custo.
+ *
+ * `update_payable` recusa título pago — e continua recusando: valor, datas e
+ * descrição de um título quitado são fato consumado. As três dimensões aqui
+ * são de ANÁLISE: mudá-las não altera baixa, saldo, status nem o lançamento
+ * contábil (que não as carrega). Muda, retroativamente, os totais por
+ * categoria / custo / centro (Painel por Período e Contas a pagar) — que é
+ * exatamente o objetivo de corrigir a classificação depois da conciliação.
+ *
+ * Só título com status "paid": os demais usam a edição normal; cancelado não
+ * se reclassifica.
+ */
+async function reclassifyPayable(
+  ctx: SkillContext,
+  input: ReclassifyPayableInput
+): Promise<SkillResult<ReclassifyPayableData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "payable.create")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode reclassificar títulos a pagar.`
+      );
+    }
+  }
+
+  const payable = await ctx.repos.payables.getById(ctx.companyId, input.payableId);
+  if (!payable) throw new NotFoundError("Título a pagar", input.payableId);
+
+  if (payable.status === "canceled") {
+    throw new ValidationError(
+      `Título ${payable.id} está cancelado e não pode ser reclassificado.`
+    );
+  }
+  if (payable.status !== "paid") {
+    throw new ValidationError(
+      `Título ${payable.id} não está pago (status atual: ${payable.status}); use a edição normal do título para alterar categoria, classificação do custo e centro de custo.`
+    );
+  }
+
+  await assertCostCenterExists(ctx, input.costCenterId);
+
+  const next = {
+    supplierCategory: applyOptional(input.supplierCategory, payable.supplierCategory),
+    costClassification: applyOptional(input.costClassification, payable.costClassification),
+    costCenterId: applyOptional(input.costCenterId, payable.costCenterId),
+  };
+  const unchanged =
+    next.supplierCategory === payable.supplierCategory &&
+    next.costClassification === payable.costClassification &&
+    next.costCenterId === payable.costCenterId;
+  if (unchanged) {
+    return makeResult(
+      SKILL,
+      ctx,
+      { payable },
+      {
+        assumptions: ["Classificação informada é igual à atual; nada foi alterado."],
+        dataSources: DATA_SOURCES,
+      }
+    );
+  }
+
+  const before = { ...payable };
+  payable.supplierCategory = next.supplierCategory;
+  payable.costClassification = next.costClassification;
+  payable.costCenterId = next.costCenterId;
+  payable.updatedAt = ctx.clock.now().toISOString();
+  await ctx.repos.payables.update(payable);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "payable.reclassified",
+    entityType: "payable",
+    entityId: payable.id,
+    before,
+    after: payable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "payable.updated",
+    payload: {
+      id: payable.id,
+      supplierCategory: payable.supplierCategory,
+      costClassification: payable.costClassification,
+      costCenterId: payable.costCenterId,
+    },
+    source: SKILL,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(
+    SKILL,
+    ctx,
+    { payable },
+    {
+      assumptions: [
+        "Reclassificação registrada na trilha de auditoria (payable.reclassified) com estado anterior e novo. Valor, datas, descrição, baixa e status do título não mudam.",
+        "Os totais por categoria, custo fixo/variável e centro de custo (Painel por Período e Contas a pagar) passam a refletir a nova classificação, inclusive em período já encerrado.",
       ],
       dataSources: DATA_SOURCES,
     }
@@ -1843,6 +1978,8 @@ export const contasAPagarSkill: SkillDefinition<ContasAPagarInput, ContasAPagarD
         return updatePayable(ctx, input);
       case "adjust_payment_date":
         return adjustPaymentDate(ctx, input);
+      case "reclassify_payable":
+        return reclassifyPayable(ctx, input);
       case "reconcile_payment":
         return reconcilePayment(ctx, input);
       case "reverse_payment":

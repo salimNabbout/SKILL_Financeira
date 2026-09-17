@@ -1121,3 +1121,117 @@ describe("fluxos de relatório", () => {
     expect(close.status).toBe("completed");
   });
 });
+
+describe("fluxo integrado: reclassificação de título pago", () => {
+  async function seedPago(): Promise<string> {
+    const now = env.clock.now().toISOString();
+    await env.repos.costCenters.create({
+      id: "cc_loja",
+      companyId: env.company.id,
+      code: "CC-01",
+      name: "Loja",
+      active: true,
+      scope: "both",
+    });
+    await env.repos.costCenters.create({
+      id: "cc_adm",
+      companyId: env.company.id,
+      code: "CC-03",
+      name: "Administrativo",
+      active: true,
+      scope: "both",
+    });
+    await env.repos.payables.create({
+      id: "pv_pago",
+      companyId: env.company.id,
+      supplierId: "sup_1",
+      description: "NF 7001 — grãos",
+      issueDate: "2026-07-01",
+      dueDate: "2026-07-20",
+      amountCents: 780_000,
+      paidCents: 780_000,
+      currency: "BRL",
+      status: "paid",
+      installmentNumber: 1,
+      installmentCount: 1,
+      originKey: "seed:pv_pago:1/1",
+      supplierCategory: "Insumos",
+      costClassification: "variable",
+      costCenterId: "cc_loja",
+      createdBy: "usr_analyst",
+      createdAt: now,
+      updatedAt: now,
+    });
+    return "pv_pago";
+  }
+
+  function reclassificar(payload: Record<string, unknown>, role: "analyst" | "viewer" = "analyst") {
+    return orch.execute({
+      flow: "reclassify_payable",
+      companyId: env.company.id,
+      actor: env.actorFor(role),
+      payload: { payableId: "pv_pago", ...payload },
+    });
+  }
+
+  it("altera as três dimensões, audita payable.reclassified e mantém a cadeia de hash válida", async () => {
+    const id = await seedPago();
+
+    const res = await reclassificar({
+      supplierCategory: "Serviços",
+      costClassification: "fixed",
+      costCenterId: "cc_adm",
+    });
+
+    expect(res.status).toBe("completed");
+    const payable = await env.repos.payables.getById(env.company.id, id);
+    expect(payable?.supplierCategory).toBe("Serviços");
+    expect(payable?.costClassification).toBe("fixed");
+    expect(payable?.costCenterId).toBe("cc_adm");
+    expect(payable?.status).toBe("paid");
+    expect(payable?.paidCents).toBe(780_000);
+
+    const audit = await env.repos.audit.list(env.company.id);
+    expect(audit.map((a) => a.action)).toContain("payable.reclassified");
+    expect(verifyChain(audit).valid).toBe(true);
+  });
+
+  it("ir e voltar (A→B, B→A, A→B) não cai no replay de idempotência", async () => {
+    const id = await seedPago();
+
+    const primeira = await reclassificar({ costCenterId: "cc_adm" });
+    expect(primeira.status).toBe("completed");
+    expect(primeira.idempotent_replay).toBeFalsy();
+
+    env.clock.set("2026-08-18T15:00:01Z");
+    const volta = await reclassificar({ costCenterId: "cc_loja" });
+    expect(volta.status).toBe("completed");
+    expect(volta.idempotent_replay).toBeFalsy();
+
+    env.clock.set("2026-08-18T15:00:02Z");
+    const denovo = await reclassificar({ costCenterId: "cc_adm" });
+    expect(denovo.status).toBe("completed");
+    expect(denovo.idempotent_replay).toBeFalsy();
+    expect((await env.repos.payables.getById(env.company.id, id))?.costCenterId).toBe("cc_adm");
+
+    // Repetir o MESMO pedido depois de gravado não duplica nada: a skill
+    // devolve no-op (classificação igual à atual) sem registro novo na trilha.
+    const auditAntes = (await env.repos.audit.list(env.company.id)).filter(
+      (a) => a.action === "payable.reclassified"
+    ).length;
+    expect(auditAntes).toBe(3);
+    const duplo = await reclassificar({ costCenterId: "cc_adm" });
+    expect(duplo.status).toBe("completed");
+    const auditDepois = (await env.repos.audit.list(env.company.id)).filter(
+      (a) => a.action === "payable.reclassified"
+    ).length;
+    expect(auditDepois).toBe(3);
+  });
+
+  it("papel sem payable.create (viewer) é barrado pelo fluxo", async () => {
+    const id = await seedPago();
+
+    await expect(reclassificar({ costClassification: "fixed" }, "viewer")).rejects.toThrow();
+    expect((await env.repos.payables.getById(env.company.id, id))?.costClassification).toBe("variable");
+  });
+});
