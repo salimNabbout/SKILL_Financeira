@@ -1,10 +1,16 @@
 import Link from "next/link";
 import { Badge, Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
-import { addDays, todayInTz, type ISODate } from "@/core/dates";
+import { todayInTz, type ISODate } from "@/core/dates";
 import { getContainer } from "@/lib/container";
 import { formatBR, formatBRL, formatDateTime, ROLE_LABELS } from "@/lib/format";
 import { requireSession } from "@/lib/session";
-import { InOutBarChart, type InOutGroup } from "./_lib/charts";
+import { InOutBarChart } from "./_lib/charts";
+import {
+  availableTone,
+  buildWeekGroups,
+  sumFlowsThrough,
+  type DailyPointView,
+} from "./_lib/dashboard-metrics";
 import { runSkillForSession } from "./_lib/run-skill";
 import {
   asStringList,
@@ -17,13 +23,6 @@ import {
 interface CashPositionView {
   accounts?: Array<{ id?: string; name?: string; availableCents?: number }>;
   totals?: { availableCents?: number; committedCents?: number; projected30Cents?: number };
-}
-
-interface DailyPointView {
-  date?: ISODate;
-  inCents?: number;
-  outCents?: number;
-  balanceCents?: number;
 }
 
 interface ProjectionView {
@@ -80,36 +79,13 @@ export default async function DashboardPage() {
   const totals = cashRes.data?.totals;
   const daily = projRes.data?.daily ?? [];
 
-  const in7Limit = addDays(today, 7);
-  let payables7dCents = 0;
-  let receivables7dCents = 0;
-  for (const d of daily) {
-    if (typeof d?.date === "string" && d.date <= in7Limit) {
-      payables7dCents += d.outCents ?? 0;
-      receivables7dCents += d.inCents ?? 0;
-    }
-  }
-
-  // Agregação das próximas 4 semanas para o gráfico de barras.
-  const weekGroups: InOutGroup[] = [];
-  for (let w = 0; w < 4; w++) {
-    const start = addDays(today, w * 7);
-    const end = addDays(today, w * 7 + 6);
-    let inCents = 0;
-    let outCents = 0;
-    for (const d of daily) {
-      if (typeof d?.date === "string" && d.date >= start && d.date <= end) {
-        inCents += d.inCents ?? 0;
-        outCents += d.outCents ?? 0;
-      }
-    }
-    weekGroups.push({
-      label: `Sem ${w + 1}`,
-      title: `${formatBR(start)} a ${formatBR(end)}`,
-      inCents,
-      outCents,
-    });
-  }
+  // Janela de 7 dias e 4 semanas: funções puras (auditadas em dashboard-metrics.test.ts).
+  const {
+    inCents: receivables7dCents,
+    outCents: payables7dCents,
+    limit: in7Limit,
+  } = sumFlowsThrough(daily, today);
+  const weekGroups = buildWeekGroups(daily, today);
 
   const topAlerts = [...openAlerts]
     .sort(
@@ -120,14 +96,7 @@ export default async function DashboardPage() {
     .slice(0, 5);
 
   const available = totals?.availableCents;
-  const availableTone =
-    typeof available !== "number"
-      ? "neutral"
-      : available < 0
-        ? "crit"
-        : available < session.config.minimumCashCents
-          ? "warn"
-          : "ok";
+  const availableCardTone = availableTone(available, session.config.minimumCashCents);
 
   const risks = asStringList(overviewRes.data?.risks);
   const opportunities = asStringList(overviewRes.data?.opportunities);
@@ -144,7 +113,7 @@ export default async function DashboardPage() {
         <StatCard
           label="Saldo disponível"
           value={typeof available === "number" ? formatBRL(available) : "—"}
-          tone={availableTone}
+          tone={availableCardTone}
           hint={
             isSkillError(cashRes)
               ? "Skill de tesouraria em implementação"
