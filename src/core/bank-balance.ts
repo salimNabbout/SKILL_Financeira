@@ -103,8 +103,16 @@ export interface BankBalanceInput {
   timeZone: string;
 }
 
-/** Alvos cujo dinheiro JÁ é contado pelo registro da empresa. */
-const ALVOS_JA_CONTADOS = new Set(["payment", "receipt", "payable", "receivable"]);
+/**
+ * Alvos cujo dinheiro JÁ é contado pelo registro da empresa:
+ * - `payment`: o Payment executado entra como saída acima;
+ * - `receipt`/`receivable`: a conciliação de crédito cria um Receipt (com a
+ *   conta e a data da transação), que entra como entrada acima.
+ * `payable` NÃO está aqui de propósito: a baixa de título a pagar pela
+ * conciliação só atualiza `paidCents` e não cria Payment — se a transação
+ * fosse excluída, a saída sumiria do saldo. Ela entra como linha do extrato.
+ */
+const ALVOS_JA_CONTADOS = new Set(["payment", "receipt", "receivable"]);
 
 function dentro(date: ISODate, period: BankBalancePeriod): boolean {
   // ISODate é "YYYY-MM-DD": a comparação lexicográfica é a cronológica.

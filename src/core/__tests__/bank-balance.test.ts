@@ -170,6 +170,35 @@ describe("computeBankPeriodBalance", () => {
     expect(r.balanceCents).toBe(70_000);
   });
 
+  it("transação casada com TÍTULO a pagar continua contando: a baixa por conciliação não cria Payment", () => {
+    // Débito do extrato conciliado direto contra o título (targetType "payable"):
+    // só `paidCents` muda, não existe Payment executado. A saída tem de vir do extrato.
+    const tx = transacao({ amountCents: -45_000 });
+    const r = computeBankPeriodBalance(
+      entrada({
+        transactions: [tx],
+        matches: [match({ bankTransactionId: tx.id, targetType: "payable", targetId: "payb_1" })],
+      })
+    );
+    expect(r.outflowCents).toBe(45_000);
+    expect(r.outflowCount).toBe(1);
+    expect(r.balanceCents).toBe(55_000);
+  });
+
+  it("transação casada com título a RECEBER não conta duas vezes: o Receipt criado pela conciliação já entrou", () => {
+    const tx = transacao({ amountCents: 20_000 });
+    const rcp = recibo({ amountCents: 20_000, receivedDate: tx.date });
+    const r = computeBankPeriodBalance(
+      entrada({
+        receipts: [rcp],
+        transactions: [tx],
+        matches: [match({ bankTransactionId: tx.id, targetType: "receivable", targetId: "recv_1" })],
+      })
+    );
+    expect(r.inflowCents).toBe(20_000);
+    expect(r.inflowCount).toBe(1);
+  });
+
   it("match rejeitado não deduplica nada: a transação segue contando", () => {
     const tx = transacao({ amountCents: -2_000 });
     const r = computeBankPeriodBalance(
