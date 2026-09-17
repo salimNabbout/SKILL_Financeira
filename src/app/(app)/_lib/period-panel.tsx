@@ -47,15 +47,15 @@ export function PeriodPanel({
   const [result, setResult] = useState<PeriodPanelResult>(initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const firstRender = useRef(true);
+  // Só depois de o usuário mexer num filtro a URL e o fetch entram em ação —
+  // o primeiro render já veio do servidor. (Um guarda de "primeiro render"
+  // falharia com o StrictMode do dev, que monta o efeito duas vezes.)
+  const [dirty, setDirty] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  // A cada mudança de filtro: URL + fetch (o primeiro render já veio do servidor).
+  // A cada mudança de filtro: URL + fetch.
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
+    if (!dirty) return;
     const search = panelQueryToSearch(query);
     try {
       window.history.replaceState(null, "", `${window.location.pathname}?${search}`);
@@ -86,13 +86,14 @@ export function PeriodPanel({
         if (abortRef.current === controller) setLoading(false);
       });
     return () => controller.abort();
-  }, [query]);
+  }, [query, dirty]);
 
   const data = result.data ?? null;
   const dias = query.mes === "todos" ? 31 : daysInMonthOf(query.ano, query.mes);
   const anos = [...new Set([...(data?.availableYears ?? []), query.ano])].sort((a, b) => a - b);
 
   function update(patch: Partial<PanelQueryState>) {
+    setDirty(true);
     setQuery((prev) => {
       const next = { ...prev, ...patch };
       // Ajuste automático ao trocar de mês: dia final que estava no último dia
