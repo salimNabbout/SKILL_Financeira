@@ -1,10 +1,21 @@
 import Link from "next/link";
 import { Badge, Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
-import { addDays, todayInTz, type ISODate } from "@/core/dates";
+import { todayInTz, type ISODate } from "@/core/dates";
 import { getContainer } from "@/lib/container";
 import { formatBR, formatBRL, formatDateTime, ROLE_LABELS } from "@/lib/format";
 import { requireSession } from "@/lib/session";
-import { InOutBarChart, type InOutGroup } from "./_lib/charts";
+import { InOutBarChart } from "./_lib/charts";
+import { PeriodPanel } from "./_lib/period-panel";
+import { parsePanelQuery } from "./_lib/period-panel-query";
+import { toPeriodPanelInput } from "@/app/api/_lib/dashboard";
+import type { PeriodPanelData } from "@/skills/relatorios";
+import {
+  accountsSumCents,
+  availableTone,
+  buildWeekGroups,
+  sumFlowsThrough,
+  type DailyPointView,
+} from "./_lib/dashboard-metrics";
 import { runSkillForSession } from "./_lib/run-skill";
 import {
   asStringList,
@@ -15,15 +26,22 @@ import {
 
 // Formas defensivas (contratos das skills escritas em paralelo) — tudo opcional.
 interface CashPositionView {
-  accounts?: Array<{ id?: string; name?: string; availableCents?: number }>;
+  accounts?: Array<{
+    id?: string;
+    name?: string;
+    bankCode?: string;
+    accountNumberMasked?: string;
+    availableCents?: number;
+    transactionCount?: number;
+    lastImport?: { source?: string; format?: string; at?: string; imported?: number };
+  }>;
   totals?: { availableCents?: number; committedCents?: number; projected30Cents?: number };
-}
-
-interface DailyPointView {
-  date?: ISODate;
-  inCents?: number;
-  outCents?: number;
-  balanceCents?: number;
+  source?: {
+    tables?: string[];
+    provider?: string;
+    activeAccountCount?: number;
+    lastImportAt?: string;
+  };
 }
 
 interface ProjectionView {
@@ -56,11 +74,36 @@ const SEVERITY_LABEL: Record<string, string> = {
   info: "Info",
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
   const today = todayInTz(clock.now(), session.config.timezone);
+
+  // Painel por Período: filtros vêm da URL (recarregar mantém a seleção); o
+  // primeiro resultado é renderizado no servidor, as trocas seguintes batem
+  // no endpoint GET /api/v1/dashboard/period-panel sem recarregar a página.
+  const panelQuery = parsePanelQuery(sp, today);
+  const panelRes = await runSkillForSession<PeriodPanelData>(
+    session,
+    "relatorios_gerenciais",
+    toPeriodPanelInput(
+      {
+        ano: panelQuery.ano,
+        mes: panelQuery.mes,
+        de: panelQuery.de,
+        ate: panelQuery.ate,
+        cc: panelQuery.cc || undefined,
+        cat: panelQuery.cat || undefined,
+      },
+      today
+    )
+  );
 
   // Skills de leitura em sequência (trilha de auditoria encadeada por hash).
   const cashRes = await runSkillForSession<CashPositionView>(session, "tesouraria_fluxo_caixa", {
@@ -80,36 +123,13 @@ export default async function DashboardPage() {
   const totals = cashRes.data?.totals;
   const daily = projRes.data?.daily ?? [];
 
-  const in7Limit = addDays(today, 7);
-  let payables7dCents = 0;
-  let receivables7dCents = 0;
-  for (const d of daily) {
-    if (typeof d?.date === "string" && d.date <= in7Limit) {
-      payables7dCents += d.outCents ?? 0;
-      receivables7dCents += d.inCents ?? 0;
-    }
-  }
-
-  // Agregação das próximas 4 semanas para o gráfico de barras.
-  const weekGroups: InOutGroup[] = [];
-  for (let w = 0; w < 4; w++) {
-    const start = addDays(today, w * 7);
-    const end = addDays(today, w * 7 + 6);
-    let inCents = 0;
-    let outCents = 0;
-    for (const d of daily) {
-      if (typeof d?.date === "string" && d.date >= start && d.date <= end) {
-        inCents += d.inCents ?? 0;
-        outCents += d.outCents ?? 0;
-      }
-    }
-    weekGroups.push({
-      label: `Sem ${w + 1}`,
-      title: `${formatBR(start)} a ${formatBR(end)}`,
-      inCents,
-      outCents,
-    });
-  }
+  // Janela de 7 dias e 4 semanas: funções puras (auditadas em dashboard-metrics.test.ts).
+  const {
+    inCents: receivables7dCents,
+    outCents: payables7dCents,
+    limit: in7Limit,
+  } = sumFlowsThrough(daily, today);
+  const weekGroups = buildWeekGroups(daily, today);
 
   const topAlerts = [...openAlerts]
     .sort(
@@ -120,14 +140,63 @@ export default async function DashboardPage() {
     .slice(0, 5);
 
   const available = totals?.availableCents;
-  const availableTone =
-    typeof available !== "number"
-      ? "neutral"
-      : available < 0
-        ? "crit"
-        : available < session.config.minimumCashCents
-          ? "warn"
-          : "ok";
+  const availableCardTone = availableTone(available, session.config.minimumCashCents);
+
+  // Fonte do Saldo disponível: contas ativas que compõem o número, com banco,
+  // número mascarado, saldo individual, último lote de extrato e provedor.
+  // Tudo vem da skill (dados), nada fixo aqui; a soma das contas tem de bater
+  // com o total (identidade testada em dashboard-metrics/auditoria-dashboard).
+  const cashAccounts = cashRes.data?.accounts ?? [];
+  const cashSource = cashRes.data?.source;
+  const cashAccountsSum = accountsSumCents(cashAccounts);
+  const availableDetails = isSkillError(cashRes) ? null : (
+    <div className="space-y-1.5">
+      <p>
+        <span className="font-medium text-[var(--ink)]">Fontes:</span>{" "}
+        {(cashSource?.tables ?? []).join(", ") || "—"}
+      </p>
+      <p>
+        <span className="font-medium text-[var(--ink)]">Contas ativas:</span>{" "}
+        {cashSource?.activeAccountCount ?? cashAccounts.length}
+      </p>
+      {cashAccounts.length === 0 ? (
+        <p>Nenhuma conta bancária ativa cadastrada.</p>
+      ) : (
+        <ul className="space-y-1">
+          {cashAccounts.map((a, i) => (
+            <li key={a.id ?? i} className="flex flex-wrap justify-between gap-x-3">
+              <span>
+                {a.name ?? "Conta"} · banco {a.bankCode ?? "—"} · {a.accountNumberMasked ?? "—"}
+                <span className="block text-[11px]">
+                  {a.transactionCount ?? 0} lançamento(s) importado(s) · última importação:{" "}
+                  {a.lastImport?.at
+                    ? `${formatDateTime(a.lastImport.at)} (${a.lastImport.source ?? "?"}/${a.lastImport.format ?? "?"})`
+                    : "nenhuma"}
+                </span>
+              </span>
+              <span className="tabular text-[var(--ink)]">
+                {typeof a.availableCents === "number" ? formatBRL(a.availableCents) : "—"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p>
+        <span className="font-medium text-[var(--ink)]">Provedor bancário ativo:</span>{" "}
+        {cashSource?.provider ?? "—"} · última sincronização:{" "}
+        {cashSource?.lastImportAt ? formatDateTime(cashSource.lastImportAt) : "nenhuma"}
+      </p>
+      <p>
+        <span className="font-medium text-[var(--ink)]">Soma das contas:</span>{" "}
+        <span className="tabular">{formatBRL(cashAccountsSum)}</span>
+        {typeof available === "number" && cashAccountsSum !== available ? (
+          <span className="text-[var(--crit)]"> — difere do total do card</span>
+        ) : (
+          " = total do card"
+        )}
+      </p>
+    </div>
+  );
 
   const risks = asStringList(overviewRes.data?.risks);
   const opportunities = asStringList(overviewRes.data?.opportunities);
@@ -140,16 +209,20 @@ export default async function DashboardPage() {
         subtitle={`Posição consolidada de ${session.company.name} em ${formatBR(today)}`}
       />
 
+      <PeriodPanel initial={panelRes} initialQuery={panelQuery} />
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Saldo disponível"
           value={typeof available === "number" ? formatBRL(available) : "—"}
-          tone={availableTone}
+          tone={availableCardTone}
           hint={
             isSkillError(cashRes)
               ? "Skill de tesouraria em implementação"
-              : "Soma dos saldos das contas bancárias ativas"
+              : "Soma dos saldos das contas bancárias ativas (abertura + extrato importado)"
           }
+          details={availableDetails}
+          detailsLabel="Ver detalhes (fonte)"
         />
         <StatCard
           label="Comprometido"

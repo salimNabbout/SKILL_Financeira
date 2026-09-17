@@ -313,8 +313,11 @@ export default async function ConciliacaoPage({
   // exibida é a do pagamento informada na conciliação (executedAt), convertida
   // para o fuso da empresa — nunca UTC, senão a data pularia um dia.
   const CONCILIADOS_RECENTES = 30;
-  const conciliados = payments
-    .filter((pay) => pay.status === "executed" && pay.executedAt)
+  const executados = payments.filter((pay) => pay.status === "executed" && pay.executedAt);
+  // O título do card conta TODOS os executados; a tabela mostra os 30 mais
+  // recentes (antes o contador era o tamanho da lista já cortada: travava em 30).
+  const conciliadosTotal = executados.length;
+  const conciliados = executados
     .sort((a, b) => (b.executedAt ?? "").localeCompare(a.executedAt ?? ""))
     .slice(0, CONCILIADOS_RECENTES)
     .map((pay) => ({
@@ -736,7 +739,11 @@ export default async function ConciliacaoPage({
           registro dos pagamentos conciliados aqui. */}
       <Card
         className="mb-6"
-        title={`Conciliados (${conciliados.length})`}
+        title={
+          conciliadosTotal > CONCILIADOS_RECENTES
+            ? `Conciliados (${conciliadosTotal} · ${CONCILIADOS_RECENTES} mais recentes exibidos)`
+            : `Conciliados (${conciliadosTotal})`
+        }
       >
         {conciliados.length === 0 ? (
           <EmptyState message="Nenhum pagamento conciliado ainda." />

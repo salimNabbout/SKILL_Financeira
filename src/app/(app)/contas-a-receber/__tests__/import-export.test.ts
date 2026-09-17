@@ -6,6 +6,7 @@ const HOJE = "2026-08-20";
 import {
   RECEIVABLE_EXPORT_COLUMNS,
   receivablesToExportRows,
+  totalsLabel,
   totalsOf,
 } from "../_lib/export-rows";
 import {
@@ -153,7 +154,23 @@ describe("linhas de exportação", () => {
       receivable({ id: "a", amountCents: 1000, receivedCents: 500 }),
       receivable({ id: "b", amountCents: 2500, receivedCents: 0 }),
     ]);
-    expect(t).toEqual({ quantidade: 2, valorCents: 3500, recebidoCents: 500 });
+    expect(t).toEqual({ quantidade: 2, valorCents: 3500, recebidoCents: 500, cancelados: 0 });
+    expect(totalsLabel(t)).toBe("TOTAL — 2 título(s)");
+  });
+
+  it("título cancelado fica fora de Σ Valor e Σ Recebido e é contado à parte no rótulo", () => {
+    // Auditoria de fórmulas (CAR-07): idem CAP-09.
+    const t = totalsOf([
+      receivable({ id: "a", amountCents: 1000, receivedCents: 500 }),
+      receivable({ id: "c", amountCents: 9_999, receivedCents: 0, status: "canceled", canceledAt: "2026-07-01T12:00:00.000Z" }),
+      receivable({ id: "b", amountCents: 2500, receivedCents: 0 }),
+    ]);
+    expect(t).toEqual({ quantidade: 2, valorCents: 3500, recebidoCents: 500, cancelados: 1 });
+    expect(totalsLabel(t)).toBe("TOTAL — 2 título(s) (1 cancelado(s) fora da soma)");
+  });
+
+  it("base vazia: totais zerados", () => {
+    expect(totalsOf([])).toEqual({ quantidade: 0, valorCents: 0, recebidoCents: 0, cancelados: 0 });
   });
 });
 

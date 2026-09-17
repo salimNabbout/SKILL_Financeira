@@ -83,15 +83,33 @@ export function payablesToExportRows(
 }
 
 export interface ExportTotals {
+  /** Títulos somados (sem os cancelados). */
   quantidade: number;
   valorCents: number;
   pagoCents: number;
+  /** Cancelados presentes na listagem e deixados fora da soma. */
+  cancelados: number;
 }
 
+/**
+ * Totais do conjunto exportado/impresso. Título cancelado aparece na lista
+ * (com status "Cancelado"), mas não é obrigação: fica fora de Σ Valor e
+ * Σ Pago e é contado à parte, para o rodapé dizer quantos ficaram de fora.
+ */
 export function totalsOf(payables: Payable[]): ExportTotals {
+  const somados = payables.filter((p) => p.status !== "canceled");
   return {
-    quantidade: payables.length,
-    valorCents: payables.reduce((acc, p) => acc + p.amountCents, 0),
-    pagoCents: payables.reduce((acc, p) => acc + p.paidCents, 0),
+    quantidade: somados.length,
+    valorCents: somados.reduce((acc, p) => acc + p.amountCents, 0),
+    pagoCents: somados.reduce((acc, p) => acc + p.paidCents, 0),
+    cancelados: payables.length - somados.length,
   };
+}
+
+/** Rótulo do rodapé: "TOTAL — 8 título(s) (2 cancelado(s) fora da soma)". */
+export function totalsLabel(totais: ExportTotals): string {
+  const base = `TOTAL — ${totais.quantidade} título(s)`;
+  return totais.cancelados > 0
+    ? `${base} (${totais.cancelados} cancelado(s) fora da soma)`
+    : base;
 }

@@ -4,7 +4,12 @@ import { requireSession } from "@/lib/session";
 import { formatBRL } from "@/lib/format";
 import { todayInTz } from "@/core/dates";
 import { describeFilters, parsePayableFilters } from "../_lib/filters";
-import { PAYABLE_EXPORT_COLUMNS, payablesToExportRows, totalsOf } from "../_lib/export-rows";
+import {
+  PAYABLE_EXPORT_COLUMNS,
+  payablesToExportRows,
+  totalsLabel,
+  totalsOf,
+} from "../_lib/export-rows";
 import { loadFilteredPayables } from "../_lib/load-filtered";
 import { DispararImpressao } from "./_lib/disparar-impressao";
 
@@ -120,7 +125,7 @@ export default async function ImprimirContasAPagarPage({
         <tfoot>
           <tr className="font-semibold">
             <td className="border-t border-[#999] px-1.5 py-1" colSpan={9}>
-              TOTAL — {totais.quantidade} título(s)
+              {totalsLabel(totais)}
             </td>
             <td className="border-t border-[#999] px-1.5 py-1 text-right tabular">
               {formatBRL(totais.valorCents)}

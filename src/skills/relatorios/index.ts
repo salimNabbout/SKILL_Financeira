@@ -33,6 +33,15 @@ import type { ReportNarrative } from "@/core/ai";
 import { ValidationError } from "@/core/errors";
 import type { AlertSeverity, PendingItem, SkillAlert } from "@/core/types";
 import { makeResult, type SkillContext, type SkillDefinition } from "@/core/skill";
+import type { ID } from "@/core/entities";
+import {
+  PERIOD_PANEL_FORMULAS,
+  resolvePeriod,
+  summarizePaid,
+  type CategoryTotal,
+  type CostCenterTotal,
+  type ResolvedPeriod,
+} from "@/core/period-panel";
 
 const SKILL_NAME = "relatorios_gerenciais" as const;
 
@@ -92,13 +101,31 @@ const exportDataSchema = z.object({
   period: periodSchema.optional(),
 });
 
+/**
+ * Painel por Período do Dashboard (regime de caixa). `month` ausente = ano
+ * inteiro; dias além do tamanho do mês são ajustados; `costCenterId` e
+ * `category` só afetam as caixas de centro/categoria (os 4 totais e o gráfico
+ * reagem apenas ao período).
+ */
+const periodPanelSchema = z.object({
+  action: z.literal("period_panel"),
+  year: z.number().int().min(1900).max(2200),
+  month: z.number().int().min(1).max(12).optional(),
+  dayFrom: z.number().int().min(1).max(31).optional(),
+  dayTo: z.number().int().min(1).max(31).optional(),
+  costCenterId: z.string().min(1).optional(),
+  category: z.string().min(1).optional(),
+});
+
 export const relatoriosInputSchema = z.discriminatedUnion("action", [
   dailySummarySchema,
   monthlyCloseSchema,
   executiveOverviewSchema,
   exportDataSchema,
+  periodPanelSchema,
 ]);
 
+export type PeriodPanelInput = z.infer<typeof periodPanelSchema>;
 export type DailySummaryInput = z.infer<typeof dailySummarySchema>;
 export type MonthlyCloseInput = z.infer<typeof monthlyCloseSchema>;
 export type ExecutiveOverviewInput = z.infer<typeof executiveOverviewSchema>;
@@ -228,11 +255,48 @@ export interface ExportDataData {
   sources: string[];
 }
 
+/** Opção do select "Centro de Custo" do painel ("código — nome"). */
+export interface PeriodPanelCostCenterOption {
+  id: ID;
+  code: string;
+  name: string;
+}
+
+export interface PeriodPanelData {
+  regime: "caixa";
+  period: ResolvedPeriod;
+  /** Anos com pagamento executado ou recebimento ativo (∪ ano corrente), crescente. */
+  availableYears: number[];
+  totals: {
+    receivedCents: number;
+    receivedCount: number;
+    paidCents: number;
+    paidCount: number;
+    fixedCents: number;
+    variableCents: number;
+    unclassifiedCents: number;
+  };
+  /** Centros ativos com destino a pagar/ambos (opções do select), por código. */
+  costCenters: PeriodPanelCostCenterOption[];
+  /** Centros com movimento no período (+ "Sem centro"), maior primeiro. */
+  byCostCenter: CostCenterTotal[];
+  selectedCostCenterId: ID | null;
+  costCenterTotalCents: number;
+  /** Categorias com movimento no centro selecionado (ou em todos), maior primeiro. */
+  categories: CategoryTotal[];
+  selectedCategory: string | null;
+  categoryTotalCents: number;
+  /** Títulos baixados pela conciliação sem Payment (sem data): ficam fora do painel. */
+  settledWithoutPaymentCount: number;
+  formulas: typeof PERIOD_PANEL_FORMULAS;
+}
+
 export type RelatoriosData =
   | DailySummaryData
   | MonthlyCloseData
   | ExecutiveOverviewData
-  | ExportDataData;
+  | ExportDataData
+  | PeriodPanelData;
 
 // ---------------------------------------------------------------------------
 // Constantes de regra (explícitas — recomendações são determinísticas)
@@ -1338,6 +1402,106 @@ export const relatoriosSkill: SkillDefinition<RelatoriosInput, RelatoriosData> =
         return executeExecutiveOverview(ctx);
       case "export_data":
         return executeExportData(ctx, input);
+      case "period_panel":
+        return executePeriodPanel(ctx, input);
     }
   },
 };
+
+// ---------------------------------------------------------------------------
+// Painel por Período (Dashboard) — regime de caixa, agregação no banco
+// ---------------------------------------------------------------------------
+
+const PERIOD_PANEL_SOURCES = ["payments", "payables", "receipts", "cost_centers"] as const;
+
+async function executePeriodPanel(ctx: SkillContext, input: PeriodPanelInput) {
+  const period = resolvePeriod({
+    year: input.year,
+    month: input.month,
+    dayFrom: input.dayFrom,
+    dayTo: input.dayTo,
+  });
+  const timeZone = ctx.config.timezone;
+
+  const [groups, received, payYears, recYears, allCenters, settledWithoutPaymentCount] =
+    await Promise.all([
+      ctx.repos.payments.sumExecutedByDimensions(ctx.companyId, period.from, period.to, timeZone),
+      ctx.repos.receipts.sumRegisteredBetween(ctx.companyId, period.from, period.to),
+      ctx.repos.payments.listExecutedYears(ctx.companyId, timeZone),
+      ctx.repos.receipts.listRegisteredYears(ctx.companyId),
+      ctx.repos.costCenters.listAll(ctx.companyId),
+      ctx.repos.payables.countSettledWithoutPayment(ctx.companyId),
+    ]);
+
+  const costCenters: PeriodPanelCostCenterOption[] = allCenters
+    .filter((c) => c.active && (c.scope === "payable" || c.scope === "both"))
+    .sort((a, b) => a.code.localeCompare(b.code, "pt-BR", { numeric: true }))
+    .map((c) => ({ id: c.id, code: c.code, name: c.name }));
+  if (input.costCenterId && !allCenters.some((c) => c.id === input.costCenterId)) {
+    throw new ValidationError(`Centro de custo ${input.costCenterId} não encontrado.`);
+  }
+
+  const summary = summarizePaid(groups, allCenters, {
+    costCenterId: input.costCenterId ?? null,
+    category: input.category ?? null,
+  });
+
+  const currentYear = Number(ctx.today().slice(0, 4));
+  const availableYears = [...new Set([...payYears, ...recYears, currentYear])].sort((a, b) => a - b);
+
+  const assumptions = [
+    "Regime de CAIXA: vale a data do pagamento efetivo (Payment.executedAt, no fuso da empresa) e do recebimento efetivo (Receipt.receivedDate) — nunca o vencimento. Período inclusivo nas duas pontas.",
+    "Títulos cancelados e recebimentos estornados ficam fora. Pagamento parcial conta pelo valor efetivamente pago; recebimento pelo valor efetivamente recebido (inclui multa/juros).",
+    "Título pago sem classificação de custo entra em 'Não classificado' (Fixo + Variável + Não classificado = Total Pago); sem centro de custo entra na faixa 'Sem centro' (Σ centros + Sem centro = Total Pago).",
+    "Transferências entre contas, aportes, dividendos, pró-labore e empréstimos lançados como títulos a pagar ENTRAM no Total Pago pela categoria de fornecedor do título — não há regra que os separe (decisão pendente D2 do relatório de fórmulas).",
+    "Fonte oficial = títulos liquidados (só eles têm centro de custo, categoria e classificação); transações bancárias importadas não entram.",
+  ];
+  if (
+    (input.dayFrom !== undefined && period.dayFrom !== input.dayFrom) ||
+    (input.dayTo !== undefined && period.month !== undefined && period.dayTo !== input.dayTo)
+  ) {
+    assumptions.push(
+      `Dias ajustados ao tamanho do mês: período efetivo ${period.label}.`
+    );
+  }
+  const alerts: SkillAlert[] = [];
+  if (settledWithoutPaymentCount > 0) {
+    alerts.push({
+      severity: "info",
+      code: "settled_without_payment_ignored",
+      message: `${settledWithoutPaymentCount} título(s) baixado(s) pela conciliação bancária sem registro de pagamento (sem data de pagamento) ficam FORA do painel.`,
+      entityType: "payable",
+    });
+  }
+
+  const data: PeriodPanelData = {
+    regime: "caixa",
+    period,
+    availableYears,
+    totals: {
+      receivedCents: received.totalCents,
+      receivedCount: received.count,
+      paidCents: summary.paidCents,
+      paidCount: summary.paidCount,
+      fixedCents: summary.fixedCents,
+      variableCents: summary.variableCents,
+      unclassifiedCents: summary.unclassifiedCents,
+    },
+    costCenters,
+    byCostCenter: summary.byCostCenter,
+    selectedCostCenterId: summary.selectedCostCenterId,
+    costCenterTotalCents: summary.costCenterTotalCents,
+    categories: summary.categories,
+    selectedCategory: summary.selectedCategory,
+    categoryTotalCents: summary.categoryTotalCents,
+    settledWithoutPaymentCount,
+    formulas: PERIOD_PANEL_FORMULAS,
+  };
+
+  return makeResult<RelatoriosData>(SKILL_NAME, ctx, data, {
+    confidence: 1.0,
+    alerts,
+    assumptions,
+    dataSources: [...PERIOD_PANEL_SOURCES],
+  });
+}

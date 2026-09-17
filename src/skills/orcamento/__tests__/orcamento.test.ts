@@ -407,6 +407,30 @@ describe("orcamento_planejamento — variance_report", () => {
     expect(naoOrcado[0].description).toMatch(/R\$\s?200,00/);
   });
 
+  it("pagamento executado às 22h30 de 31/07 (São Paulo) é realizado de JULHO, não de agosto", async () => {
+    // Auditoria de fórmulas (ORC-02): o mês do realizado usava executedAt em
+    // UTC; 2026-08-01T01:30Z é 31/07 22:30 em America/Sao_Paulo.
+    const env = createTestEnv();
+    const cat = seedCategory(env, { id: "cat_tz", name: "Fuso" });
+    await run(env, {
+      action: "upsert_budget",
+      name: "Orçamento 2026",
+      year: 2026,
+      lines: [
+        { period: "2026-07", categoryId: cat.id, amountCents: 100_000 },
+        { period: "2026-08", categoryId: cat.id, amountCents: 100_000 },
+      ],
+    });
+    const payable = seedPayable(env, { categoryId: cat.id, dueDate: "2026-07-31", amountCents: 60_000 });
+    seedExecutedPayment(env, payable.id, 60_000, "2026-08-01T01:30:00.000Z");
+
+    const jul = (await run(env, { action: "variance_report", period: "2026-07" })).data as VarianceReportData;
+    const ago = (await run(env, { action: "variance_report", period: "2026-08" })).data as VarianceReportData;
+    expect(jul.lines.find((l) => l.categoryId === cat.id)?.actualCents).toBe(60_000);
+    expect(ago.lines.find((l) => l.categoryId === cat.id)?.actualCents).toBe(0);
+    expect(jul.formula).toContain("no fuso da empresa");
+  });
+
   it("não duplica o alerta persistido em reexecução (dedupe por code+entityId)", async () => {
     const env = createTestEnv();
     await seedVarianceScenario(env);
@@ -478,6 +502,56 @@ describe("orcamento_planejamento — check_impact", () => {
     );
     expect(persisted).toHaveLength(1);
     expect(persisted[0].entityId).toBe("payb_y");
+  });
+
+  it("linha orçada por categoria + centro de custo: só títulos do MESMO centro entram no comprometido", async () => {
+    // Auditoria de fórmulas (ORC-09): a linha era casada por (categoria, centro),
+    // mas o comprometido somava a categoria inteira, de todos os centros.
+    const env = createTestEnv();
+    const cat = seedCategory(env, { id: "cat_dim", name: "Marketing" });
+    const ccA = seedCostCenter(env, { id: "cc_a", code: "A" });
+    const ccB = seedCostCenter(env, { id: "cc_b", code: "B" });
+    await run(env, {
+      action: "upsert_budget",
+      name: "Orçamento 2026",
+      year: 2026,
+      lines: [{ period: "2026-09", categoryId: cat.id, costCenterId: ccA.id, amountCents: 100_000 }],
+    });
+    seedPayable(env, { id: "payb_a1", categoryId: cat.id, costCenterId: ccA.id, dueDate: "2026-09-05", amountCents: 80_000 });
+    seedPayable(env, { id: "payb_b1", categoryId: cat.id, costCenterId: ccB.id, dueDate: "2026-09-06", amountCents: 70_000 }); // outro centro
+    const target = seedPayable(env, { id: "payb_a2", categoryId: cat.id, costCenterId: ccA.id, dueDate: "2026-09-20", amountCents: 50_000 });
+
+    const res = await run(env, { action: "check_impact", payableIds: [target.id] });
+    const data = res.data as CheckImpactData;
+    // comprometido = 80.000 + 50.000 (o próprio); o título do centro B (70.000) fica fora
+    expect(data.impacts[0].committedCents).toBe(130_000);
+    expect(data.impacts[0].remainingCents).toBe(-30_000);
+    expect(data.impacts[0].exceeded).toBe(true);
+    expect(data.formula).toContain("mesmas dimensões da linha orçada");
+  });
+
+  it("linha orçada só por centro de custo: soma todas as categorias daquele centro", async () => {
+    const env = createTestEnv();
+    const cat1 = seedCategory(env, { id: "cat_1" });
+    const cat2 = seedCategory(env, { id: "cat_2" });
+    const ccA = seedCostCenter(env, { id: "cc_only" });
+    const ccB = seedCostCenter(env, { id: "cc_other" });
+    await run(env, {
+      action: "upsert_budget",
+      name: "Orçamento 2026",
+      year: 2026,
+      lines: [{ period: "2026-09", costCenterId: ccA.id, amountCents: 80_000 }],
+    });
+    seedPayable(env, { id: "p1", categoryId: cat1.id, costCenterId: ccA.id, dueDate: "2026-09-05", amountCents: 60_000 });
+    seedPayable(env, { id: "p3", categoryId: cat1.id, costCenterId: ccB.id, dueDate: "2026-09-05", amountCents: 90_000 }); // outro centro
+    const target = seedPayable(env, { id: "p2", categoryId: cat2.id, costCenterId: ccA.id, dueDate: "2026-09-10", amountCents: 30_000 });
+
+    const res = await run(env, { action: "check_impact", payableIds: [target.id] });
+    const data = res.data as CheckImpactData;
+    // comprometido do centro A = 60.000 (cat_1) + 30.000 (cat_2, o próprio) = 90.000 > 80.000
+    expect(data.impacts[0].budgetedCents).toBe(80_000);
+    expect(data.impacts[0].committedCents).toBe(90_000);
+    expect(data.impacts[0].exceeded).toBe(true);
   });
 
   it("dentro do orçamento não gera alerta e considera realizado do mês", async () => {

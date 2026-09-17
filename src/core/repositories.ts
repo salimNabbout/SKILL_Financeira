@@ -26,6 +26,7 @@ import type {
   CollectionMessageStatus,
   Company,
   CostCenter,
+  CostClassification,
   Customer,
   EventRecordEntity,
   FinancialDocument,
@@ -172,6 +173,13 @@ export interface PayableRepo extends BaseRepo<Payable> {
    */
   listPaidBetween(companyId: ID, start: ISODate, end: ISODate): Promise<Payable[]>;
   /**
+   * Quantidade de títulos com baixa (paidCents > 0) cujo valor pago excede a
+   * soma dos Payments executados — baixados pela conciliação bancária, que
+   * não cria Payment e por isso não têm data de pagamento. Contado no banco.
+   * O Painel por Período os ignora e informa a contagem.
+   */
+  countSettledWithoutPayment(companyId: ID): Promise<number>;
+  /**
    * Ordem: vencimento asc, id asc. Filtros de status, fornecedor e intervalo
    * de vencimento (dueFrom/dueTo, inclusivos) são aplicados no banco — a
    * paginação e o `total` refletem o filtro.
@@ -208,14 +216,53 @@ export interface ReceivableRepo extends BaseRepo<Receivable> {
   ): Promise<Page<Receivable>>;
 }
 
+/**
+ * Uma célula da agregação de pagamentos executados: valor e quantidade por
+ * (classificação de custo, centro de custo, categoria de fornecedor) do
+ * título. `undefined` = título sem a dimensão.
+ */
+export interface ExecutedPaymentsGroup {
+  costClassification?: CostClassification;
+  costCenterId?: ID;
+  supplierCategory?: string;
+  totalCents: number;
+  count: number;
+}
+
 export interface PaymentRepo extends BaseRepo<Payment> {
   listByStatus(companyId: ID, statuses: PaymentStatus[]): Promise<Payment[]>;
   listByPayable(companyId: ID, payableId: ID): Promise<Payment[]>;
+  /**
+   * Agregação NO BANCO (regime de caixa): pagamentos com status "executed"
+   * cuja data de execução — `executedAt` convertido para `timeZone` — cai em
+   * [from, to] (inclusivo), agrupados pelas dimensões do título. Títulos
+   * cancelados ficam de fora.
+   */
+  sumExecutedByDimensions(
+    companyId: ID,
+    from: ISODate,
+    to: ISODate,
+    timeZone: string
+  ): Promise<ExecutedPaymentsGroup[]>;
+  /** Anos (no fuso da empresa) que têm pagamento executado, em ordem crescente. */
+  listExecutedYears(companyId: ID, timeZone: string): Promise<number[]>;
 }
 
 export interface ReceiptRepo extends BaseRepo<Receipt> {
   listByReceivable(companyId: ID, receivableId: ID): Promise<Receipt[]>;
   listByDateRange(companyId: ID, start: ISODate, end: ISODate): Promise<Receipt[]>;
+  /**
+   * Soma NO BANCO (regime de caixa) dos recebimentos ativos (status ≠ canceled)
+   * com `receivedDate` em [from, to] (inclusivo) — `amountCents`, o valor que
+   * efetivamente entrou (inclui multa/juros).
+   */
+  sumRegisteredBetween(
+    companyId: ID,
+    from: ISODate,
+    to: ISODate
+  ): Promise<{ totalCents: number; count: number }>;
+  /** Anos com recebimento ativo, em ordem crescente. */
+  listRegisteredYears(companyId: ID): Promise<number[]>;
 }
 
 // --- Orçamento --------------------------------------------------------------

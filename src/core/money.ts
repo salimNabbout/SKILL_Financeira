@@ -123,10 +123,12 @@ export function computeLateFee(
 ): LateFeeResult {
   const days = Math.max(0, daysLate);
   const fineCents = days > 0 ? percentOf(principalCents, policy.finePercent) : 0;
+  // Aritmética inteira até a divisão final: `pct / 100` não é exato em binário
+  // e, em meio centavo (ex.: 6660 × 1% × 25 / 30 = 55,5), arredondava para
+  // baixo. Multiplicar primeiro e dividir uma única vez por 3000 (100 × 30)
+  // mantém o half-up correto.
   const interestCents =
-    days > 0
-      ? Math.round((principalCents * (policy.monthlyInterestPercent / 100) * days) / 30)
-      : 0;
+    days > 0 ? Math.round((principalCents * policy.monthlyInterestPercent * days) / 3000) : 0;
   return {
     fineCents,
     interestCents,

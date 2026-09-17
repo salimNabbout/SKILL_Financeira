@@ -106,6 +106,29 @@ describe("SkillResultMeta", () => {
   });
 });
 
+describe("StatCard com detalhes", () => {
+  it("renderiza o bloco expansível com o rótulo e o conteúdo da fonte", async () => {
+    const { StatCard } = await import("@/components/ui");
+    const html = renderToStaticMarkup(
+      createElement(StatCard, {
+        label: "Saldo disponível",
+        value: "R$ 1,00",
+        details: createElement("p", null, "Fontes: bank_accounts"),
+        detailsLabel: "Ver detalhes (fonte)",
+      })
+    );
+    expect(html).toContain("<details");
+    expect(html).toContain("Ver detalhes (fonte)");
+    expect(html).toContain("Fontes: bank_accounts");
+  });
+
+  it("sem detalhes não renderiza o bloco", async () => {
+    const { StatCard } = await import("@/components/ui");
+    const html = renderToStaticMarkup(createElement(StatCard, { label: "X", value: "1" }));
+    expect(html).not.toContain("<details");
+  });
+});
+
 describe("SkillUnavailableCard", () => {
   it("exibe mensagem padrão e detalhe do alerta", () => {
     const html = renderToStaticMarkup(

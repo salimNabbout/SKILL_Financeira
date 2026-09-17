@@ -3,47 +3,14 @@ import { Badge, Card, EmptyState, PageHeader, StatCard, Table, Td } from "@/comp
 import { getContainer } from "@/lib/container";
 import { requireSession } from "@/lib/session";
 import { formatBR, formatBRL } from "@/lib/format";
-import {
-  addMonths,
-  endOfMonth,
-  monthOf,
-  startOfMonth,
-  todayInTz,
-  type ISODate,
-  type ISOMonth,
-} from "@/core/dates";
-import type { Payable, PayableStatus, Receivable, ReceivableStatus } from "@/core/entities";
-import { payableRemainingCents, receivableRemainingCents } from "@/core/money";
-
-// Mesma semântica de OPEN_STATUSES da skill contas-a-pagar: só títulos em
-// aberto entram na agenda (pagos/recebidos e cancelados ficam de fora).
-const PAYABLE_OPEN: PayableStatus[] = ["open", "partially_paid", "scheduled"];
-const RECEIVABLE_OPEN: ReceivableStatus[] = ["open", "partially_received"];
+import { addMonths, endOfMonth, monthOf, startOfMonth, todayInTz } from "@/core/dates";
+import { buildAgendaMonth, resolveAgendaMonth, type DayCell } from "./_lib/agenda-month";
 
 const MESES = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
 const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-
-/** Item de título já resolvido para exibição (nome da contraparte + saldo). */
-interface AgendaItem {
-  id: string;
-  party: string;
-  description: string;
-  remainingCents: number;
-  dueDate: ISODate;
-}
-
-interface DayCell {
-  day: number; // 1..N
-  date: ISODate;
-  payables: AgendaItem[];
-  receivables: AgendaItem[];
-  outCents: number; // saídas (a pagar)
-  inCents: number; // entradas (a receber)
-  netCents: number; // entradas - saídas
-}
 
 export default async function AgendaPage({
   searchParams,
@@ -57,12 +24,7 @@ export default async function AgendaPage({
   const today = todayInTz(clock.now(), session.config.timezone);
 
   // Mês exibido: dos searchParams (validados), senão o mês de hoje.
-  const anoNum = ano && /^\d{4}$/.test(ano) ? Number(ano) : Number(today.slice(0, 4));
-  const mesNum =
-    mes && /^\d{1,2}$/.test(mes) && Number(mes) >= 1 && Number(mes) <= 12
-      ? Number(mes)
-      : Number(today.slice(5, 7));
-  const month: ISOMonth = `${anoNum}-${String(mesNum).padStart(2, "0")}`;
+  const { month, anoNum, mesNum } = resolveAgendaMonth(today, ano, mes);
   const inicioDoMes = startOfMonth(month); // dia 1
   const fimDoMes = endOfMonth(month); // último dia real (fev/30 dias/bissexto)
 
@@ -77,62 +39,22 @@ export default async function AgendaPage({
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const customerName = new Map(customers.map((c) => [c.id, c.name]));
 
-  const payables = payablesRaw.filter((p) => PAYABLE_OPEN.includes(p.status));
-  const receivables = receivablesRaw.filter((r) => RECEIVABLE_OPEN.includes(r.status));
-
-  const daysInMonth = Number(fimDoMes.slice(8, 10));
-  // Dia da semana (0=Dom) do dia 1 — para as células vazias iniciais.
-  const firstWeekday = new Date(Date.UTC(anoNum, mesNum - 1, 1)).getUTCDay();
-
-  // Estrutura por dia (índice 1..daysInMonth).
-  const cells: DayCell[] = Array.from({ length: daysInMonth }, (_, i) => {
-    const day = i + 1;
-    return {
-      day,
-      date: `${month}-${String(day).padStart(2, "0")}`,
-      payables: [],
-      receivables: [],
-      outCents: 0,
-      inCents: 0,
-      netCents: 0,
-    };
+  // Cálculo puro (auditado em __tests__/agenda-month.test.ts).
+  const agenda = buildAgendaMonth(month, payablesRaw, receivablesRaw, {
+    supplier: (id) => supplierName.get(id) ?? id,
+    customer: (id) => customerName.get(id) ?? id,
   });
-
-  for (const p of payables) {
-    const day = Number(p.dueDate.slice(8, 10));
-    const cell = cells[day - 1];
-    if (!cell) continue;
-    const remainingCents = payableRemainingCents(p);
-    cell.payables.push({
-      id: p.id,
-      party: supplierName.get(p.supplierId) ?? p.supplierId,
-      description: p.description,
-      remainingCents,
-      dueDate: p.dueDate,
-    });
-    cell.outCents += remainingCents;
-  }
-  for (const r of receivables) {
-    const day = Number(r.dueDate.slice(8, 10));
-    const cell = cells[day - 1];
-    if (!cell) continue;
-    const remainingCents = receivableRemainingCents(r);
-    cell.receivables.push({
-      id: r.id,
-      party: customerName.get(r.customerId) ?? r.customerId,
-      description: r.description,
-      remainingCents,
-      dueDate: r.dueDate,
-    });
-    cell.inCents += remainingCents;
-  }
-  for (const c of cells) c.netCents = c.inCents - c.outCents;
-
-  // Consolidado do mês.
-  const monthOutCents = cells.reduce((acc, c) => acc + c.outCents, 0);
-  const monthInCents = cells.reduce((acc, c) => acc + c.inCents, 0);
-  const monthNetCents = monthInCents - monthOutCents;
-  const hasMovement = payables.length > 0 || receivables.length > 0;
+  const {
+    daysInMonth,
+    firstWeekday,
+    cells,
+    monthOutCents,
+    monthInCents,
+    monthNetCents,
+    hasMovement,
+    monthPayables,
+    monthReceivables,
+  } = agenda;
 
   // Navegação de mês.
   const prevMonth = monthOf(addMonths(inicioDoMes, -1));
@@ -147,26 +69,6 @@ export default async function AgendaPage({
   const leadingBlanks = Array.from({ length: firstWeekday }, (_, i) => i);
   const totalSlots = firstWeekday + daysInMonth;
   const trailingBlanks = Array.from({ length: (7 - (totalSlots % 7)) % 7 }, (_, i) => i);
-
-  // Detalhamento: títulos do mês ordenados por vencimento.
-  const monthPayables = [...payables]
-    .map((p) => ({
-      id: p.id,
-      party: supplierName.get(p.supplierId) ?? p.supplierId,
-      description: p.description,
-      remainingCents: payableRemainingCents(p),
-      dueDate: p.dueDate,
-    }))
-    .sort((a, b) => (a.dueDate === b.dueDate ? a.id.localeCompare(b.id) : a.dueDate.localeCompare(b.dueDate)));
-  const monthReceivables = [...receivables]
-    .map((r) => ({
-      id: r.id,
-      party: customerName.get(r.customerId) ?? r.customerId,
-      description: r.description,
-      remainingCents: receivableRemainingCents(r),
-      dueDate: r.dueDate,
-    }))
-    .sort((a, b) => (a.dueDate === b.dueDate ? a.id.localeCompare(b.id) : a.dueDate.localeCompare(b.dueDate)));
 
   function isOverdue(cell: DayCell): boolean {
     return cell.date < today && (cell.payables.length > 0 || cell.receivables.length > 0);

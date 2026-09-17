@@ -98,7 +98,7 @@ async function loadExporters(): Promise<ExportersModule> {
 // Execução
 // ---------------------------------------------------------------------------
 
-function buildReportContext(deps: ApiDeps, session: ApiSession): SkillContext {
+export function buildReportContext(deps: ApiDeps, session: ApiSession): SkillContext {
   const { repos, events, audit, clock, ids, ai, integrations } = deps;
   const config = session.config;
   return {
@@ -135,7 +135,7 @@ const REPORT_SOURCES: Record<ReportName, { skill: SkillName; action: string }> =
 /** Relatórios que exigem `period` na consulta. */
 const REPORTS_COM_PERIODO: ReportName[] = ["monthly_close", "reconciliation_audit"];
 
-async function runReportSkill(
+export async function runReportSkill(
   deps: ApiDeps,
   session: ApiSession,
   input: Record<string, unknown>,
