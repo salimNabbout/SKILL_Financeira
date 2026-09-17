@@ -7,20 +7,9 @@ import { formatMonthBR, isISOMonth, MonthNav } from "../_lib/month-nav";
 import { runSkillForSession } from "../_lib/run-skill";
 import { isSkillError, SkillResultMeta, SkillUnavailableCard } from "../_lib/result-meta";
 
-// Formas defensivas do contrato de controladoria_indicadores (escrita em paralelo).
-interface DreStatementView {
-  receitaBrutaCents?: number;
-  deducoesCents?: number;
-  receitaLiquidaCents?: number;
-  custosCents?: number;
-  lucroBrutoCents?: number;
-  despesasOperacionaisCents?: number;
-  ebitdaCents?: number;
-  resultadoFinanceiroCents?: number;
-  resultadoCents?: number;
-  outrasCents?: number;
-}
+import { buildRows, type DreStatementView } from "./_lib/dre-rows";
 
+// Formas defensivas do contrato de controladoria_indicadores (escrita em paralelo).
 interface BreakdownLineView {
   dreGroup?: string;
   categoryId?: string | null;
@@ -45,36 +34,6 @@ const DRE_GROUP_LABEL: Record<string, string> = {
   receitas_financeiras: "Receitas financeiras",
   outras: "Outras",
 };
-
-interface DreRow {
-  label: string;
-  valueCents: number | undefined;
-  /** Linha subtrativa exibida com sinal negativo e indentação. */
-  indent?: boolean;
-  subtotal?: boolean;
-  muted?: boolean;
-}
-
-function buildRows(d: DreStatementView | undefined): DreRow[] {
-  const neg = (v: number | undefined) => (typeof v === "number" ? -v : undefined);
-  return [
-    { label: "Receita bruta", valueCents: d?.receitaBrutaCents },
-    { label: "(-) Deduções e impostos sobre vendas", valueCents: neg(d?.deducoesCents), indent: true },
-    { label: "(=) Receita líquida", valueCents: d?.receitaLiquidaCents, subtotal: true },
-    { label: "(-) Custos", valueCents: neg(d?.custosCents), indent: true },
-    { label: "(=) Lucro bruto", valueCents: d?.lucroBrutoCents, subtotal: true },
-    { label: "(-) Despesas operacionais", valueCents: neg(d?.despesasOperacionaisCents), indent: true },
-    { label: "(=) EBITDA gerencial", valueCents: d?.ebitdaCents, subtotal: true },
-    { label: "(+/-) Resultado financeiro", valueCents: d?.resultadoFinanceiroCents, indent: true },
-    { label: "(=) Resultado do período", valueCents: d?.resultadoCents, subtotal: true },
-    {
-      label: "Outras receitas e despesas (informativo, fora do resultado)",
-      valueCents: d?.outrasCents,
-      indent: true,
-      muted: true,
-    },
-  ];
-}
 
 export default async function DrePage({
   searchParams,
