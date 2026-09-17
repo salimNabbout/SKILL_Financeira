@@ -2,6 +2,7 @@
 
 import { todayInTz, type ISODate } from "@/core/dates";
 import type {
+  Category,
   AccountingEntry,
   ActivityEvent,
   Alert,
@@ -36,6 +37,7 @@ import type {
 } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
 import type {
+  CategoryRepo,
   ExecutedPaymentsGroup,
   AccountingEntryRepo,
   ActivityEventRepo,
@@ -126,6 +128,13 @@ class MemSupplierCategoryRepo
   extends MemBase<SupplierCategory>
   implements SupplierCategoryRepo
 {
+  async delete(companyId: ID, id: ID): Promise<void> {
+    const idx = this.items.findIndex((c) => c.companyId === companyId && c.id === id);
+    if (idx >= 0) this.items.splice(idx, 1);
+  }
+}
+
+class MemCategoryRepo extends MemBase<Category> implements CategoryRepo {
   async delete(companyId: ID, id: ID): Promise<void> {
     const idx = this.items.findIndex((c) => c.companyId === companyId && c.id === id);
     if (idx >= 0) this.items.splice(idx, 1);
@@ -848,7 +857,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     payments: new MemPaymentRepo(db.payments, db.payables),
     receipts: new MemReceiptRepo(db.receipts),
     documents: new MemDocumentRepo(db.documents),
-    categories: new MemBase(db.categories),
+    categories: new MemCategoryRepo(db.categories),
     costCenters: new MemBase(db.costCenters),
     chartAccounts: new MemBase(db.chartAccounts),
     budgets: new MemBase(db.budgets),
