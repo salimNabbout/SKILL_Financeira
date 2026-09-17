@@ -1055,6 +1055,59 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /dashboard/period-panel:
+    get:
+      tags: [relatórios]
+      summary: Painel por Período do Dashboard (regime de caixa)
+      description: >
+        Totais do período pela data de pagamento/recebimento EFETIVO (nunca o
+        vencimento): Total Recebido, Total Pago, Custo Fixo pago, Custo Variável
+        pago e Não classificado; gasto por centro de custo e por categoria de
+        fornecedor (cascata). Agregação feita no banco; período inclusivo nas
+        duas pontas, no fuso da empresa. Produzido pela ação `period_panel` da
+        skill `relatorios_gerenciais` — envelope SkillResult com fórmulas,
+        suposições (regime de caixa, cancelados fora, não classificados,
+        transferências entre contas) e fontes. Mesma autenticação do dashboard.
+      parameters:
+        - name: ano
+          in: query
+          description: Padrão = ano corrente
+          schema: { type: integer, minimum: 1900, maximum: 2200 }
+        - name: mes
+          in: query
+          description: 1..12 ou "todos" (ano inteiro, dias ignorados). Padrão = mês corrente
+          schema:
+            oneOf:
+              - { type: integer, minimum: 1, maximum: 12 }
+              - { type: string, enum: [todos] }
+        - name: de
+          in: query
+          description: Dia inicial (ajustado ao tamanho do mês). Padrão = 1
+          schema: { type: integer, minimum: 1, maximum: 31 }
+        - name: ate
+          in: query
+          description: Dia final (ajustado ao tamanho do mês). Padrão = último dia
+          schema: { type: integer, minimum: 1, maximum: 31 }
+        - name: cc
+          in: query
+          description: id do centro de custo (ausente = todos)
+          schema: { type: string }
+        - name: cat
+          in: query
+          description: nome da categoria de fornecedor do título (ausente = todas)
+          schema: { type: string }
+      responses:
+        "200":
+          description: Envelope SkillResult cujo `data` é o PeriodPanelData (período, totais, centros, categorias, aviso de baixas sem pagamento, fórmulas)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/SkillResult" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /accounting/export:
     post:
       tags: [importação]

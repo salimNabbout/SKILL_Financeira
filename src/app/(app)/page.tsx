@@ -5,6 +5,10 @@ import { getContainer } from "@/lib/container";
 import { formatBR, formatBRL, formatDateTime, ROLE_LABELS } from "@/lib/format";
 import { requireSession } from "@/lib/session";
 import { InOutBarChart } from "./_lib/charts";
+import { PeriodPanel } from "./_lib/period-panel";
+import { parsePanelQuery } from "./_lib/period-panel-query";
+import { toPeriodPanelInput } from "@/app/api/_lib/dashboard";
+import type { PeriodPanelData } from "@/skills/relatorios";
 import {
   accountsSumCents,
   availableTone,
@@ -70,11 +74,36 @@ const SEVERITY_LABEL: Record<string, string> = {
   info: "Info",
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
   const session = await requireSession();
   const { repos, clock } = await getContainer();
   const companyId = session.company.id;
   const today = todayInTz(clock.now(), session.config.timezone);
+
+  // Painel por Período: filtros vêm da URL (recarregar mantém a seleção); o
+  // primeiro resultado é renderizado no servidor, as trocas seguintes batem
+  // no endpoint GET /api/v1/dashboard/period-panel sem recarregar a página.
+  const panelQuery = parsePanelQuery(sp, today);
+  const panelRes = await runSkillForSession<PeriodPanelData>(
+    session,
+    "relatorios_gerenciais",
+    toPeriodPanelInput(
+      {
+        ano: panelQuery.ano,
+        mes: panelQuery.mes,
+        de: panelQuery.de,
+        ate: panelQuery.ate,
+        cc: panelQuery.cc || undefined,
+        cat: panelQuery.cat || undefined,
+      },
+      today
+    )
+  );
 
   // Skills de leitura em sequência (trilha de auditoria encadeada por hash).
   const cashRes = await runSkillForSession<CashPositionView>(session, "tesouraria_fluxo_caixa", {
@@ -179,6 +208,8 @@ export default async function DashboardPage() {
         title="Dashboard executivo"
         subtitle={`Posição consolidada de ${session.company.name} em ${formatBR(today)}`}
       />
+
+      <PeriodPanel initial={panelRes} initialQuery={panelQuery} />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard

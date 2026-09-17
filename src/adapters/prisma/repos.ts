@@ -1506,6 +1506,21 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       });
       return rows.map(payableToDomain);
     },
+    async countSettledWithoutPayment(companyId: ID) {
+      // Título com paidCents acima da soma dos Payments executados: baixado pela
+      // conciliação bancária (que não cria Payment) — sem data de pagamento.
+      const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+        SELECT COUNT(*)::int AS "count"
+        FROM "Payable" p
+        WHERE p."companyId" = ${companyId}
+          AND p."paidCents" > 0
+          AND p."paidCents" > COALESCE((
+            SELECT SUM(y."amountCents") FROM "Payment" y
+            WHERE y."payableId" = p."id" AND y."status" = 'executed'
+          ), 0)
+      `;
+      return rows[0]?.count ?? 0;
+    },
     async listDueBetween(companyId: ID, start: ISODate, end: ISODate) {
       const rows = await prisma.payable.findMany({
         where: { companyId, dueDate: { gte: toDbDate(start), lte: toDbDate(end) } },
@@ -1658,6 +1673,52 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       });
       return rows.map(paymentToDomain);
     },
+    async sumExecutedByDimensions(companyId: ID, from: ISODate, to: ISODate, timeZone: string) {
+      // Agregação no banco. `executedAt` é timestamp SEM fuso guardado em UTC:
+      // primeiro AT TIME ZONE 'UTC' (vira timestamptz), depois AT TIME ZONE do
+      // fuso da empresa (vira hora local) — só então o ::date é o dia certo.
+      const rows = await prisma.$queryRaw<
+        Array<{
+          costClassification: string | null;
+          costCenterId: string | null;
+          supplierCategory: string | null;
+          totalCents: bigint;
+          count: bigint;
+        }>
+      >`
+        SELECT p."costClassification", p."costCenterId", p."supplierCategory",
+               COALESCE(SUM(y."amountCents"), 0)::bigint AS "totalCents",
+               COUNT(*)::bigint AS "count"
+        FROM "Payment" y
+        JOIN "Payable" p ON p."id" = y."payableId"
+        WHERE y."companyId" = ${companyId}
+          AND y."status" = 'executed'
+          AND y."executedAt" IS NOT NULL
+          AND p."status" <> 'canceled'
+          AND ((y."executedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone})::date
+              BETWEEN ${from}::date AND ${to}::date
+        GROUP BY 1, 2, 3
+      `;
+      return rows.map((r) => ({
+        costClassification:
+          r.costClassification === "fixed" || r.costClassification === "variable"
+            ? r.costClassification
+            : undefined,
+        costCenterId: r.costCenterId ?? undefined,
+        supplierCategory: r.supplierCategory ?? undefined,
+        totalCents: Number(r.totalCents),
+        count: Number(r.count),
+      }));
+    },
+    async listExecutedYears(companyId: ID, timeZone: string) {
+      const rows = await prisma.$queryRaw<Array<{ year: number }>>`
+        SELECT DISTINCT EXTRACT(YEAR FROM ((y."executedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${timeZone}))::int AS "year"
+        FROM "Payment" y
+        WHERE y."companyId" = ${companyId} AND y."status" = 'executed' AND y."executedAt" IS NOT NULL
+        ORDER BY 1
+      `;
+      return rows.map((r) => Number(r.year));
+    },
   };
 
   const receipts: ReceiptRepo = {
@@ -1696,6 +1757,28 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
         orderBy: { receivedDate: "asc" },
       });
       return rows.map(receiptToDomain);
+    },
+    async sumRegisteredBetween(companyId: ID, from: ISODate, to: ISODate) {
+      // Soma no banco; `status` nulo (linhas anteriores ao estorno existir) vale.
+      const agg = await prisma.receipt.aggregate({
+        where: {
+          companyId,
+          receivedDate: { gte: toDbDate(from), lte: toDbDate(to) },
+          NOT: { status: "canceled" },
+        },
+        _sum: { amountCents: true },
+        _count: { _all: true },
+      });
+      return { totalCents: Number(agg._sum.amountCents ?? 0n), count: agg._count._all };
+    },
+    async listRegisteredYears(companyId: ID) {
+      const rows = await prisma.$queryRaw<Array<{ year: number }>>`
+        SELECT DISTINCT EXTRACT(YEAR FROM r."receivedDate")::int AS "year"
+        FROM "Receipt" r
+        WHERE r."companyId" = ${companyId} AND r."status" <> 'canceled'
+        ORDER BY 1
+      `;
+      return rows.map((r) => Number(r.year));
     },
   };
 

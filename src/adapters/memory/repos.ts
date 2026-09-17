@@ -1,6 +1,6 @@
 /** Implementação em memória de todos os repositórios do domínio. */
 
-import type { ISODate } from "@/core/dates";
+import { todayInTz, type ISODate } from "@/core/dates";
 import type {
   AccountingEntry,
   ActivityEvent,
@@ -35,6 +35,7 @@ import type {
 } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
 import type {
+  ExecutedPaymentsGroup,
   AccountingEntryRepo,
   ActivityEventRepo,
   AlertRepo,
@@ -278,6 +279,25 @@ class MemBankTransactionRepo extends MemBase<BankTransaction> implements BankTra
 }
 
 class MemPayableRepo extends MemBase<Payable> implements PayableRepo {
+  constructor(
+    items: Payable[],
+    private readonly payments: readonly Payment[] = []
+  ) {
+    super(items);
+  }
+  async countSettledWithoutPayment(companyId: ID) {
+    const executedByPayable = new Map<ID, number>();
+    for (const y of this.payments) {
+      if (y.companyId !== companyId || y.status !== "executed") continue;
+      executedByPayable.set(y.payableId, (executedByPayable.get(y.payableId) ?? 0) + y.amountCents);
+    }
+    return this.items.filter(
+      (p) =>
+        p.companyId === companyId &&
+        p.paidCents > 0 &&
+        p.paidCents > (executedByPayable.get(p.id) ?? 0)
+    ).length;
+  }
   async findByOriginKey(companyId: ID, originKey: string) {
     const found = this.items.find(
       (p) => p.companyId === companyId && p.originKey === originKey
@@ -401,6 +421,53 @@ class MemReceivableRepo extends MemBase<Receivable> implements ReceivableRepo {
 }
 
 class MemPaymentRepo extends MemBase<Payment> implements PaymentRepo {
+  constructor(
+    items: Payment[],
+    private readonly payables: readonly Payable[] = []
+  ) {
+    super(items);
+  }
+  private executedInPeriod(companyId: ID, from: ISODate, to: ISODate, timeZone: string) {
+    const payableById = new Map(this.payables.map((p) => [p.id, p]));
+    const out: Array<{ payment: Payment; payable: Payable | undefined; day: ISODate }> = [];
+    for (const y of this.items) {
+      if (y.companyId !== companyId || y.status !== "executed" || !y.executedAt) continue;
+      const payable = payableById.get(y.payableId);
+      if (payable?.status === "canceled") continue;
+      const day = todayInTz(new Date(y.executedAt), timeZone);
+      if (day < from || day > to) continue;
+      out.push({ payment: y, payable, day });
+    }
+    return out;
+  }
+  async sumExecutedByDimensions(companyId: ID, from: ISODate, to: ISODate, timeZone: string) {
+    const groups = new Map<string, ExecutedPaymentsGroup>();
+    for (const { payment, payable } of this.executedInPeriod(companyId, from, to, timeZone)) {
+      const costClassification = payable?.costClassification;
+      const costCenterId = payable?.costCenterId;
+      const supplierCategory = payable?.supplierCategory;
+      const key = `${costClassification ?? ""}|${costCenterId ?? ""}|${supplierCategory ?? ""}`;
+      const g = groups.get(key) ?? {
+        costClassification,
+        costCenterId,
+        supplierCategory,
+        totalCents: 0,
+        count: 0,
+      };
+      g.totalCents += payment.amountCents;
+      g.count += 1;
+      groups.set(key, g);
+    }
+    return [...groups.values()];
+  }
+  async listExecutedYears(companyId: ID, timeZone: string) {
+    const years = new Set<number>();
+    for (const y of this.items) {
+      if (y.companyId !== companyId || y.status !== "executed" || !y.executedAt) continue;
+      years.add(Number(todayInTz(new Date(y.executedAt), timeZone).slice(0, 4)));
+    }
+    return [...years].sort((a, b) => a - b);
+  }
   async listByStatus(companyId: ID, statuses: PaymentStatus[]) {
     return clone(
       this.items.filter((p) => p.companyId === companyId && statuses.includes(p.status))
@@ -414,6 +481,25 @@ class MemPaymentRepo extends MemBase<Payment> implements PaymentRepo {
 }
 
 class MemReceiptRepo extends MemBase<Receipt> implements ReceiptRepo {
+  async sumRegisteredBetween(companyId: ID, from: ISODate, to: ISODate) {
+    let totalCents = 0;
+    let count = 0;
+    for (const r of this.items) {
+      if (r.companyId !== companyId || r.status === "canceled") continue;
+      if (r.receivedDate < from || r.receivedDate > to) continue;
+      totalCents += r.amountCents;
+      count += 1;
+    }
+    return { totalCents, count };
+  }
+  async listRegisteredYears(companyId: ID) {
+    const years = new Set<number>();
+    for (const r of this.items) {
+      if (r.companyId !== companyId || r.status === "canceled") continue;
+      years.add(Number(r.receivedDate.slice(0, 4)));
+    }
+    return [...years].sort((a, b) => a - b);
+  }
   async listByReceivable(companyId: ID, receivableId: ID) {
     return clone(
       this.items.filter((r) => r.companyId === companyId && r.receivableId === receivableId)
@@ -745,9 +831,9 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),
     statementImports: new MemStatementImportRepo(db.statementImports),
-    payables: new MemPayableRepo(db.payables),
+    payables: new MemPayableRepo(db.payables, db.payments),
     receivables: new MemReceivableRepo(db.receivables),
-    payments: new MemPaymentRepo(db.payments),
+    payments: new MemPaymentRepo(db.payments, db.payables),
     receipts: new MemReceiptRepo(db.receipts),
     documents: new MemDocumentRepo(db.documents),
     categories: new MemBase(db.categories),

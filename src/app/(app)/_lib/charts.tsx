@@ -283,3 +283,141 @@ export function BalanceLineChart({
     </svg>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Barras rotuladas (Painel por Período): 4 séries, uma cor por barra
+// ---------------------------------------------------------------------------
+
+export type BarTone = "ok" | "crit" | "brand" | "warn";
+
+export interface LabeledBar {
+  label: string;
+  valueCents: number;
+  tone: BarTone;
+}
+
+const TONE_VAR: Record<BarTone, string> = {
+  ok: "var(--ok)",
+  crit: "var(--crit)",
+  brand: "var(--brand)",
+  warn: "var(--warn)",
+};
+
+/**
+ * Barras independentes (uma cor cada), rótulo de valor em R$ pt-BR sobre cada
+ * barra e tooltip nativo com o valor exato. Texto sempre em tokens de tinta.
+ * O chamador decide o estado vazio (não desenhar gráfico zerado sem explicação).
+ */
+export function LabeledBarChart({
+  bars,
+  width = 640,
+  height = 260,
+}: {
+  bars: LabeledBar[];
+  width?: number;
+  height?: number;
+}) {
+  if (bars.length === 0) {
+    return <p className="text-sm text-[var(--ink-muted)]">Sem dados para o gráfico.</p>;
+  }
+  const margin = { top: 24, right: 12, bottom: 28, left: 66 };
+  const plotW = width - margin.left - margin.right;
+  const plotH = height - margin.top - margin.bottom;
+  const maxValue = Math.max(0, ...bars.map((b) => b.valueCents));
+  const scale = niceScale(0, maxValue > 0 ? maxValue : 100_000, 4);
+  const y = (v: number) => scaleValue(v, scale.min, scale.max, margin.top + plotH, margin.top);
+  const band = plotW / bars.length;
+  const barW = Math.max(12, Math.min(56, band * 0.55));
+
+  return (
+    <div>
+      <div className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--ink-muted)]">
+        {bars.map((b) => (
+          <span key={b.label} className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ backgroundColor: TONE_VAR[b.tone] }}
+              aria-hidden
+            />
+            {b.label}
+          </span>
+        ))}
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-auto w-full"
+        style={{ maxWidth: width }}
+        role="img"
+        aria-label={`Gráfico de barras: ${bars.map((b) => `${b.label} ${formatBRL(b.valueCents)}`).join(", ")}`}
+      >
+        {scale.ticks.map((t) => (
+          <g key={t}>
+            <line
+              x1={margin.left}
+              x2={width - margin.right}
+              y1={y(t)}
+              y2={y(t)}
+              stroke="var(--line)"
+              strokeWidth={1}
+            />
+            <text
+              x={margin.left - 6}
+              y={y(t) + 3}
+              textAnchor="end"
+              fontSize={10}
+              fill="var(--ink-muted)"
+            >
+              {formatBRLCompact(t)}
+            </text>
+          </g>
+        ))}
+        {bars.map((b, i) => {
+          const cx = margin.left + band * i + band / 2;
+          const x = cx - barW / 2;
+          const h = Math.max(0, y(0) - y(b.valueCents));
+          const tooltip = `${b.label}: ${formatBRL(b.valueCents)}`;
+          return (
+            <g key={b.label} data-bar={b.label}>
+              {h > 0 ? (
+                <path d={roundedTopRectPath(x, y(b.valueCents), barW, h)} fill={TONE_VAR[b.tone]}>
+                  <title>{tooltip}</title>
+                </path>
+              ) : (
+                <line x1={x} x2={x + barW} y1={y(0)} y2={y(0)} stroke={TONE_VAR[b.tone]} strokeWidth={2}>
+                  <title>{tooltip}</title>
+                </line>
+              )}
+              <text
+                x={cx}
+                y={Math.max(margin.top - 6, y(b.valueCents) - 6)}
+                textAnchor="middle"
+                fontSize={11}
+                fontWeight={600}
+                fill="var(--ink)"
+              >
+                {formatBRL(b.valueCents)}
+              </text>
+              <text
+                x={cx}
+                y={height - 8}
+                textAnchor="middle"
+                fontSize={10}
+                fill="var(--ink-muted)"
+              >
+                {b.label}
+              </text>
+            </g>
+          );
+        })}
+        <line
+          x1={margin.left}
+          x2={width - margin.right}
+          y1={y(0)}
+          y2={y(0)}
+          stroke="var(--ink-muted)"
+          strokeWidth={1}
+        />
+      </svg>
+    </div>
+  );
+}
