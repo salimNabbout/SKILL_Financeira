@@ -36,4 +36,16 @@ describe("money", () => {
     const result = computeLateFee(100000, 0, { finePercent: 2, monthlyInterestPercent: 1 });
     expect(result.totalCents).toBe(100000);
   });
+
+  it("juros pró-rata arredondam em aritmética inteira (meio centavo sobe, sem erro de ponto flutuante)", () => {
+    // R$ 66,60 × 1% a.m. × 25 dias / 30 = 55,5 centavos → 56 (half-up).
+    // Em ponto flutuante, 6660 × (1/100) × 25 / 30 = 55,49999… e arredondava para 55.
+    expect(computeLateFee(6660, 25, { finePercent: 0, monthlyInterestPercent: 1 }).interestCents).toBe(56);
+    // R$ 33,30 × 2% a.m. × 25 dias / 30 = 55,5 → 56 (mesmo caso com outra taxa).
+    expect(computeLateFee(3330, 25, { finePercent: 0, monthlyInterestPercent: 2 }).interestCents).toBe(56);
+    // Taxa fracionária continua funcionando: R$ 1,20 × 1,5% × 25 / 30 = 1,5 → 2.
+    expect(computeLateFee(120, 25, { finePercent: 0, monthlyInterestPercent: 1.5 }).interestCents).toBe(2);
+    // Dias negativos são tratados como zero.
+    expect(computeLateFee(100000, -3, { finePercent: 2, monthlyInterestPercent: 1 }).totalCents).toBe(100000);
+  });
 });
