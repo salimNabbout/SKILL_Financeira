@@ -75,6 +75,11 @@ export interface EditPayablePrefill {
  *    corrigir uma data digitada errada na conciliação — é ela, contra o
  *    vencimento, que decide Pago / Pago no Vencimento / Pago Atrasado. O
  *    vencimento fica visível em leitura, por ser a referência da comparação.
+ *  - "classificationOnly" (Contas a pagar, título JÁ PAGO): SÓ Categoria,
+ *    Classificação do CUSTO e Centro de Custo. A skill recusa editar o resto
+ *    de um título quitado; essas três dimensões são de análise e podem ser
+ *    corrigidas depois da conciliação — alimentam os totais por categoria,
+ *    custo fixo/variável e centro de custo.
  *
  * `action` é a server action de destino, passada pelo chamador: cada tela
  * redireciona e revalida a SUA própria rota.
@@ -94,7 +99,7 @@ export function EditPayableForm({
   /** Campos ocultos extras que a tela chamadora precisa devolver na action
    *  (ex.: o id do pagamento, para reabrir a linha certa em caso de erro). */
   hiddenFields?: Record<string, string>;
-  mode?: "full" | "paymentDateOnly";
+  mode?: "full" | "paymentDateOnly" | "classificationOnly";
   categories?: string[];
   costCenters?: CostCenterOption[];
   prefill?: EditPayablePrefill;
@@ -109,6 +114,10 @@ export function EditPayableForm({
   // de escondidos — o colaborador continua vendo o título inteiro, incluindo o
   // vencimento, que é contra o que a data de pagamento é comparada.
   const soDataPagamento = mode === "paymentDateOnly";
+  const soClassificacao = mode === "classificationOnly";
+  // Campos que NENHUM modo restrito aceita alterar (descrição, valor, datas e
+  // observação): desabilitados e sem `name`, para não serem submetidos.
+  const restrito = soDataPagamento || soClassificacao;
   const CUSTO_LABEL: Record<string, string> = {
     fixed: "Custo Fixo",
     variable: "Custo Variável",
@@ -146,7 +155,7 @@ export function EditPayableForm({
           </span>
         </Field>
         <Field label="Descrição">
-          {soDataPagamento ? (
+          {restrito ? (
             <input value={payable.description} disabled className={readOnlyClass} />
           ) : (
             <input
@@ -159,7 +168,7 @@ export function EditPayableForm({
           )}
         </Field>
         <Field label="Valor (R$)">
-          {soDataPagamento ? (
+          {restrito ? (
             <input value={payable.amount} disabled className={readOnlyClass} />
           ) : (
             <MoneyInput
@@ -180,22 +189,22 @@ export function EditPayableForm({
         <Field label="Emissão">
           <input
             type="date"
-            name={soDataPagamento ? undefined : "issueDate"}
-            required={!soDataPagamento}
-            disabled={soDataPagamento}
+            name={restrito ? undefined : "issueDate"}
+            required={!restrito}
+            disabled={restrito}
             defaultValue={prefill?.issueDate ?? payable.issueDate}
-            className={soDataPagamento ? readOnlyClass : inputClass}
+            className={restrito ? readOnlyClass : inputClass}
           />
         </Field>
         <Field label="Vencimento">
           <input
             type="date"
-            name={soDataPagamento ? undefined : "dueDate"}
-            required={!soDataPagamento}
-            disabled={soDataPagamento}
+            name={restrito ? undefined : "dueDate"}
+            required={!restrito}
+            disabled={restrito}
             min={payable.issueDate}
             defaultValue={prefill?.dueDate ?? payable.dueDate}
-            className={soDataPagamento ? readOnlyClass : inputClass}
+            className={restrito ? readOnlyClass : inputClass}
           />
         </Field>
         {/* Data de Pagamento: o único campo editável no modo restrito. Só
@@ -224,6 +233,7 @@ export function EditPayableForm({
           ) : (
             <select
               name="supplierCategory"
+              autoFocus={soClassificacao}
               defaultValue={prefill?.supplierCategory ?? payable.supplierCategory}
               className={inputClass}
             >
@@ -344,11 +354,11 @@ export function EditPayableForm({
         <div className="md:col-span-4">
           <Field label="Observação">
             <textarea
-              name={soDataPagamento ? undefined : "notes"}
+              name={restrito ? undefined : "notes"}
               rows={3}
-              disabled={soDataPagamento}
+              disabled={restrito}
               defaultValue={prefill?.notes ?? payable.notes}
-              className={soDataPagamento ? readOnlyClass : inputClass}
+              className={restrito ? readOnlyClass : inputClass}
               placeholder="Anotações sobre este título (opcional)."
             />
           </Field>
@@ -367,9 +377,23 @@ export function EditPayableForm({
           </p>
         ) : null}
 
+        {soClassificacao ? (
+          <p className="md:col-span-4 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            Título já pago: só <strong>Categoria</strong>,{" "}
+            <strong>Classificação do CUSTO</strong> e <strong>Centro de Custo</strong>{" "}
+            podem ser alterados. Valor, datas, descrição e a baixa não mudam. Os totais
+            por categoria, custo fixo/variável e centro de custo (Painel por Período e
+            Contas a pagar) passam a refletir a nova classificação.
+          </p>
+        ) : null}
+
         <div className="flex flex-wrap items-end gap-2 md:col-span-4">
           <Button variant="warn" type="submit">
-            {soDataPagamento ? "Salvar data de pagamento" : "Salvar alterações"}
+            {soDataPagamento
+              ? "Salvar data de pagamento"
+              : soClassificacao
+                ? "Salvar classificação"
+                : "Salvar alterações"}
           </Button>
           <Link
             href={cancelHref}

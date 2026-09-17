@@ -3,6 +3,7 @@ import { createTestEnv, type TestEnv } from "@/adapters/memory/test-env";
 import type {
   BankAccount,
   Category,
+  CostCenter,
   Payable,
   RecurringTemplate,
   Supplier,
@@ -18,6 +19,7 @@ import {
   type GenerateRecurringData,
   type AdjustPaymentDateData,
   type ListDueData,
+  type ReclassifyPayableData,
   type ReconcilePaymentData,
   type ReversePaymentData,
   type SchedulePaymentData,
@@ -1427,5 +1429,217 @@ describe("contas_a_pagar — correção da data de pagamento", () => {
 
     expect(res.status).toBe("error");
     expect(res.alerts[0].message).toMatch(/não pode ser editado/);
+  });
+});
+
+describe("contas_a_pagar — reclassify_payable (título pago)", () => {
+  function seedCostCenter(env: TestEnv, over: Partial<CostCenter> = {}): CostCenter {
+    const costCenter: CostCenter = {
+      id: "cc_1",
+      companyId: env.company.id,
+      code: "CC-01",
+      name: "Loja",
+      active: true,
+      scope: "both",
+      ...over,
+    };
+    env.db.costCenters.push(costCenter);
+    return costCenter;
+  }
+
+  /** Título classificado e QUITADO pelo ciclo completo (agendar → aprovar → conciliar). */
+  async function pagoClassificado(env: TestEnv, over: Partial<Payable> = {}) {
+    seedSupplier(env);
+    seedBankAccount(env);
+    seedCostCenter(env);
+    seedCostCenter(env, { id: "cc_2", code: "CC-02", name: "Administrativo" });
+    const payable = seedPayable(env, {
+      amountCents: 50_000,
+      supplierCategory: "Insumos",
+      costClassification: "variable",
+      costCenterId: "cc_1",
+      ...over,
+    });
+    const { data: scheduled } = await schedule(env, payable.id);
+    await decide(env, scheduled.payment.id, "approved");
+    await reconcile(env, scheduled.payment.id);
+    return payable;
+  }
+
+  function reclassificar(
+    env: TestEnv,
+    payableId: string,
+    over: Record<string, unknown> = {},
+    role: "manager" | "analyst" | "viewer" = "analyst"
+  ) {
+    return runSkill(contasAPagarSkill, env.ctx(env.actorFor(role)), {
+      action: "reclassify_payable",
+      payableId,
+      ...over,
+    });
+  }
+
+  it("reclassifica título pago (categoria, custo e centro) e registra payable.reclassified com antes e depois", async () => {
+    const env = createTestEnv();
+    const payable = await pagoClassificado(env);
+    expect(env.db.payables.find((p) => p.id === payable.id)?.status).toBe("paid");
+
+    const res = await reclassificar(env, payable.id, {
+      supplierCategory: "Serviços",
+      costClassification: "fixed",
+      costCenterId: "cc_2",
+    });
+
+    expect(res.status).toBe("success");
+    const data = res.data as ReclassifyPayableData;
+    expect(data.payable.supplierCategory).toBe("Serviços");
+    expect(data.payable.costClassification).toBe("fixed");
+    expect(data.payable.costCenterId).toBe("cc_2");
+
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.supplierCategory).toBe("Serviços");
+    expect(stored?.costClassification).toBe("fixed");
+    expect(stored?.costCenterId).toBe("cc_2");
+
+    const audit = env.db.auditRecords.find((a) => a.action === "payable.reclassified");
+    expect(audit?.entityId).toBe(payable.id);
+    expect((audit?.before as Payable).supplierCategory).toBe("Insumos");
+    expect((audit?.before as Payable).costClassification).toBe("variable");
+    expect((audit?.before as Payable).costCenterId).toBe("cc_1");
+    expect((audit?.after as Payable).supplierCategory).toBe("Serviços");
+    expect((audit?.after as Payable).costClassification).toBe("fixed");
+    expect((audit?.after as Payable).costCenterId).toBe("cc_2");
+    expect(env.db.events.some((e) => e.type === "payable.updated")).toBe(true);
+  });
+
+  it("mantém valor, datas, descrição, baixa, status e originKey do título", async () => {
+    const env = createTestEnv();
+    const payable = await pagoClassificado(env);
+    const antes = { ...env.db.payables.find((p) => p.id === payable.id)! };
+
+    const res = await reclassificar(env, payable.id, { costClassification: "fixed" });
+
+    expect(res.status).toBe("success");
+    const depois = env.db.payables.find((p) => p.id === payable.id)!;
+    expect(depois.amountCents).toBe(antes.amountCents);
+    expect(depois.paidCents).toBe(antes.paidCents);
+    expect(depois.paidCents).toBe(50_000);
+    expect(depois.status).toBe("paid");
+    expect(depois.issueDate).toBe(antes.issueDate);
+    expect(depois.dueDate).toBe(antes.dueDate);
+    expect(depois.description).toBe(antes.description);
+    expect(depois.originKey).toBe(antes.originKey);
+    expect(depois.supplierId).toBe(antes.supplierId);
+    expect(depois.costClassification).toBe("fixed");
+    // Só a classificação mudou; o restante do registro é idêntico.
+    expect({ ...depois, costClassification: antes.costClassification, updatedAt: antes.updatedAt }).toEqual(antes);
+  });
+
+  it("recusa título em aberto e parcialmente pago, orientando a usar a edição normal", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedCostCenter(env);
+    const aberto = seedPayable(env, { costCenterId: "cc_1" });
+    const parcial = seedPayable(env, { status: "partially_paid", paidCents: 10_000, costCenterId: "cc_1" });
+
+    for (const p of [aberto, parcial]) {
+      const res = await reclassificar(env, p.id, { costClassification: "fixed" });
+      expect(res.status).toBe("error");
+      expect(res.alerts[0].code).toBe("validation_error");
+      expect(res.alerts[0].message).toMatch(/edição normal/);
+      expect(env.db.payables.find((x) => x.id === p.id)?.costClassification).toBeUndefined();
+    }
+  });
+
+  it("recusa título cancelado", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    const cancelado = seedPayable(env, { status: "canceled", supplierCategory: "Insumos" });
+
+    const res = await reclassificar(env, cancelado.id, { supplierCategory: "Outros" });
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("validation_error");
+    expect(res.alerts[0].message).toMatch(/cancelado/);
+    expect(env.db.payables.find((x) => x.id === cancelado.id)?.supplierCategory).toBe("Insumos");
+  });
+
+  it("recusa centro de custo inexistente e não altera nada", async () => {
+    const env = createTestEnv();
+    const payable = await pagoClassificado(env);
+
+    const res = await reclassificar(env, payable.id, {
+      supplierCategory: "Serviços",
+      costCenterId: "cc_nao_existe",
+    });
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("not_found");
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.supplierCategory).toBe("Insumos");
+    expect(stored?.costCenterId).toBe("cc_1");
+    expect(env.db.auditRecords.some((a) => a.action === "payable.reclassified")).toBe(false);
+  });
+
+  it("null limpa o campo; undefined mantém o atual", async () => {
+    const env = createTestEnv();
+    const payable = await pagoClassificado(env);
+
+    const res = await reclassificar(env, payable.id, { costCenterId: null });
+
+    expect(res.status).toBe("success");
+    const stored = env.db.payables.find((p) => p.id === payable.id);
+    expect(stored?.costCenterId).toBeUndefined();
+    expect(stored?.supplierCategory).toBe("Insumos");
+    expect(stored?.costClassification).toBe("variable");
+  });
+
+  it("classificação igual à atual é no-op: sem gravação e sem auditoria", async () => {
+    const env = createTestEnv();
+    const payable = await pagoClassificado(env);
+    const auditAntes = env.db.auditRecords.length;
+    const updatedAtAntes = env.db.payables.find((p) => p.id === payable.id)?.updatedAt;
+
+    const res = await reclassificar(env, payable.id, {
+      supplierCategory: "Insumos",
+      costClassification: "variable",
+      costCenterId: "cc_1",
+    });
+
+    expect(res.status).toBe("success");
+    expect(res.assumptions.some((a) => a.includes("igual à atual"))).toBe(true);
+    expect(env.db.auditRecords.length).toBe(auditAntes);
+    expect(env.db.payables.find((p) => p.id === payable.id)?.updatedAt).toBe(updatedAtAntes);
+  });
+
+  it("papel sem payable.create (viewer) não reclassifica", async () => {
+    const env = createTestEnv();
+    const payable = await pagoClassificado(env);
+
+    const res = await reclassificar(env, payable.id, { costClassification: "fixed" }, "viewer");
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].code).toBe("permission_denied");
+    expect(env.db.payables.find((p) => p.id === payable.id)?.costClassification).toBe("variable");
+  });
+
+  it("título baixado sem Payment (conciliação bancária) também é reclassificável", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedCostCenter(env);
+    const pago = seedPayable(env, { status: "paid", paidCents: 50_000 });
+
+    const res = await reclassificar(env, pago.id, {
+      supplierCategory: "Serviços",
+      costClassification: "fixed",
+      costCenterId: "cc_1",
+    });
+
+    expect(res.status).toBe("success");
+    const stored = env.db.payables.find((p) => p.id === pago.id);
+    expect(stored?.supplierCategory).toBe("Serviços");
+    expect(stored?.costClassification).toBe("fixed");
+    expect(stored?.costCenterId).toBe("cc_1");
+    expect(stored?.status).toBe("paid");
   });
 });

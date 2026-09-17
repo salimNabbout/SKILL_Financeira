@@ -69,3 +69,18 @@ export function derivePayableSituation(
 export function hasPartialPayment(payable: Pick<Payable, "status" | "paidCents">): boolean {
   return payable.status !== "paid" && payable.status !== "canceled" && payable.paidCents > 0;
 }
+
+/**
+ * Situações de título QUITADO (status "paid"): "Pago", "Pago no Vencimento" e
+ * "Pago Atrasado". Na listagem de Contas a pagar, o badge dessas situações vira
+ * o botão que abre a reclassificação (categoria / custo / centro de custo).
+ */
+const SETTLED_SITUATIONS: ReadonlySet<PayableSituation> = new Set<PayableSituation>([
+  "Pago",
+  "Pago no Vencimento",
+  "Pago Atrasado",
+]);
+
+export function isSettledSituation(situacao: PayableSituation): boolean {
+  return SETTLED_SITUATIONS.has(situacao);
+}

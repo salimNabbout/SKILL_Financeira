@@ -99,6 +99,7 @@ export const AUDIT_ACTIONS = {
   PAYABLE_UPDATED: "payable.updated",
   PAYABLE_CANCELED: "payable.canceled",
   PAYABLE_DUE_DATE_ADJUSTED: "payable.due_date_adjusted",
+  PAYABLE_RECLASSIFIED: "payable.reclassified",
   RECEIVABLE_CREATED: "receivable.created",
   RECEIVABLE_UPDATED: "receivable.updated",
   RECEIVABLE_CANCELED: "receivable.canceled",
