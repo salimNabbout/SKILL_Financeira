@@ -118,6 +118,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "bank_account.updated": "Conta bancária alterada",
   "bank_account.deactivated": "Conta bancária desativada",
   "supplier_category.deleted": "Categoria de fornecedor excluída",
+  "supplier_category.deactivated": "Categoria de fornecedor desativada",
+  "supplier_category.reactivated": "Categoria de fornecedor reativada",
 
   // Contas a pagar e pagamentos
   "document.created": "Documento fiscal registrado",

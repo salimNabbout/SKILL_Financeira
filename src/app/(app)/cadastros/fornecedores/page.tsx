@@ -28,7 +28,9 @@ export default async function FornecedoresPage({
   ]);
   const canManage = hasPermission(session.membership.role, "master_data.manage");
   const rows = [...suppliers].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-  const categoryOptions = [...supplierCategories]
+  // Só categorias ATIVAS (categoria "excluída" com vínculos fica inativa e some daqui).
+  const categoryOptions = supplierCategories
+    .filter((c) => c.active)
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
 

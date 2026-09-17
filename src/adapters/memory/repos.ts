@@ -31,6 +31,7 @@ import type {
   RecurringTemplate,
   SkillExecution,
   Supplier,
+  SupplierCategory,
   User,
 } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
@@ -61,6 +62,7 @@ import type {
   RecurringTemplateRepo,
   Repositories,
   SkillExecutionRepo,
+  SupplierCategoryRepo,
   SupplierRepo,
   UserRepo,
 } from "@/core/repositories";
@@ -116,6 +118,16 @@ class MemBase<T extends { id: ID; companyId: ID }> implements BaseRepo<T> {
 class MemSupplierRepo extends MemBase<Supplier> implements SupplierRepo {
   async delete(companyId: ID, id: ID): Promise<void> {
     const idx = this.items.findIndex((s) => s.companyId === companyId && s.id === id);
+    if (idx >= 0) this.items.splice(idx, 1);
+  }
+}
+
+class MemSupplierCategoryRepo
+  extends MemBase<SupplierCategory>
+  implements SupplierCategoryRepo
+{
+  async delete(companyId: ID, id: ID): Promise<void> {
+    const idx = this.items.findIndex((c) => c.companyId === companyId && c.id === id);
     if (idx >= 0) this.items.splice(idx, 1);
   }
 }
@@ -826,7 +838,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     memberships: new MemMembershipRepo(db.memberships),
     customers: new MemBase(db.customers),
     suppliers: new MemSupplierRepo(db.suppliers),
-    supplierCategories: new MemBase(db.supplierCategories),
+    supplierCategories: new MemSupplierCategoryRepo(db.supplierCategories),
     recurringTemplates: new MemRecurringTemplateRepo(db.recurringTemplates),
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),

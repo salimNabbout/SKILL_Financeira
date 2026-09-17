@@ -88,6 +88,8 @@ export const AUDIT_ACTIONS = {
   SUPPLIER_CATEGORY_CREATED: "supplier_category.created",
   SUPPLIER_CATEGORY_UPDATED: "supplier_category.updated",
   SUPPLIER_CATEGORY_DELETED: "supplier_category.deleted",
+  SUPPLIER_CATEGORY_DEACTIVATED: "supplier_category.deactivated",
+  SUPPLIER_CATEGORY_REACTIVATED: "supplier_category.reactivated",
 
   // Documentos e títulos
   DOCUMENT_CREATED: "document.created",
