@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
+import { THEME_COOKIE, THEME_INIT, parseTheme } from "@/lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -8,16 +10,18 @@ export const metadata: Metadata = {
 };
 
 /*
- * Aplica o tema ANTES da primeira pintura, evitando o flash de tela clara em
- * quem usa o tema escuro. Precisa ser síncrono e inline — qualquer caminho
- * assíncrono (efeito do React, script externo) pinta claro primeiro. Sem
- * escolha salva, segue a preferência do sistema operacional.
+ * Tema claro/escuro: o servidor renderiza `data-theme` a partir do cookie que
+ * SÓ o botão "Tema claro / Tema escuro" grava (src/lib/theme.ts). Assim toda
+ * carga de página — navegação, formulário GET, server action, recarga — sai
+ * do servidor já com o tema escolhido, sem depender de JavaScript, do
+ * localStorage nem da preferência do sistema. O script inline só age na 1ª
+ * visita (sem cookie): resolve o tema antes da primeira pintura, evitando o
+ * flash de tela clara, e grava o cookie para travar a escolha.
  */
-const THEME_INIT = `(function(){try{var t=localStorage.getItem("theme");if(t!=="dark"&&t!=="light"){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.setAttribute("data-theme",t);}catch(e){}})();`;
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const theme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
   return (
-    <html lang="pt-BR" suppressHydrationWarning>
+    <html lang="pt-BR" data-theme={theme} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>
