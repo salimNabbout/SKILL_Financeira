@@ -123,7 +123,13 @@ export interface RecurringTemplateRepo extends BaseRepo<RecurringTemplate> {
 }
 
 export type BankAccountRepo = BaseRepo<BankAccount>;
-export type CategoryRepo = BaseRepo<Category>;
+export interface CategoryRepo extends BaseRepo<Category> {
+  /**
+   * Remove uma categoria. O chamador garante que nenhum título ou linha de
+   * orçamento a referencia (categoryId tem FK com RESTRICT no banco).
+   */
+  delete(companyId: ID, id: ID): Promise<void>;
+}
 export type CostCenterRepo = BaseRepo<CostCenter>;
 export type ChartAccountRepo = BaseRepo<ChartAccount>;
 

@@ -78,6 +78,8 @@ export const AUDIT_ACTIONS = {
   CATEGORY_CREATED: "category.created",
   CATEGORY_UPDATED: "category.updated",
   CATEGORY_DELETED: "category.deleted",
+  CATEGORY_DEACTIVATED: "category.deactivated",
+  CATEGORY_REACTIVATED: "category.reactivated",
   COST_CENTER_CREATED: "cost_center.created",
   COST_CENTER_UPDATED: "cost_center.updated",
   COST_CENTER_DEACTIVATED: "cost_center.deactivated",

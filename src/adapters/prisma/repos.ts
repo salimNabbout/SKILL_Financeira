@@ -1839,6 +1839,9 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
       });
       return categoryToDomain(row);
     },
+    async delete(companyId: ID, id: ID) {
+      await prisma.category.deleteMany({ where: { id, companyId } });
+    },
   };
 
   const costCenters: CostCenterRepo = {
