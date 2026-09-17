@@ -50,7 +50,9 @@ export default async function RecorrenciasPage({
   const customerOptions: PartyOption[] = customers
     .filter((c) => c.active)
     .map((c) => ({ id: c.id, name: c.name }));
-  const categoryOptions = [...supplierCategories]
+  // Só categorias ATIVAS (categoria "excluída" com vínculos fica inativa e some daqui).
+  const categoryOptions = supplierCategories
+    .filter((c) => c.active)
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
 

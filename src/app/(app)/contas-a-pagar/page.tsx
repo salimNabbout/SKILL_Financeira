@@ -248,7 +248,9 @@ export default async function ContasAPagarPage({
     .filter((s) => s.active)
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
     .map((s) => ({ id: s.id, name: s.name }));
-  const categoryOptions = [...supplierCategories]
+  // Só categorias ATIVAS (categoria "excluída" com vínculos fica inativa e some daqui).
+  const categoryOptions = supplierCategories
+    .filter((c) => c.active)
     .map((c) => c.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
   // Centros de custo ATIVOS, ordenados por código (pt-BR). Exibição "CÓDIGO — Nome";

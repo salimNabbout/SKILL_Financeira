@@ -109,7 +109,13 @@ export interface SupplierRepo extends BaseRepo<Supplier> {
   /** Remove um fornecedor. O chamador garante que não há vínculos (títulos). */
   delete(companyId: ID, id: ID): Promise<void>;
 }
-export type SupplierCategoryRepo = BaseRepo<SupplierCategory>;
+export interface SupplierCategoryRepo extends BaseRepo<SupplierCategory> {
+  /**
+   * Remove uma categoria. O chamador garante que nenhum fornecedor, recorrência
+   * ou título a pagar a referencia (a referência é por NOME, sem FK no banco).
+   */
+  delete(companyId: ID, id: ID): Promise<void>;
+}
 
 export interface RecurringTemplateRepo extends BaseRepo<RecurringTemplate> {
   /** Recorrências com status "active" (candidatas à geração). */
