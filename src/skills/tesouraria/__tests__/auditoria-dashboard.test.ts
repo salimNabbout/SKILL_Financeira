@@ -177,6 +177,71 @@ describe("Dashboard/tesouraria — base vazia", () => {
   });
 });
 
+describe("Dashboard/tesouraria — fonte do Saldo disponível (card com detalhes)", () => {
+  it("lista as contas ativas com banco, número mascarado, saldo e último lote; a soma das contas é o total", async () => {
+    const env = createTestEnv();
+    await seedAccount(env, "acc_1", 100_000);
+    await seedAccount(env, "acc_2", 50_000);
+    await seedAccount(env, "acc_off", 9_000_000, false);
+    await seedTx(env, "t1", "acc_1", "2026-08-10", 25_000);
+    await seedTx(env, "t2", "acc_1", "2026-08-11", -5_000);
+    const now = env.clock.now().toISOString();
+    await env.repos.statementImports.create({
+      id: "imp_old",
+      companyId: env.company.id,
+      bankAccountId: "acc_1",
+      format: "ofx",
+      source: "ofx",
+      imported: 1,
+      duplicates: 0,
+      warnings: [],
+      createdBy: "usr_analyst",
+      createdAt: "2026-08-10T12:00:00.000Z",
+    });
+    await env.repos.statementImports.create({
+      id: "imp_new",
+      companyId: env.company.id,
+      bankAccountId: "acc_1",
+      format: "mock",
+      source: "sync",
+      imported: 1,
+      duplicates: 0,
+      warnings: [],
+      createdBy: "system",
+      createdAt: now,
+    });
+
+    const cash = await cashPosition(env);
+    expect(cash.accounts.map((a) => a.id)).toEqual(["acc_1", "acc_2"]);
+    expect(cash.accounts[0]).toMatchObject({
+      bankCode: "341",
+      accountNumberMasked: "****0001",
+      availableCents: 120_000,
+      transactionCount: 2,
+      lastImport: { source: "sync", format: "mock", at: now, imported: 1 },
+    });
+    expect(cash.accounts[1].lastImport).toBeUndefined();
+    expect(cash.accounts[1].transactionCount).toBe(0);
+    // Identidade: Σ contas listadas = total do card.
+    expect(cash.accounts.reduce((s, a) => s + a.availableCents, 0)).toBe(cash.totals.availableCents);
+    expect(cash.totals.availableCents).toBe(170_000);
+    expect(cash.source).toEqual({
+      tables: ["bank_accounts", "bank_transactions", "statement_imports"],
+      provider: "mock",
+      activeAccountCount: 2,
+      lastImportAt: now,
+    });
+  });
+
+  it("sem lotes em nenhuma conta, lastImportAt fica ausente", async () => {
+    const env = createTestEnv();
+    await seedAccount(env, "acc_1", 1);
+    const cash = await cashPosition(env);
+    expect(cash.source.lastImportAt).toBeUndefined();
+    expect(cash.source.activeAccountCount).toBe(1);
+  });
+});
+
 describe("Dashboard/tesouraria — conta bancária inativa", () => {
   it("conta inativa fica fora do disponível, da lista de contas e da projeção", async () => {
     const env = createTestEnv();

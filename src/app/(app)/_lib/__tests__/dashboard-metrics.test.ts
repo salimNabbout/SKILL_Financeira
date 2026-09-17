@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  accountsSumCents,
   availableTone,
   buildWeekGroups,
   DASHBOARD_FORMULAS,
@@ -122,6 +123,14 @@ describe("Dashboard — gráfico Entradas × saídas (4 semanas)", () => {
     const groups = buildWeekGroups(daily, "2026-09-17");
     expect(groups[0].outCents).toBe(100);
     expect(seven.outCents).toBe(1_100);
+  });
+});
+
+describe("Dashboard — composição do card Saldo disponível", () => {
+  it("soma das contas listadas (inclusive negativas e sem valor) e base vazia", () => {
+    expect(accountsSumCents([{ availableCents: 100 }, { availableCents: -30 }, {}])).toBe(70);
+    expect(accountsSumCents([])).toBe(0);
+    expect(accountsSumCents(undefined)).toBe(0);
   });
 });
 

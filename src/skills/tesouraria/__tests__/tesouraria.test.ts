@@ -201,7 +201,7 @@ describe("tesouraria_fluxo_caixa — cash_position", () => {
 
     expect(res.status).toBe("success");
     expect(res.confidence).toBe(1.0);
-    expect(data.accounts).toEqual([
+    expect(data.accounts).toMatchObject([
       { id: "acc_main", name: "Conta Principal", availableCents: 1_300_000 },
       { id: "acc_reserve", name: "Conta Reserva", availableCents: 200_000 },
     ]);
@@ -220,6 +220,7 @@ describe("tesouraria_fluxo_caixa — cash_position", () => {
       "payments",
       "payables",
       "receivables",
+      "statement_imports",
     ]);
   });
 

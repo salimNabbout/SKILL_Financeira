@@ -84,6 +84,13 @@ export function buildWeekGroups(
   return groups;
 }
 
+/** Soma dos saldos das contas listadas no card — tem de bater com o total. */
+export function accountsSumCents(accounts: Array<{ availableCents?: number }> | undefined): number {
+  let sum = 0;
+  for (const a of accounts ?? []) sum += typeof a?.availableCents === "number" ? a.availableCents : 0;
+  return sum;
+}
+
 export type AvailableTone = "neutral" | "crit" | "warn" | "ok";
 
 /** Tom do card: negativo é crítico; abaixo do caixa mínimo é atenção. */

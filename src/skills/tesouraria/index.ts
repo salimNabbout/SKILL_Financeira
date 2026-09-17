@@ -104,10 +104,38 @@ export type TesourariaInput = z.infer<typeof tesourariaInputSchema>;
 // Saída
 // ---------------------------------------------------------------------------
 
+/** Último lote de importação/sincronização de extrato de uma conta. */
+export interface AccountLastImport {
+  /** ofx | csv | cnab240 | sync */
+  source: string;
+  /** Formato do arquivo ou, na sincronização, o nome do provedor (mock, pluggy). */
+  format: string;
+  /** Instante do lote (ISO-8601 UTC). */
+  at: string;
+  /** Transações efetivamente criadas pelo lote. */
+  imported: number;
+}
+
 export interface AccountPosition {
   id: ID;
   name: string;
+  bankCode: string;
+  accountNumberMasked: string;
   availableCents: number;
+  /** Transações importadas que compõem o saldo da conta. */
+  transactionCount: number;
+  /** Ausente quando a conta nunca teve extrato importado/sincronizado. */
+  lastImport?: AccountLastImport;
+}
+
+/** De onde o saldo disponível vem — tudo derivado dos dados, nada fixo. */
+export interface CashPositionSource {
+  tables: string[];
+  /** Integração bancária ativa (`INTEGRATION_BANK`): mock, pluggy… */
+  provider: string;
+  activeAccountCount: number;
+  /** Lote mais recente entre todas as contas ativas (ISO-8601), se houver. */
+  lastImportAt?: string;
 }
 
 export interface CashPositionData {
@@ -119,6 +147,7 @@ export interface CashPositionData {
   };
   period: { asOf: ISODate; projectionEnd: ISODate };
   formulas: { available: string; committed: string; projected30: string };
+  source: CashPositionSource;
 }
 
 export interface DailyFlowPoint {
@@ -286,7 +315,10 @@ async function loadCashBase(ctx: SkillContext): Promise<CashBase> {
     accountPositions.push({
       id: account.id,
       name: account.name,
+      bankCode: account.bankCode,
+      accountNumberMasked: account.accountNumberMasked,
       availableCents: account.openingBalanceCents + movement,
+      transactionCount: txs.length,
     });
   }
   const availableCents = accountPositions.reduce((acc, a) => acc + a.availableCents, 0);
@@ -579,8 +611,28 @@ async function executeCashPosition(ctx: SkillContext) {
     30
   );
 
+  // Fonte do saldo, conta a conta: último lote de extrato (importado ou
+  // sincronizado) e provedor bancário ativo — para o card mostrar de onde o
+  // número vem e de quando é.
+  const accounts: AccountPosition[] = [];
+  for (const position of base.accountPositions) {
+    const imports = await ctx.repos.statementImports.listByAccount(ctx.companyId, position.id);
+    const last = imports[0]; // ordem: createdAt desc
+    accounts.push({
+      ...position,
+      lastImport: last
+        ? { source: last.source, format: last.format, at: last.createdAt, imported: last.imported }
+        : undefined,
+    });
+  }
+  const lastImportAt = accounts
+    .map((a) => a.lastImport?.at)
+    .filter((at): at is string => typeof at === "string")
+    .sort()
+    .at(-1);
+
   const data: CashPositionData = {
-    accounts: base.accountPositions,
+    accounts,
     totals: {
       availableCents: base.availableCents,
       committedCents: committedCents(base),
@@ -592,15 +644,22 @@ async function executeCashPosition(ctx: SkillContext) {
       committed: FORMULA_COMMITTED,
       projected30: `${FORMULA_PROJECTION} (horizonte de 30 dias)`,
     },
+    source: {
+      tables: ["bank_accounts", "bank_transactions", "statement_imports"],
+      provider: ctx.integrations.bankData.provider,
+      activeAccountCount: accounts.length,
+      lastImportAt,
+    },
   };
 
   return makeResult<TesourariaData>(SKILL_NAME, ctx, data, {
     confidence: 1.0,
     assumptions: [
       "Apenas contas bancárias ativas entram na posição de caixa.",
+      "Saldo por conta = saldo de abertura + todas as transações importadas/sincronizadas da conta (conciliadas ou não); pagamentos e recebimentos registrados no app sem extrato não entram.",
       "Títulos vencidos e não liquidados são considerados como movimento na data de hoje.",
     ],
-    dataSources: [...DATA_SOURCES],
+    dataSources: [...DATA_SOURCES, "statement_imports"],
   });
 }
 

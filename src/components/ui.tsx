@@ -51,11 +51,16 @@ export function StatCard({
   value,
   hint,
   tone = "neutral",
+  details,
+  detailsLabel = "Ver detalhes",
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "neutral" | "ok" | "warn" | "crit";
+  /** Bloco expansível ("ver detalhes") com a fonte/composição do número. */
+  details?: ReactNode;
+  detailsLabel?: string;
 }) {
   const toneClass =
     tone === "ok"
@@ -70,6 +75,16 @@ export function StatCard({
       <p className="text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">{label}</p>
       <p className={`tabular mt-1 text-2xl font-semibold ${toneClass}`}>{value}</p>
       {hint ? <p className="mt-1 text-xs text-[var(--ink-muted)]">{hint}</p> : null}
+      {details ? (
+        <details className="mt-2 text-xs">
+          <summary className="cursor-pointer select-none font-medium text-[var(--brand)]">
+            {detailsLabel}
+          </summary>
+          <div className="mt-2 border-t border-[var(--line)] pt-2 text-[var(--ink-muted)]">
+            {details}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
