@@ -73,6 +73,11 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
   if (!customerName || !description || !issueDate || !dueDate) {
     failCreate("Preencha cliente, descrição, emissão e vencimento.");
   }
+  // Categoria e Centro de Custo são obrigatórios no novo título (o select já
+  // exige no navegador; aqui vale para qualquer envio).
+  if (!categoryId || !costCenterId) {
+    failCreate("Selecione a categoria e o centro de custo.");
+  }
 
   // Resolve nome → id: case-insensitive, ignorando espaços nas pontas. NUNCA
   // escolhe o primeiro em caso de ambiguidade.
@@ -114,9 +119,7 @@ export async function createReceivableAction(formData: FormData): Promise<void> 
       dueDate,
       amountCents,
       categoryId,
-      // Centro de custo é opcional: só entra quando selecionado (fdOptional já
-      // devolve undefined se vazio; não enviar a chave vazia).
-      ...(costCenterId ? { costCenterId } : {}),
+      costCenterId,
       installmentCount,
       method,
       // Observação é opcional: só entra quando preenchida.

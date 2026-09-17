@@ -430,9 +430,12 @@ export default async function ContasAReceberPage({
               className={inputClass}
             />
           </Field>
-          <Field label="Categoria (opcional)">
-            <select name="categoryId" className={inputClass} defaultValue={sp.nt_categoria ?? ""}>
-              <option value="">Sugerir automaticamente</option>
+          {/* Categoria e Centro de Custo são OBRIGATÓRIOS no novo título (required
+              no select + validação na action). A lista de categorias vem do
+              cadastro "Categoria a RECEBER" (categorias de receita ativas). */}
+          <Field label="Categoria">
+            <select name="categoryId" required className={inputClass} defaultValue={sp.nt_categoria ?? ""}>
+              <option value="">— selecione —</option>
               {incomeCategories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -440,11 +443,10 @@ export default async function ContasAReceberPage({
               ))}
             </select>
           </Field>
-          {/* Centro de custo OPCIONAL (.optional() na skill) — não pode ser required.
-              value é o id; exibição "CÓDIGO — Nome". Lista só os ativos. */}
-          <Field label="Centro de Custo (opcional)">
-            <select name="costCenterId" className={inputClass} defaultValue={sp.nt_centrocusto ?? ""}>
-              <option value="">— sem centro de custo —</option>
+          {/* value é o id; exibição "CÓDIGO — Nome". Lista só os ativos. */}
+          <Field label="Centro de Custo">
+            <select name="costCenterId" required className={inputClass} defaultValue={sp.nt_centrocusto ?? ""}>
+              <option value="">— selecione —</option>
               {costCenterOptions.map((cc) => (
                 <option key={cc.id} value={cc.id}>
                   {cc.label}
