@@ -33,7 +33,7 @@ export default async function CadastrosPage() {
   const cards: Array<{ href: string; title: string; description: string; count: number }> = [
     { href: "/cadastros/clientes", title: "Clientes", description: "Quem compra da empresa — base de contas a receber e cobrança.", count: customers.length },
     { href: "/cadastros/fornecedores", title: "Fornecedores", description: "Quem fornece à empresa — base de contas a pagar.", count: suppliers.length },
-    { href: "/cadastros/categorias-fornecedores", title: "Categoria de Fornecedores", description: "Lista de categorias que alimenta o campo CATEGORIA do fornecedor.", count: supplierCategories.length },
+    { href: "/cadastros/categorias-fornecedores", title: "Categoria a PAGAR", description: "Lista de categorias que alimenta o campo CATEGORIA do fornecedor.", count: supplierCategories.length },
     { href: "/cadastros/recorrencias", title: "Recorrências", description: "Despesas e receitas mensais que geram títulos automaticamente (ex.: aluguel, mensalidades).", count: recurringTemplates.length },
     { href: "/cadastros/contas-bancarias", title: "Contas bancárias", description: "Contas da empresa (números sempre mascarados).", count: bankAccounts.length },
     { href: "/cadastros/categorias", title: "Categorias", description: "Classificação de receitas e despesas por grupo do DRE.", count: categories.length },
