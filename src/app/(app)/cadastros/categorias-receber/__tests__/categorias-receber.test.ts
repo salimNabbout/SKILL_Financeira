@@ -75,7 +75,6 @@ async function seedBudgetLine(env: TestEnv, categoryId: string): Promise<void> {
     year: 2026,
     status: "active",
     createdAt: now,
-    updatedAt: now,
   };
   await env.repos.budgets.create(budget);
   const line: BudgetLine = { id: "bl_1", budgetId: "bud_1", period: "2026-09", categoryId, amountCents: 100 };
