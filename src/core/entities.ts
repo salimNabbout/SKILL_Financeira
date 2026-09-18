@@ -672,3 +672,137 @@ export interface IdempotencyRecord {
   result: unknown;
   createdAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Fluxo de Caixa (disciplina "Fluxo de Caixa CETEM") — tabelas fc_*
+// ---------------------------------------------------------------------------
+
+export type CashflowKind = "entrada" | "saida" | "neutro";
+export type CashflowGroup =
+  | "receita_operacional"
+  | "receita_nao_operacional"
+  | "pessoal"
+  | "operacional"
+  | "tributos"
+  | "financeiro"
+  | "crescimento"
+  | "outras";
+export type CashflowClassification = "fixo" | "variavel";
+
+/** Categoria do plano da planilha (referência global; id = slug estável). */
+export interface CashflowCategory {
+  id: ID;
+  name: string;
+  kind: CashflowKind;
+  group: CashflowGroup;
+  classification: CashflowClassification;
+  sortOrder: number;
+  active: boolean;
+}
+
+export type CashflowMappingSource = "plano_contas" | "categoria_ap" | "categoria_ar" | "regra_texto";
+
+/** De-para: chave de origem do app → categoria do plano. */
+export interface CashflowMapping {
+  id: ID;
+  companyId: ID;
+  source: CashflowMappingSource;
+  /** `plano_contas`/`categoria_ar`: id da Category; `categoria_ap`: nome da
+   *  categoria de fornecedor; `regra_texto`: trecho contido na descrição. */
+  sourceKey: string;
+  categoryId: ID;
+  /** Menor = avaliada antes (só relevante em `regra_texto`). */
+  priority: number;
+  active: boolean;
+  createdBy: ID;
+  createdAt: string;
+  updatedBy?: ID;
+  updatedAt: string;
+  /** Trava otimista: incrementa a cada gravação. */
+  version: number;
+}
+
+export interface CashflowParameter {
+  id: ID;
+  companyId: ID;
+  baseYear: number;
+  openingBalanceCents: number;
+  minimumReserveCents: number;
+  /** Nulo = o sistema conta os meses com movimento realizado. */
+  realizedMonthsOverride?: number;
+  createdBy: ID;
+  createdAt: string;
+  updatedBy?: ID;
+  updatedAt: string;
+  version: number;
+}
+
+export type CashflowScenarioCode = "otimista" | "realista" | "pessimista";
+
+/** Premissas em pontos-base inteiros (1% = 100): +15% de receita = 1500. */
+export interface CashflowScenario {
+  id: ID;
+  companyId: ID;
+  code: CashflowScenarioCode;
+  name: string;
+  revenueAdjustmentBp: number;
+  expenseAdjustmentBp: number;
+  monthlyGrowthBp: number;
+  active: boolean;
+  createdBy: ID;
+  createdAt: string;
+  updatedBy?: ID;
+  updatedAt: string;
+  version: number;
+}
+
+export type CashflowEntryStatus = "previsto" | "realizado";
+
+/** Lançamento que não existe em nenhum módulo. `amountCents` sempre > 0. */
+export interface CashflowManualEntry {
+  id: ID;
+  companyId: ID;
+  competenceDate: ISODate;
+  kind: "entrada" | "saida";
+  categoryId: ID;
+  description: string;
+  costCenterId?: ID;
+  status: CashflowEntryStatus;
+  amountCents: number;
+  sourceNote?: string;
+  createdBy: ID;
+  createdAt: string;
+  updatedBy?: ID;
+  updatedAt: string;
+  version: number;
+}
+
+export type CashflowOrigin = "conciliacao" | "contas_pagar" | "contas_receber" | "ajuste_manual";
+export type CashflowRealizedBy = "conciliacao" | "baixa_app";
+
+/** Linha da unificação (`vw_fc_lancamento`): um evento de caixa, uma vez. */
+export interface CashflowEntry {
+  /** Competência = emissão do título (decisão B); data do movimento nas demais origens. */
+  competenceDate: ISODate;
+  /** Data de caixa: realizado = movimento/baixa; previsto = vencimento/agendamento. */
+  cashDate: ISODate;
+  kind: "entrada" | "saida";
+  categoryId: ID;
+  group: CashflowGroup;
+  description: string;
+  costCenterId?: ID;
+  bankAccountId?: ID;
+  status: CashflowEntryStatus;
+  /** Como o realizado foi apurado (decisão A). Ausente em previsto. */
+  realizedBy?: CashflowRealizedBy;
+  amountCents: number;
+  origin: CashflowOrigin;
+  originId: ID;
+  /** Mês/ano da DATA DE CAIXA (regime de caixa). */
+  month: number;
+  year: number;
+  /** Critério de casamento/dedupe aplicado (regra 2), quando houver. */
+  matchCriteria?: string;
+  /** Como a categoria foi resolvida. */
+  mappingSource?: CashflowMappingSource | "conciliacao_bank_fee" | "ajuste_manual" | "nao_mapeado";
+}
