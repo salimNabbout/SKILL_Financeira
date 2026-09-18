@@ -331,6 +331,47 @@ export async function updateReceivableAction(formData: FormData): Promise<void> 
 }
 
 /**
+ * RECLASSIFICAÇÃO de título JÁ RECEBIDO: só Categoria e Centro de Custo. Os
+ * demais campos chegam desabilitados do formulário (não são submetidos) e a
+ * skill `reclassify_receivable` não os aceita. Em falha, reabre a MESMA linha
+ * com o que foi escolhido (f_* → prefill), como a edição normal.
+ */
+export async function reclassifyReceivableAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const { orchestrator } = await getContainer();
+
+  const receivableId = fdString(formData, "receivableId");
+  const categoryId = fdOptional(formData, "categoryId");
+  const costCenterId = fdOptional(formData, "costCenterId");
+
+  function failReclassify(message: string): never {
+    const qs = new URLSearchParams({ editar: receivableId, erro: message });
+    if (categoryId) qs.set("f_categoria", categoryId);
+    if (costCenterId) qs.set("f_centrocusto", costCenterId);
+    redirect(`${PATH}?${qs.toString()}`);
+  }
+
+  if (!receivableId) fail("Título não identificado para reclassificação.");
+
+  let response: OrchestratorResponse;
+  try {
+    response = await orchestrator.execute({
+      flow: "reclassify_receivable",
+      companyId: session.company.id,
+      actor: session.actor,
+      // Vazio vira undefined e MANTÉM o atual — a skill só limpa com null.
+      payload: { receivableId, categoryId, costCenterId },
+    });
+  } catch (error) {
+    failReclassify(errorMessage(error));
+  }
+
+  if (response.status === "failed") failReclassify(flowErrorMessage(response));
+
+  ok("Classificação do título atualizada (categoria e centro de custo).");
+}
+
+/**
  * ESTORNO de um recebimento: devolve o saldo e o título volta para a fila.
  * Em falha, reabre o pop-up preservando o motivo.
  */

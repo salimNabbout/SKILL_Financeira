@@ -22,6 +22,7 @@ import { receivableRemainingCents } from "@/core/money";
 import {
   deriveReceivableSituation,
   hasPartialReceipt,
+  isSettledSituation,
   type ReceivableSituation,
 } from "@/lib/receivable-situation";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
@@ -31,6 +32,7 @@ import {
   adjustReceiptDateAction,
   cancelReceivableAction,
   createReceivableAction,
+  reclassifyReceivableAction,
   registerReceiptAction,
   reverseReceiptAction,
   updateReceivableAction,
@@ -454,15 +456,20 @@ export default async function ContasAReceberPage({
               ))}
             </select>
           </Field>
-          <Field label="Método previsto (opcional)">
-            <select name="method" className={inputClass} defaultValue={sp.nt_metodo ?? ""}>
-              <option value="">Não informado</option>
-              <option value="pix">Pix</option>
-              <option value="boleto">Boleto</option>
-              <option value="card">Cartão</option>
-              <option value="transfer">Transferência</option>
-              <option value="cash">Dinheiro</option>
-            </select>
+          {/* Data do Recebimento: só leitura — é preenchida quando o recebimento
+              é registrado (baixa), nunca na criação. Ocupa o lugar da antiga
+              caixa "Método previsto" (todo recebimento entra por Pix). No
+              formulário de edição do título recebido, a mesma caixa mostra a
+              data registrada. */}
+          <Field label="Data do Recebimento">
+            <input
+              value="—"
+              disabled
+              className={`${inputClass} cursor-not-allowed text-[var(--ink-muted)] opacity-70`}
+            />
+            <span className="mt-1 block text-xs text-[var(--ink-muted)]">
+              Preenchida quando o recebimento é registrado.
+            </span>
           </Field>
           {/* Observação: a entidade e a skill já aceitavam `notes`; faltava a
               caixa. Ocupa a linha por ser mais longa que os demais campos. */}
@@ -646,6 +653,10 @@ export default async function ContasAReceberPage({
               const cancelable =
                 canCancel && r.status === "open" && r.receivedCents === 0 && !r.invoiceId;
               const excluding = excluir === r.id;
+              // Título RECEBIDO: o badge de Status vira o botão que abre a
+              // reclassificação (só Categoria e Centro de Custo). Os demais
+              // continuam com o ✎ da coluna Ações.
+              const reclassificavel = podeEditar && isSettledSituation(situacao);
               return (
                 <Fragment key={r.id}>
                 <tr>
@@ -685,7 +696,32 @@ export default async function ContasAReceberPage({
                     {r.costCenterId ? (costCenterCode.get(r.costCenterId) ?? r.costCenterId) : "—"}
                   </Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
-                    <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
+                    {reclassificavel ? (
+                      // Badge-botão: GET que abre/fecha o form inline (?editar=)
+                      // com os MESMOS hidden inputs do ✎ (filtros + página). O
+                      // <button> só envolve o Badge compartilhado — o visual é o
+                      // dele; o preflight do Tailwind zera fundo/borda do botão.
+                      <form method="get" action="/contas-a-receber" className="inline">
+                        {Object.entries(extraQuery).map(([k, v]) =>
+                          v ? <input key={k} type="hidden" name={k} value={v} /> : null
+                        )}
+                        {sp.p ? <input type="hidden" name="p" value={sp.p} /> : null}
+                        <input type="hidden" name="editar" value={editarId === r.id ? "" : r.id} />
+                        <button
+                          type="submit"
+                          title="Alterar categoria e centro de custo"
+                          aria-label={`${situacaoLabel} — alterar categoria e centro de custo`}
+                          aria-expanded={editarId === r.id}
+                          className={`cursor-pointer rounded-full hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ${
+                            editarId === r.id ? "ring-2 ring-[var(--brand)] ring-offset-1" : ""
+                          }`}
+                        >
+                          <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
+                        </button>
+                      </form>
+                    ) : (
+                      <Badge tone={SITUACAO_TONE[situacao]}>{situacaoLabel}</Badge>
+                    )}
                   </Td>
                   <Td className="whitespace-nowrap !px-2 !py-1 text-xs">
                     {RECEIVABLE_OPEN.includes(r.status) ? (
@@ -813,7 +849,15 @@ export default async function ContasAReceberPage({
                           installmentNumber: r.installmentNumber,
                           installmentCount: r.installmentCount,
                           fromInvoice: Boolean(r.invoiceId),
+                          // Data do recebimento que quitou o título (a mesma do
+                          // badge), exibida só para consulta.
+                          receivedDate: receivedAtByReceivable.get(r.id),
                         }}
+                        // Título recebido: modo restrito (só Categoria e Centro de
+                        // Custo) via reclassifyReceivableAction — update_receivable
+                        // recusa título recebido.
+                        mode={reclassificavel ? "classificationOnly" : "full"}
+                        action={reclassificavel ? reclassifyReceivableAction : updateReceivableAction}
                         categorias={incomeCategories.map((c) => ({ id: c.id, name: c.name }))}
                         centros={editCentroOptions}
                         prefill={{
