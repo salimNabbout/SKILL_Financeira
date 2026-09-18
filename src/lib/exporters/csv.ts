@@ -6,6 +6,12 @@
 export interface CsvColumn {
   key: string;
   label: string;
+  /**
+   * Força a célula a ser lida como TEXTO pela planilha: o valor sai como a
+   * fórmula ="…", que o Excel/Sheets/LibreOffice avaliam para o texto literal.
+   * Sem isso, "1/17" (parcela) vira a data jan/17 ao abrir o arquivo.
+   */
+  forceText?: boolean;
 }
 
 const BOM = "\uFEFF";
@@ -57,8 +63,14 @@ function escapeCell(text: string): string {
 }
 
 /** Texto final da célula: neutraliza fórmula (só texto de origem) e escapa. */
-function renderCell(value: unknown): string {
+function renderCell(value: unknown, forceText = false): string {
   const { text, formulaSafe } = cellText(value);
+  if (forceText && text !== "") {
+    // ="texto": a planilha avalia a fórmula e mostra o texto tal qual. Aspas
+    // internas dobram dentro da fórmula; o escape externo envolve a célula
+    // porque ela contém aspas. Fórmula nossa, não do usuário — sem apóstrofo.
+    return escapeCell(`="${text.replace(/"/g, '""')}"`);
+  }
   return escapeCell(formulaSafe ? text : neutralizeFormula(text));
 }
 
@@ -66,10 +78,7 @@ function renderCell(value: unknown): string {
  * Gera CSV a partir de linhas homogêneas. Sem `columns`, as colunas são
  * inferidas das chaves da primeira linha (rótulo = chave).
  */
-export function toCsv(
-  rows: Array<Record<string, unknown>>,
-  columns?: Array<{ key: string; label: string }>
-): string {
+export function toCsv(rows: Array<Record<string, unknown>>, columns?: CsvColumn[]): string {
   const cols: CsvColumn[] =
     columns ?? (rows.length > 0 ? Object.keys(rows[0]).map((key) => ({ key, label: key })) : []);
 
@@ -78,7 +87,7 @@ export function toCsv(
     lines.push(cols.map((c) => escapeCell(neutralizeFormula(c.label))).join(SEPARATOR));
   }
   for (const row of rows) {
-    lines.push(cols.map((c) => renderCell(row[c.key])).join(SEPARATOR));
+    lines.push(cols.map((c) => renderCell(row[c.key], c.forceText)).join(SEPARATOR));
   }
 
   return BOM + lines.join(LINE_BREAK) + (lines.length > 0 ? LINE_BREAK : "");

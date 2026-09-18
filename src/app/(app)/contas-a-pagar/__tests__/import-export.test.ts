@@ -3,7 +3,14 @@ import type { CostCenter, Payable, Supplier, SupplierCategory } from "@/core/ent
 import { parsePayableFilters, describeFilters, filtersToQuery } from "../_lib/filters";
 
 const HOJE = "2026-08-20";
-import { PAYABLE_EXPORT_COLUMNS, payablesToExportRows, totalsLabel, totalsOf } from "../_lib/export-rows";
+import {
+  PAYABLE_CSV_COLUMNS,
+  PAYABLE_CSV_TEXT_COLUMNS,
+  PAYABLE_EXPORT_COLUMNS,
+  payablesToExportRows,
+  totalsLabel,
+  totalsOf,
+} from "../_lib/export-rows";
 import {
   buildErrorLogCsv,
   buildImportTemplate,
@@ -135,6 +142,40 @@ describe("linhas de exportação", () => {
     for (const coluna of PAYABLE_EXPORT_COLUMNS) {
       expect(rows[0]).toHaveProperty(coluna);
     }
+  });
+
+  it("Data de Pagamento sai em DD/MM/AAAA quando há pagamento conciliado e vazia sem ele", () => {
+    const rows = payablesToExportRows(
+      [
+        payable({ id: "pago", status: "paid", paidCents: 10_000 }),
+        payable({ id: "aberto" }),
+        payable({ id: "baixado_pelo_extrato", status: "paid", paidCents: 10_000 }),
+      ],
+      {
+        suppliers: ctxBase.suppliers,
+        costCenters: [],
+        bankAccounts: [],
+        paymentDateByPayable: new Map([["pago", "2026-08-18"]]),
+      }
+    );
+    expect(rows[0]["Data de Pagamento"]).toBe("18/08/2026");
+    expect(rows[1]["Data de Pagamento"]).toBe("");
+    expect(rows[2]["Data de Pagamento"]).toBe("");
+  });
+
+  it("CSV = colunas do PDF/impressão + Data de Pagamento logo após Valor Pago; Parcela é texto forçado no formato da tela", () => {
+    expect([...PAYABLE_CSV_COLUMNS].filter((c) => c !== "Data de Pagamento")).toEqual([
+      ...PAYABLE_EXPORT_COLUMNS,
+    ]);
+    expect(PAYABLE_CSV_COLUMNS.indexOf("Data de Pagamento")).toBe(
+      PAYABLE_CSV_COLUMNS.indexOf("Valor Pago (R$)") + 1
+    );
+    expect([...PAYABLE_CSV_TEXT_COLUMNS]).toEqual(["Parcela"]);
+    const [row] = payablesToExportRows(
+      [payable({ id: "p", installmentNumber: 1, installmentCount: 17 })],
+      { suppliers: ctxBase.suppliers, costCenters: [], bankAccounts: [] }
+    );
+    expect(row["Parcela"]).toBe("1/17");
   });
 
   it("soma os totais sobre o conjunto filtrado", () => {

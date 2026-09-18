@@ -1,10 +1,12 @@
 /**
  * Linhas de exportação de Contas a Pagar — as mesmas colunas em CSV, PDF e na
- * visão de impressão, para os três nunca divergirem.
+ * visão de impressão, para os três nunca divergirem. Única exceção, pedida
+ * para a planilha: o CSV leva também "Data de Pagamento" (PAYABLE_CSV_COLUMNS).
  *
  * Função pura, sem dependência de Next/server.
  */
 
+import type { ISODate } from "@/core/dates";
 import type { BankAccount, CostCenter, Payable, Supplier } from "@/core/entities";
 import { formatBR, formatBRL, statusLabel } from "@/lib/format";
 
@@ -25,7 +27,39 @@ export const PAYABLE_EXPORT_COLUMNS = [
 ] as const;
 
 export type PayableExportColumn = (typeof PAYABLE_EXPORT_COLUMNS)[number];
-export type PayableExportRow = Record<PayableExportColumn, string>;
+
+/**
+ * Colunas do CSV: as do PDF/impressão mais "Data de Pagamento" (a data em que
+ * o pagamento foi conciliado — a mesma que define Pago / Pago no Vencimento /
+ * Pago Atrasado na tela), logo após o valor pago.
+ */
+export const PAYABLE_CSV_COLUMNS = [
+  "Fornecedor",
+  "Descrição",
+  "Nº do Documento",
+  "Categoria",
+  "Classificação",
+  "Centro de Custo",
+  "Parcela",
+  "Emissão",
+  "Vencimento",
+  "Valor (R$)",
+  "Valor Pago (R$)",
+  "Data de Pagamento",
+  "Status",
+  "Conta de Pagamento",
+] as const;
+
+export type PayableCsvColumn = (typeof PAYABLE_CSV_COLUMNS)[number];
+export type PayableExportRow = Record<PayableCsvColumn, string>;
+
+/**
+ * Colunas que o CSV precisa forçar como TEXTO: "1/17" (parcela) viraria a data
+ * jan/17 no Excel. A tela mostra "1/17"; o arquivo tem de mostrar o mesmo.
+ */
+export const PAYABLE_CSV_TEXT_COLUMNS: ReadonlySet<PayableCsvColumn> = new Set<PayableCsvColumn>([
+  "Parcela",
+]);
 
 const CLASSIFICACAO: Record<string, string> = {
   fixed: "Custo Fixo",
@@ -41,6 +75,8 @@ export interface ExportLookups {
   bankAccountIdByPayable?: Map<string, string>;
   /** Nº do documento por título, quando há documento vinculado. */
   documentNumberByPayable?: Map<string, string>;
+  /** Data (no fuso da empresa) da conciliação do pagamento que quitou o título. */
+  paymentDateByPayable?: Map<string, ISODate>;
 }
 
 /**
@@ -62,6 +98,7 @@ export function payablesToExportRows(
 
   return payables.map((p) => {
     const contaId = lookups.bankAccountIdByPayable?.get(p.id);
+    const pagoEm = lookups.paymentDateByPayable?.get(p.id);
     return {
       Fornecedor: supplierName.get(p.supplierId) ?? p.supplierId,
       Descrição: p.description,
@@ -76,6 +113,9 @@ export function payablesToExportRows(
       // reconhece o número em vez de tratar tudo como texto.
       "Valor (R$)": formatBRL(p.amountCents).replace("R$", "").trim(),
       "Valor Pago (R$)": formatBRL(p.paidCents).replace("R$", "").trim(),
+      // Vazia sem pagamento conciliado (título em aberto ou baixado pela
+      // conciliação bancária, que não cria pagamento).
+      "Data de Pagamento": pagoEm ? formatBR(pagoEm) : "",
       Status: statusLabel(p.status),
       "Conta de Pagamento": contaId ? (bankAccountName.get(contaId) ?? "") : "",
     };
