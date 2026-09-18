@@ -110,6 +110,16 @@ const updateReceivableSchema = z.object({
   notes: z.string().nullable().optional(),
 });
 
+// RECLASSIFICAÇÃO de título JÁ RECEBIDO: só categoria e centro de custo. Existe
+// porque `update_receivable` recusa título recebido — e deve continuar
+// recusando. Contrato dos opcionais: undefined mantém o atual, null limpa.
+const reclassifyReceivableSchema = z.object({
+  action: z.literal("reclassify_receivable"),
+  receivableId: z.string().min(1),
+  categoryId: z.string().min(1).nullable().optional(),
+  costCenterId: z.string().min(1).nullable().optional(),
+});
+
 // Estorno de recebimento JÁ registrado: devolve o saldo e o título volta para a
 // fila. Nada é apagado — o recebimento fica "canceled" e a trilha guarda o
 // antes/depois com o motivo.
@@ -140,6 +150,7 @@ export const contasAReceberInputSchema = z.discriminatedUnion("action", [
   issueChargeSchema,
   cancelReceivableSchema,
   updateReceivableSchema,
+  reclassifyReceivableSchema,
   reverseReceiptSchema,
   adjustReceiptDateSchema,
   generateRecurringSchema,
@@ -154,6 +165,7 @@ export type RegisterReceiptInput = z.infer<typeof registerReceiptSchema>;
 export type ProjectionInput = z.infer<typeof projectionSchema>;
 export type CancelReceivableInput = z.infer<typeof cancelReceivableSchema>;
 export type UpdateReceivableInput = z.infer<typeof updateReceivableSchema>;
+export type ReclassifyReceivableInput = z.infer<typeof reclassifyReceivableSchema>;
 export type ReverseReceiptInput = z.infer<typeof reverseReceiptSchema>;
 export type AdjustReceiptDateInput = z.infer<typeof adjustReceiptDateSchema>;
 
@@ -232,6 +244,10 @@ export interface UpdateReceivableData {
   receivable: Receivable;
 }
 
+export interface ReclassifyReceivableData {
+  receivable: Receivable;
+}
+
 export interface ReverseReceiptData {
   receipt: Receipt;
   receivable: Receivable;
@@ -246,6 +262,7 @@ export interface AdjustReceiptDateData {
 export type ContasAReceberData =
   | CreateReceivableData
   | UpdateReceivableData
+  | ReclassifyReceivableData
   | ReverseReceiptData
   | AdjustReceiptDateData
   | ListOverdueData
@@ -898,6 +915,8 @@ export const contasAReceberSkill: SkillDefinition<ContasAReceberInput, ContasARe
         return issueCharge(ctx, input);
       case "update_receivable":
         return updateReceivable(ctx, input);
+      case "reclassify_receivable":
+        return reclassifyReceivable(ctx, input);
       case "reverse_receipt":
         return reverseReceipt(ctx, input);
       case "adjust_receipt_date":
@@ -1046,6 +1065,11 @@ async function issueCharge(
  * (awaiting_approval/approved) são canceladas junto. A cobrança emitida por
  * issue_charge é mock (sem PSP/banco) — nada real a revogar.
  */
+/** Campo opcional de edição: `null` limpa, `undefined` mantém o atual. */
+function applyOptional<T>(incoming: T | null | undefined, current: T | undefined): T | undefined {
+  return incoming === undefined ? current : incoming ?? undefined;
+}
+
 /**
  * EDIÇÃO de título a receber. Espelha `update_payable`: só campos que não
  * afetam a identidade da obrigação. Cliente, fatura e parcela ficam de fora de
@@ -1096,9 +1120,6 @@ async function updateReceivable(
 
   const before = { ...receivable };
   // Opcional com null limpa; undefined mantém — mesma semântica do lado pagar.
-  const applyOptional = <T>(incoming: T | null | undefined, current: T | undefined): T | undefined =>
-    incoming === undefined ? current : incoming ?? undefined;
-
   receivable.description = input.description;
   receivable.issueDate = input.issueDate;
   receivable.dueDate = input.dueDate;
@@ -1129,6 +1150,96 @@ async function updateReceivable(
   return makeResult(SKILL_NAME, ctx, { receivable }, {
     assumptions: [
       "Edição registrada na trilha com estado anterior e novo. Cliente, fatura e parcela não são editáveis (preservam a chave de idempotência).",
+    ],
+    dataSources: ["receivables"],
+  });
+}
+
+/**
+ * RECLASSIFICAÇÃO de título JÁ RECEBIDO: categoria e centro de custo.
+ *
+ * `update_receivable` recusa título recebido — e continua recusando: valor,
+ * datas e descrição de um título quitado são fato consumado. As duas
+ * dimensões aqui são de ANÁLISE: mudá-las não altera baixa, saldo, status
+ * nem o recebimento. Muda, retroativamente, os totais por categoria e centro
+ * de custo (Painel por Período) — que é o objetivo de corrigir a classificação
+ * depois da baixa.
+ *
+ * Só título com status "received": os demais usam a edição normal; cancelado
+ * não se reclassifica.
+ */
+async function reclassifyReceivable(
+  ctx: SkillContext,
+  input: ReclassifyReceivableInput
+): Promise<SkillResult<ReclassifyReceivableData>> {
+  if (ctx.actor.type === "user") {
+    if (!ctx.actor.role || !hasPermission(ctx.actor.role, "receivable.create")) {
+      throw new PermissionError(
+        `Usuário ${ctx.actor.id} (papel ${ctx.actor.role ?? "nenhum"}) não pode reclassificar títulos a receber.`
+      );
+    }
+  }
+
+  const receivable = await ctx.repos.receivables.getById(ctx.companyId, input.receivableId);
+  if (!receivable) throw new NotFoundError("Título a receber", input.receivableId);
+
+  if (receivable.status === "canceled") {
+    throw new ValidationError(
+      `Título ${receivable.id} está cancelado e não pode ser reclassificado.`
+    );
+  }
+  if (receivable.status !== "received") {
+    throw new ValidationError(
+      `Título ${receivable.id} não está recebido (status atual: ${receivable.status}); use a edição normal do título para alterar categoria e centro de custo.`
+    );
+  }
+  if (input.categoryId) {
+    const categoria = await ctx.repos.categories.getById(ctx.companyId, input.categoryId);
+    if (!categoria) throw new NotFoundError("Categoria", input.categoryId);
+  }
+  if (input.costCenterId) {
+    const centro = await ctx.repos.costCenters.getById(ctx.companyId, input.costCenterId);
+    if (!centro) throw new NotFoundError("Centro de custo", input.costCenterId);
+  }
+
+  const next = {
+    categoryId: applyOptional(input.categoryId, receivable.categoryId),
+    costCenterId: applyOptional(input.costCenterId, receivable.costCenterId),
+  };
+  if (next.categoryId === receivable.categoryId && next.costCenterId === receivable.costCenterId) {
+    return makeResult(SKILL_NAME, ctx, { receivable }, {
+      assumptions: ["Classificação informada é igual à atual; nada foi alterado."],
+      dataSources: ["receivables"],
+    });
+  }
+
+  const before = { ...receivable };
+  receivable.categoryId = next.categoryId;
+  receivable.costCenterId = next.costCenterId;
+  receivable.updatedAt = ctx.clock.now().toISOString();
+  await ctx.repos.receivables.update(receivable);
+
+  await ctx.audit.record(ctx.companyId, {
+    actor: ctx.actor,
+    action: "receivable.reclassified",
+    entityType: "receivable",
+    entityId: receivable.id,
+    before,
+    after: receivable,
+    correlationId: ctx.correlationId,
+  });
+  await ctx.events.publish({
+    companyId: ctx.companyId,
+    type: "receivable.updated",
+    payload: { id: receivable.id, categoryId: receivable.categoryId, costCenterId: receivable.costCenterId },
+    source: SKILL_NAME,
+    correlationId: ctx.correlationId,
+  });
+
+  return makeResult(SKILL_NAME, ctx, { receivable }, {
+    assumptions: [
+      "Reclassificação registrada na trilha de auditoria (receivable.reclassified) com estado anterior e novo. Valor, datas, descrição, baixa e status do título não mudam.",
+      "Os totais por categoria e centro de custo (Painel por Período) passam a refletir a nova classificação, inclusive em período já encerrado.",
     ],
     dataSources: ["receivables"],
   });
