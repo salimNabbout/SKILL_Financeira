@@ -257,6 +257,36 @@ describe("Fluxo de Caixa — regras de borda", () => {
     expect(m.naoClassificadosCount).toBe(1);
   });
 
+  it("entrada não classificada NÃO vira saída: linha própria no bloco de entradas e totais pelo tipo do lançamento", () => {
+    const entries = [
+      { ...entry(3, "a_classificar", 500, "realizado"), kind: "entrada" as const },
+      entry(3, "a_classificar", 200, "previsto"),
+    ];
+    const m = computeMonthly({ year: YEAR, entries, categories: cats, openingBalanceCents: 0, minimumReserveCents: 0 });
+    expect(m.entradasAnoCents).toBe(R(500));
+    expect(m.saidasAnoCents).toBe(R(200));
+    expect(m.resultadoAnoCents).toBe(R(300));
+    expect(m.naoClassificadosCount).toBe(2);
+    expect(m.naoClassificadosCents).toBe(R(700));
+    const linhas = m.rows.filter((r) => r.categoryId === "a_classificar");
+    expect(linhas).toHaveLength(2);
+    const entradaNc = linhas.find((r) => r.kind === "entrada")!;
+    expect(entradaNc.name).toBe("A Classificar (entradas)");
+    expect(entradaNc.months[2]).toBe(R(500));
+    // A linha extra fica logo após a última categoria de entrada do plano.
+    const idx = m.rows.indexOf(entradaNc);
+    expect(m.rows[idx - 1].kind).toBe("entrada");
+    expect(m.rows[idx + 1].kind).toBe("saida");
+    const v = computeVariance({ year: YEAR, entries, categories: cats });
+    expect(v.lines.find((l) => l.key === "entradas")!.realizado[2]).toBe(R(500));
+    expect(v.lines.find((l) => l.key === "entradas")!.previsto[2]).toBe(0);
+    expect(v.lines.find((l) => l.key === "saidas")!.previsto[2]).toBe(R(200));
+    expect(v.lines.find((l) => l.key === "outras")!.previsto[2]).toBe(R(200));
+    // Sem entrada não classificada, a grade é idêntica à planilha (sem linha extra).
+    const soSaida = computeMonthly({ year: YEAR, entries: [entry(3, "a_classificar", 200, "previsto")], categories: cats, openingBalanceCents: 0, minimumReserveCents: 0 });
+    expect(soSaida.rows.filter((r) => r.categoryId === "a_classificar")).toHaveLength(1);
+  });
+
   it("alerta de crescimento de categoria acima de 15% cita mês, valor e média anterior", () => {
     const entries = [entry(1, "energia_eletrica", 1_000, "realizado"), entry(2, "energia_eletrica", 1_000, "realizado"), entry(3, "energia_eletrica", 1_300, "realizado")];
     const out = computeCashflow({ year: YEAR, entries, categories: cats, parameter: { openingBalanceCents: R(100_000), minimumReserveCents: 0 }, scenarios });

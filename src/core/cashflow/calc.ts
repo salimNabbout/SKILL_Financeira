@@ -16,6 +16,11 @@
  *                              reserva se < reserva mínima; senão OK;
  *  - Total do Ano            = Σ dos 12 meses, por linha.
  *
+ * "A Classificar" é categoria de SAÍDA no plano da planilha, mas um lançamento
+ * de ENTRADA sem de-para também cai nela. Ele nunca é somado como saída: vai
+ * para uma linha própria "A Classificar (entradas)" no bloco de entradas (só
+ * aparece quando existe), e Previsto x Realizado segue o tipo do lançamento.
+ *
  * Previsto x Realizado: para Total de Entradas, Total de Saídas e cada grupo
  * de saída, por mês: Previsto = Σ status previsto; Realizado = Σ status
  * realizado; Variação = Realizado − Previsto (em saídas, variação positiva é
@@ -23,7 +28,7 @@
  */
 
 import type { CashflowCategory, CashflowEntry, CashflowGroup } from "@/core/entities";
-import { CASHFLOW_EXPENSE_GROUPS, CASHFLOW_GROUP_LABEL } from "./plan";
+import { CASHFLOW_EXPENSE_GROUPS, CASHFLOW_GROUP_LABEL, CASHFLOW_UNCLASSIFIED_ID } from "./plan";
 
 /** 12 posições, índice 0 = janeiro. */
 export type MonthlySeries = number[];
@@ -93,18 +98,23 @@ export function computeMonthly(input: MonthlyInput): MonthlyStatement {
     .filter((c) => c.kind !== "neutro")
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const byCategory = new Map<string, MonthlySeries>(categories.map((c) => [c.id, zeros()]));
+  const unclassifiedIn = zeros();
   let naoClassificadosCents = 0;
   let naoClassificadosCount = 0;
 
   for (const e of input.entries) {
     if (e.year !== input.year) continue;
+    if (e.categoryId === CASHFLOW_UNCLASSIFIED_ID) {
+      naoClassificadosCents += e.amountCents;
+      naoClassificadosCount += 1;
+      if (e.kind === "entrada") {
+        unclassifiedIn[e.month - 1] += e.amountCents;
+        continue;
+      }
+    }
     const series = byCategory.get(e.categoryId);
     if (!series) continue; // categoria desconhecida/neutra: fora da grade
     series[e.month - 1] += e.amountCents;
-    if (e.categoryId === "a_classificar") {
-      naoClassificadosCents += e.amountCents;
-      naoClassificadosCount += 1;
-    }
   }
 
   const rows: MonthlyRow[] = categories.map((c) => {
@@ -120,6 +130,19 @@ export function computeMonthly(input: MonthlyInput): MonthlyStatement {
       totalCents: sum(months),
     };
   });
+  if (sum(unclassifiedIn) !== 0) {
+    const lastIn = rows.map((r) => r.kind).lastIndexOf("entrada");
+    rows.splice(lastIn + 1, 0, {
+      categoryId: CASHFLOW_UNCLASSIFIED_ID,
+      name: "A Classificar (entradas)",
+      kind: "entrada",
+      group: "receita_nao_operacional",
+      groupLabel: CASHFLOW_GROUP_LABEL.receita_nao_operacional,
+      classification: "variavel",
+      months: unclassifiedIn,
+      totalCents: sum(unclassifiedIn),
+    });
+  }
 
   const entradasTotal = rows.filter((r) => r.kind === "entrada").reduce((acc, r) => addSeries(acc, r.months), zeros());
   const saidasGrupos: MonthlyGroupSubtotal[] = CASHFLOW_EXPENSE_GROUPS.map((group) => {
@@ -213,7 +236,8 @@ export function computeVariance(input: VarianceInput): VarianceStatement {
 
   for (const e of input.entries) {
     if (e.year !== input.year) continue;
-    const kind = kindOf.get(e.categoryId);
+    // Não classificado segue o tipo do próprio lançamento (entrada ou saída).
+    const kind = e.categoryId === CASHFLOW_UNCLASSIFIED_ID ? e.kind : kindOf.get(e.categoryId);
     if (kind === "entrada") {
       (e.status === "realizado" ? entradas.realizado : entradas.previsto)[e.month - 1] += e.amountCents;
     } else if (kind === "saida") {

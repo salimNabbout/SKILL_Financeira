@@ -393,6 +393,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
       amountCents: pay.amountCents,
       origin: "contas_pagar",
       originId: pay.id,
+      parentId: payable.id,
       matchCriteria: opts.realizedFallback ? "baixa no app sem conciliação (fallback declarado)" : "baixa no app sem conciliação: previsto (modo estrito)",
     });
   }
@@ -418,6 +419,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
       amountCents: rec.amountCents,
       origin: "contas_receber",
       originId: rec.id,
+      parentId: receivable.id,
       matchCriteria: opts.realizedFallback ? "baixa no app sem conciliação (fallback declarado)" : "baixa no app sem conciliação: previsto (modo estrito)",
     });
   }

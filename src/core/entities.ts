@@ -808,4 +808,7 @@ export interface CashflowEntry {
   /** Chaves do lançamento que o de-para pode usar, em ordem de precedência
    *  (alimenta a fila `a_classificar`: classificar em um clique grava a 1ª). */
   mappingKeys?: Array<{ source: CashflowMappingSource; sourceKey: string }>;
+  /** Registro "pai" no módulo de origem (título do pagamento/recebimento),
+   *  para a UI linkar o registro original. */
+  parentId?: ID;
 }

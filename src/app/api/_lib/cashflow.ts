@@ -436,6 +436,7 @@ export const entriesQuerySchema = z.object({
 
 export interface EntriesPage {
   year: number;
+  years: number[];
   items: CashflowEntry[];
   total: number;
   offset: number;
@@ -464,6 +465,7 @@ export async function listCashflowEntries(deps: ApiDeps, session: ApiSession, ra
   const saidasCents = filtered.filter((e) => e.kind === "saida").reduce((a, e) => a + e.amountCents, 0);
   return {
     year,
+    years: yearsOf(ctx),
     items: filtered.slice(offset, offset + limit),
     total: filtered.length,
     offset,
@@ -593,9 +595,15 @@ export async function deleteCashflowManualEntry(deps: ApiDeps, session: ApiSessi
 // Grades: mensal, previsto x realizado, projeção, dashboard
 // ---------------------------------------------------------------------------
 
+/** Anos com lançamento (qualquer origem) + o ano base, para o seletor da UI. */
+function yearsOf(ctx: CashflowContext): number[] {
+  return [...new Set([...ctx.entries.map((e) => e.year), ctx.year])].sort((a, b) => a - b);
+}
+
 function meta(ctx: CashflowContext, out: CashflowComputeOutput) {
   return {
     year: ctx.year,
+    years: yearsOf(ctx),
     computedAt: ctx.computedAt,
     parameterConfigured: ctx.parameter.configured,
     naoClassificados: { count: out.monthly.naoClassificadosCount, totalCents: out.monthly.naoClassificadosCents },
@@ -627,6 +635,7 @@ export async function getCashflowProjection(deps: ApiDeps, session: ApiSession, 
 
 export interface DashboardView {
   year: number;
+  years: number[];
   computedAt: string;
   parameterConfigured: boolean;
   kpis: {
@@ -664,6 +673,7 @@ export async function getCashflowDashboard(deps: ApiDeps, session: ApiSession, r
   }
   return {
     year: ctx.year,
+    years: yearsOf(ctx),
     computedAt: ctx.computedAt,
     parameterConfigured: ctx.parameter.configured,
     kpis: {
@@ -741,6 +751,7 @@ export async function getCashflowPending(deps: ApiDeps, session: ApiSession, raw
   const items = [...groups.values()].sort((a, b) => b.totalCents - a.totalCents || a.sourceKey.localeCompare(b.sourceKey));
   return {
     year: ctx.year,
+    years: yearsOf(ctx),
     computedAt: ctx.computedAt,
     total: pending.length,
     totalCents: pending.reduce((a, e) => a + e.amountCents, 0),
