@@ -4,6 +4,7 @@ import { parseReceivableFilters, describeFilters, filtersToQuery } from "../_lib
 
 const HOJE = "2026-08-20";
 import {
+  RECEIVABLE_CSV_COLUMNS,
   RECEIVABLE_EXPORT_COLUMNS,
   receivablesToExportRows,
   totalsLabel,
@@ -147,6 +148,34 @@ describe("linhas de exportação", () => {
     for (const coluna of RECEIVABLE_EXPORT_COLUMNS) {
       expect(rows[0]).toHaveProperty(coluna);
     }
+  });
+
+  it("Data de Recebimento sai em DD/MM/AAAA quando há recebimento ativo e vazia sem ele", () => {
+    const rows = receivablesToExportRows(
+      [
+        receivable({ id: "recebido", status: "received", receivedCents: 10_000 }),
+        receivable({ id: "aberto" }),
+        receivable({ id: "estornado", status: "open" }),
+      ],
+      {
+        customers: ctxBase.customers,
+        costCenters: [],
+        bankAccounts: [],
+        receivedDateByReceivable: new Map([["recebido", "2026-08-19"]]),
+      }
+    );
+    expect(rows[0]["Data de Recebimento"]).toBe("19/08/2026");
+    expect(rows[1]["Data de Recebimento"]).toBe("");
+    expect(rows[2]["Data de Recebimento"]).toBe("");
+  });
+
+  it("CSV = colunas da impressão + Data de Recebimento logo após Valor Recebido", () => {
+    expect([...RECEIVABLE_CSV_COLUMNS].filter((c) => c !== "Data de Recebimento")).toEqual([
+      ...RECEIVABLE_EXPORT_COLUMNS,
+    ]);
+    expect(RECEIVABLE_CSV_COLUMNS.indexOf("Data de Recebimento")).toBe(
+      RECEIVABLE_CSV_COLUMNS.indexOf("Valor Recebido (R$)") + 1
+    );
   });
 
   it("soma os totais sobre o conjunto filtrado", () => {
