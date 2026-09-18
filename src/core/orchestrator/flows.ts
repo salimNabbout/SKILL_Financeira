@@ -789,6 +789,37 @@ const updateReceivableFlow: FlowDefinition = {
 };
 
 /**
+ * Reclassificação de título JÁ RECEBIDO (categoria e centro de custo). Passo
+ * único — a skill exige status "received" (os demais usam update_receivable),
+ * valida categoria/centro e registra receivable.reclassified.
+ * payload: { receivableId, categoryId?, costCenterId? }
+ */
+const reclassifyReceivableFlow: FlowDefinition = {
+  name: "reclassify_receivable",
+  description:
+    "Altera categoria e centro de custo de um título já recebido, sem tocar em valor, datas, baixa ou status, e registra a alteração na auditoria.",
+  requiredPermission: "receivable.create",
+  // Como no reclassify_payable: a chave padrão é hash(fluxo + payload), e
+  // A→B, B→A, A→B repetiria a 1ª chave e cairia no replay. O updatedAt do
+  // título muda a cada gravação e faz cada pedido sobre um estado novo ser
+  // uma tentativa nova; repetir o mesmo pedido é no-op na skill.
+  async idempotencyScope(repos, { companyId, payload }) {
+    const receivableId = (payload as { receivableId?: string } | null)?.receivableId;
+    if (!receivableId) return null;
+    const receivable = await repos.receivables.getById(companyId, receivableId);
+    return receivable ? receivable.updatedAt : null;
+  },
+  steps: [
+    {
+      id: "ar_reclassify",
+      skill: "contas_a_receber",
+      description: "Reclassificar título recebido (categoria, centro de custo)",
+      buildInput: (f) => ({ action: "reclassify_receivable", ...f.payload }),
+    },
+  ],
+};
+
+/**
  * ESTORNO de recebimento: devolve o saldo, o título volta para a fila e o
  * lançamento contábil é estornado. Nada é apagado.
  * payload: { receiptId, reason }
@@ -871,6 +902,7 @@ export const BUILTIN_FLOWS: FlowDefinition[] = [
   cancelPayableFlow,
   cancelReceivableFlow,
   updateReceivableFlow,
+  reclassifyReceivableFlow,
   reverseReceiptFlow,
   adjustReceiptDateFlow,
   adjustPaymentDateFlow,

@@ -102,6 +102,7 @@ export const AUDIT_ACTIONS = {
   PAYABLE_RECLASSIFIED: "payable.reclassified",
   RECEIVABLE_CREATED: "receivable.created",
   RECEIVABLE_UPDATED: "receivable.updated",
+  RECEIVABLE_RECLASSIFIED: "receivable.reclassified",
   RECEIVABLE_CANCELED: "receivable.canceled",
   RECEIVABLE_RECEIPT_REGISTERED: "receivable.receipt_registered",
 

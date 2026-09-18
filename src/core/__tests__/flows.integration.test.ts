@@ -1235,3 +1235,100 @@ describe("fluxo integrado: reclassificação de título pago", () => {
     expect((await env.repos.payables.getById(env.company.id, id))?.costClassification).toBe("variable");
   });
 });
+
+describe("fluxo integrado: reclassificação de título recebido", () => {
+  async function seedRecebido(): Promise<string> {
+    const now = env.clock.now().toISOString();
+    await env.repos.categories.create({
+      id: "cat_vendas",
+      companyId: env.company.id,
+      name: "Vendas",
+      kind: "income",
+      dreGroup: "receita_bruta",
+      active: true,
+    });
+    await env.repos.categories.create({
+      id: "cat_servicos",
+      companyId: env.company.id,
+      name: "Serviços",
+      kind: "income",
+      dreGroup: "receita_bruta",
+      active: true,
+    });
+    for (const [id, code, name] of [["cc_loja", "CC-01", "Loja"], ["cc_adm", "CC-03", "Administrativo"]]) {
+      await env.repos.costCenters.create({ id, companyId: env.company.id, code, name, active: true, scope: "both" });
+    }
+    await env.repos.receivables.create({
+      id: "rc_rec",
+      companyId: env.company.id,
+      customerId: "cus_1",
+      description: "Pedido 1002 — fornecimento mensal",
+      issueDate: "2026-07-01",
+      dueDate: "2026-07-20",
+      amountCents: 487_000,
+      receivedCents: 487_000,
+      currency: "BRL",
+      status: "received",
+      installmentNumber: 1,
+      installmentCount: 1,
+      originKey: "seed:rc_rec:1/1",
+      categoryId: "cat_vendas",
+      costCenterId: "cc_loja",
+      createdBy: "usr_analyst",
+      createdAt: now,
+      updatedAt: now,
+    });
+    return "rc_rec";
+  }
+
+  function reclassificar(payload: Record<string, unknown>, role: "analyst" | "viewer" = "analyst") {
+    return orch.execute({
+      flow: "reclassify_receivable",
+      companyId: env.company.id,
+      actor: env.actorFor(role),
+      payload: { receivableId: "rc_rec", ...payload },
+    });
+  }
+
+  it("altera categoria e centro, audita receivable.reclassified e mantém a cadeia de hash válida", async () => {
+    const id = await seedRecebido();
+
+    const res = await reclassificar({ categoryId: "cat_servicos", costCenterId: "cc_adm" });
+
+    expect(res.status).toBe("completed");
+    const r = await env.repos.receivables.getById(env.company.id, id);
+    expect(r?.categoryId).toBe("cat_servicos");
+    expect(r?.costCenterId).toBe("cc_adm");
+    expect(r?.status).toBe("received");
+    expect(r?.receivedCents).toBe(487_000);
+
+    const audit = await env.repos.audit.list(env.company.id);
+    expect(audit.map((a) => a.action)).toContain("receivable.reclassified");
+    expect(verifyChain(audit).valid).toBe(true);
+  });
+
+  it("ir e voltar (A→B, B→A, A→B) não cai no replay de idempotência", async () => {
+    const id = await seedRecebido();
+
+    const primeira = await reclassificar({ costCenterId: "cc_adm" });
+    expect(primeira.status).toBe("completed");
+    expect(primeira.idempotent_replay).toBeFalsy();
+
+    env.clock.set("2026-08-18T15:00:01Z");
+    const volta = await reclassificar({ costCenterId: "cc_loja" });
+    expect(volta.idempotent_replay).toBeFalsy();
+
+    env.clock.set("2026-08-18T15:00:02Z");
+    const denovo = await reclassificar({ costCenterId: "cc_adm" });
+    expect(denovo.status).toBe("completed");
+    expect(denovo.idempotent_replay).toBeFalsy();
+    expect((await env.repos.receivables.getById(env.company.id, id))?.costCenterId).toBe("cc_adm");
+  });
+
+  it("papel sem receivable.create (viewer) é barrado pelo fluxo", async () => {
+    const id = await seedRecebido();
+
+    await expect(reclassificar({ costCenterId: "cc_adm" }, "viewer")).rejects.toThrow();
+    expect((await env.repos.receivables.getById(env.company.id, id))?.costCenterId).toBe("cc_loja");
+  });
+});

@@ -3,6 +3,7 @@ import type { Receivable } from "@/core/entities";
 import {
   deriveReceivableSituation,
   hasPartialReceipt,
+  isSettledSituation,
 } from "@/lib/receivable-situation";
 
 const TODAY = "2026-08-25";
@@ -87,5 +88,26 @@ describe("hasPartialReceipt", () => {
     expect(hasPartialReceipt({ status: "open", receivedCents: 0 })).toBe(false);
     expect(hasPartialReceipt({ status: "received", receivedCents: 10_000 })).toBe(false);
     expect(hasPartialReceipt({ status: "canceled", receivedCents: 3_000 })).toBe(false);
+  });
+});
+
+describe("isSettledSituation", () => {
+  it("true só para as três quitações (Recebido, Recebido no Vencimento, Recebido em Atraso)", () => {
+    expect(isSettledSituation("Recebido")).toBe(true);
+    expect(isSettledSituation("Recebido no Vencimento")).toBe(true);
+    expect(isSettledSituation("Recebido em Atraso")).toBe(true);
+    expect(isSettledSituation("A Vencer")).toBe(false);
+    expect(isSettledSituation("Hoje")).toBe(false);
+    expect(isSettledSituation("Atrasado")).toBe(false);
+    expect(isSettledSituation("Cancelado")).toBe(false);
+  });
+
+  it("coincide com deriveReceivableSituation: todo título recebido é quitado, qualquer que seja a data", () => {
+    const recebido = receivable({ status: "received", receivedCents: 10_000 });
+    for (const receivedAt of ["2026-08-20", TODAY, "2026-08-30"]) {
+      expect(isSettledSituation(deriveReceivableSituation(recebido, TODAY, receivedAt))).toBe(true);
+    }
+    expect(isSettledSituation(deriveReceivableSituation(receivable({}), TODAY))).toBe(false);
+    expect(isSettledSituation(deriveReceivableSituation(receivable({ status: "canceled" }), TODAY))).toBe(false);
   });
 });

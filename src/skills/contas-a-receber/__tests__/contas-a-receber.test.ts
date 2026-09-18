@@ -20,6 +20,7 @@ import {
   type AdjustReceiptDateData,
   type RegisterReceiptData,
   type ReverseReceiptData,
+  type ReclassifyReceivableData,
   type UpdateReceivableData,
 } from "..";
 
@@ -1383,5 +1384,170 @@ describe("contas_a_receber — correção da data de recebimento", () => {
     const estornado = await corrigir(env, receipt.id, "2026-08-05");
     expect(estornado.status).toBe("error");
     expect(estornado.alerts[0].message).toContain("estornado");
+  });
+});
+
+describe("contas_a_receber — reclassify_receivable (título recebido)", () => {
+  function seedCostCenter(env: TestEnv, id: string, code: string, name: string) {
+    env.db.costCenters.push({ id, companyId: env.company.id, code, name, active: true, scope: "both" });
+  }
+
+  /** Título RECEBIDO já classificado (categoria de receita + centro de custo). */
+  function recebidoClassificado(env: TestEnv, over: Partial<Receivable> = {}): Receivable {
+    seedCustomer(env);
+    seedIncomeCategory(env);
+    seedIncomeCategory(env, { id: "cat_servicos", name: "Serviços" });
+    seedCostCenter(env, "cc_1", "CC-01", "Loja");
+    seedCostCenter(env, "cc_2", "CC-02", "Administrativo");
+    return seedReceivable(env, {
+      status: "received",
+      receivedCents: 100_000,
+      categoryId: "cat_vendas",
+      costCenterId: "cc_1",
+      ...over,
+    });
+  }
+
+  function reclassificar(
+    env: TestEnv,
+    receivableId: string,
+    over: Record<string, unknown> = {},
+    role: "manager" | "analyst" | "viewer" = "analyst"
+  ) {
+    return runSkill(contasAReceberSkill, env.ctx(env.actorFor(role)), {
+      action: "reclassify_receivable",
+      receivableId,
+      ...over,
+    });
+  }
+
+  it("reclassifica título recebido (categoria e centro) e registra receivable.reclassified com antes e depois", async () => {
+    const env = createTestEnv();
+    const r = recebidoClassificado(env);
+
+    const res = await reclassificar(env, r.id, { categoryId: "cat_servicos", costCenterId: "cc_2" });
+
+    expect(res.status).toBe("success");
+    const data = res.data as ReclassifyReceivableData;
+    expect(data.receivable.categoryId).toBe("cat_servicos");
+    expect(data.receivable.costCenterId).toBe("cc_2");
+    const stored = env.db.receivables.find((x) => x.id === r.id);
+    expect(stored?.categoryId).toBe("cat_servicos");
+    expect(stored?.costCenterId).toBe("cc_2");
+
+    const audit = env.db.auditRecords.find((a) => a.action === "receivable.reclassified");
+    expect(audit?.entityId).toBe(r.id);
+    expect((audit?.before as Receivable).categoryId).toBe("cat_vendas");
+    expect((audit?.before as Receivable).costCenterId).toBe("cc_1");
+    expect((audit?.after as Receivable).categoryId).toBe("cat_servicos");
+    expect((audit?.after as Receivable).costCenterId).toBe("cc_2");
+    expect(env.db.events.some((e) => e.type === "receivable.updated")).toBe(true);
+  });
+
+  it("mantém valor, datas, descrição, baixa, status e originKey do título", async () => {
+    const env = createTestEnv();
+    const r = recebidoClassificado(env);
+    const antes = { ...env.db.receivables.find((x) => x.id === r.id)! };
+
+    const res = await reclassificar(env, r.id, { costCenterId: "cc_2" });
+
+    expect(res.status).toBe("success");
+    const depois = env.db.receivables.find((x) => x.id === r.id)!;
+    expect(depois.costCenterId).toBe("cc_2");
+    expect({ ...depois, costCenterId: antes.costCenterId, updatedAt: antes.updatedAt }).toEqual(antes);
+    expect(depois.receivedCents).toBe(100_000);
+    expect(depois.status).toBe("received");
+  });
+
+  it("recusa título em aberto e parcialmente recebido, orientando a usar a edição normal", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    seedCostCenter(env, "cc_1", "CC-01", "Loja");
+    const aberto = seedReceivable(env, { costCenterId: "cc_1" });
+    const parcial = seedReceivable(env, { status: "partially_received", receivedCents: 40_000, costCenterId: "cc_1" });
+
+    for (const r of [aberto, parcial]) {
+      const res = await reclassificar(env, r.id, { costCenterId: null });
+      expect(res.status).toBe("error");
+      expect(res.alerts[0].code).toBe("validation_error");
+      expect(res.alerts[0].message).toMatch(/edição normal/);
+      expect(env.db.receivables.find((x) => x.id === r.id)?.costCenterId).toBe("cc_1");
+    }
+  });
+
+  it("recusa título cancelado", async () => {
+    const env = createTestEnv();
+    seedCustomer(env);
+    const cancelado = seedReceivable(env, { status: "canceled", categoryId: "cat_vendas" });
+
+    const res = await reclassificar(env, cancelado.id, { categoryId: null });
+
+    expect(res.status).toBe("error");
+    expect(res.alerts[0].message).toMatch(/cancelado/);
+    expect(env.db.receivables.find((x) => x.id === cancelado.id)?.categoryId).toBe("cat_vendas");
+  });
+
+  it("recusa categoria e centro de custo inexistentes e não altera nada", async () => {
+    const env = createTestEnv();
+    const r = recebidoClassificado(env);
+
+    const semCategoria = await reclassificar(env, r.id, { categoryId: "cat_nao_existe" });
+    expect(semCategoria.status).toBe("error");
+    expect(semCategoria.alerts[0].code).toBe("not_found");
+
+    const semCentro = await reclassificar(env, r.id, { categoryId: "cat_servicos", costCenterId: "cc_nao_existe" });
+    expect(semCentro.status).toBe("error");
+    expect(semCentro.alerts[0].code).toBe("not_found");
+
+    const stored = env.db.receivables.find((x) => x.id === r.id);
+    expect(stored?.categoryId).toBe("cat_vendas");
+    expect(stored?.costCenterId).toBe("cc_1");
+    expect(env.db.auditRecords.some((a) => a.action === "receivable.reclassified")).toBe(false);
+  });
+
+  it("null limpa o campo; undefined mantém o atual", async () => {
+    const env = createTestEnv();
+    const r = recebidoClassificado(env);
+
+    const res = await reclassificar(env, r.id, { costCenterId: null });
+
+    expect(res.status).toBe("success");
+    const stored = env.db.receivables.find((x) => x.id === r.id);
+    expect(stored?.costCenterId).toBeUndefined();
+    expect(stored?.categoryId).toBe("cat_vendas");
+  });
+
+  it("classificação igual à atual é no-op: sem gravação e sem auditoria", async () => {
+    const env = createTestEnv();
+    const r = recebidoClassificado(env);
+    const auditAntes = env.db.auditRecords.length;
+    const updatedAtAntes = env.db.receivables.find((x) => x.id === r.id)?.updatedAt;
+
+    const res = await reclassificar(env, r.id, { categoryId: "cat_vendas", costCenterId: "cc_1" });
+
+    expect(res.status).toBe("success");
+    expect(res.assumptions.some((a) => a.includes("igual à atual"))).toBe(true);
+    expect(env.db.auditRecords.length).toBe(auditAntes);
+    expect(env.db.receivables.find((x) => x.id === r.id)?.updatedAt).toBe(updatedAtAntes);
+  });
+
+  it("papel sem receivable.create (viewer) não reclassifica; update_receivable CONTINUA recusando título recebido", async () => {
+    const env = createTestEnv();
+    const r = recebidoClassificado(env);
+
+    const viewer = await reclassificar(env, r.id, { costCenterId: "cc_2" }, "viewer");
+    expect(viewer.status).toBe("error");
+    expect(viewer.alerts[0].code).toBe("permission_denied");
+
+    const edicaoNormal = await runSkill(contasAReceberSkill, env.ctx(env.actorFor("manager")), {
+      action: "update_receivable",
+      receivableId: r.id,
+      description: "tentativa",
+      issueDate: "2026-08-01",
+      dueDate: "2026-08-30",
+      amountCents: 1_000,
+    });
+    expect(edicaoNormal.status).toBe("error");
+    expect(env.db.receivables.find((x) => x.id === r.id)?.costCenterId).toBe("cc_1");
   });
 });

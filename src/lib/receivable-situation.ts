@@ -75,3 +75,19 @@ export function hasPartialReceipt(
     receivable.receivedCents > 0
   );
 }
+
+/**
+ * Situações de título QUITADO (status "received"): "Recebido", "Recebido no
+ * Vencimento" e "Recebido em Atraso". Na listagem de Contas a receber, o badge
+ * dessas situações vira o botão que abre a reclassificação (categoria e
+ * centro de custo).
+ */
+const SETTLED_SITUATIONS: ReadonlySet<ReceivableSituation> = new Set<ReceivableSituation>([
+  "Recebido",
+  "Recebido no Vencimento",
+  "Recebido em Atraso",
+]);
+
+export function isSettledSituation(situacao: ReceivableSituation): boolean {
+  return SETTLED_SITUATIONS.has(situacao);
+}

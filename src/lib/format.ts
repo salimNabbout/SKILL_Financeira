@@ -145,6 +145,7 @@ export const ACTION_LABELS: Record<string, string> = {
   // Contas a receber e recebimentos
   "receivable.created": "Título a receber criado",
   "receivable.updated": "Título a receber alterado",
+  "receivable.reclassified": "Título recebido reclassificado (categoria/centro)",
   "receivable.canceled": "Título a receber cancelado",
   "receivable.receipt_registered": "Recebimento registrado",
   "receivable.charge_issued": "Cobrança emitida",
