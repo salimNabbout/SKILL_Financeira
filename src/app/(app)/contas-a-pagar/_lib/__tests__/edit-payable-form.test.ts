@@ -39,7 +39,7 @@ const PAYABLE: EditPayableValues = {
   costCenterId: "cc_loja",
   costCenterLabel: "CC-01 — Loja",
   notes: "",
-  paymentDate: "2026-07-20",
+  paymentDate: "2026-07-22",
   paymentDateMax: "2026-08-18",
   installmentNumber: 1,
   installmentCount: 1,
@@ -48,10 +48,13 @@ const PAYABLE: EditPayableValues = {
 
 const noop = async () => {};
 
-function render(mode: "full" | "paymentDateOnly" | "classificationOnly"): string {
+function render(
+  mode: "full" | "paymentDateOnly" | "classificationOnly",
+  over: Partial<EditPayableValues> = {}
+): string {
   return renderToStaticMarkup(
     createElement(EditPayableForm, {
-      payable: PAYABLE,
+      payable: { ...PAYABLE, ...over },
       action: noop,
       mode,
       categories: ["Insumos", "Serviços"],
@@ -88,6 +91,20 @@ describe("EditPayableForm — campos submetidos por modo", () => {
     expect(html).toContain("Salvar classificação");
     expect(html).toContain("Título já pago");
     expect(html).not.toContain('name="paymentDate"');
+    // Data de Pagamento: só leitura (disabled, sem name), com a data da conciliação.
+    expect(html).toContain("Data de Pagamento");
+    expect(html).toMatch(/<input type="date" disabled="" [^>]*value="2026-07-22"/);
+    expect(html).toContain("Somente leitura: data informada na conciliação.");
+  });
+
+  it("classificationOnly sem pagamento (baixa pela conciliação bancária): Data de Pagamento mostra —", () => {
+    const html = render("classificationOnly", { paymentDate: undefined });
+    expect(html).toContain("Data de Pagamento");
+    expect(html).toMatch(/<input disabled="" [^>]*value="—"/);
+    expect(html).not.toContain('value="2026-07-22"');
+    expect(submittedNames(html)).toEqual(
+      ["costCenterId", "costClassification", "payableId", "supplierCategory"].sort()
+    );
   });
 
   it("full: descrição, valor, datas, classificação e observação são submetidos", () => {
@@ -107,6 +124,7 @@ describe("EditPayableForm — campos submetidos por modo", () => {
     );
     expect(html).toContain("Salvar alterações");
     expect(html).not.toContain("Título já pago");
+    expect(html).not.toContain("Data de Pagamento");
   });
 
   it("paymentDateOnly: só payableId e paymentDate", () => {

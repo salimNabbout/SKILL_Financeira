@@ -30,7 +30,8 @@ export interface EditPayableValues {
    *  exibi-lo sem precisar da lista de opções. */
   costCenterLabel?: string;
   notes: string;
-  /** Data do pagamento conciliado (só usada no modo "paymentDateOnly"). */
+  /** Data do pagamento conciliado: editável no modo "paymentDateOnly"; só
+   *  leitura no "classificationOnly" (título pago em Contas a pagar). */
   paymentDate?: string;
   /** Teto do campo de data de pagamento: hoje, no fuso da empresa. */
   paymentDateMax?: string;
@@ -221,6 +222,23 @@ export function EditPayableForm({
               defaultValue={prefill?.paymentDate ?? payable.paymentDate ?? ""}
               className={inputClass}
             />
+          </Field>
+        ) : null}
+        {/* Título já pago: a data em que o pagamento foi conciliado, só para
+            consulta — é ela, contra o vencimento, que define Pago / Pago no
+            Vencimento / Pago Atrasado. Sem `name`: não é submetida. Corrigir a
+            data é trabalho da tela Conciliação. Sem pagamento (baixa pela
+            conciliação bancária) mostra "—". */}
+        {soClassificacao ? (
+          <Field label="Data de Pagamento">
+            {payable.paymentDate ? (
+              <input type="date" value={payable.paymentDate} disabled className={readOnlyClass} />
+            ) : (
+              <input value="—" disabled className={readOnlyClass} />
+            )}
+            <span className="mt-1 block text-xs text-[var(--ink-muted)]">
+              Somente leitura: data informada na conciliação.
+            </span>
           </Field>
         ) : null}
         <Field label="Categoria">
