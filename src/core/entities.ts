@@ -805,4 +805,7 @@ export interface CashflowEntry {
   matchCriteria?: string;
   /** Como a categoria foi resolvida. */
   mappingSource?: CashflowMappingSource | "conciliacao_bank_fee" | "ajuste_manual" | "nao_mapeado";
+  /** Chaves do lançamento que o de-para pode usar, em ordem de precedência
+   *  (alimenta a fila `a_classificar`: classificar em um clique grava a 1ª). */
+  mappingKeys?: Array<{ source: CashflowMappingSource; sourceKey: string }>;
 }

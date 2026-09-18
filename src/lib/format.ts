@@ -129,6 +129,13 @@ export const ACTION_LABELS: Record<string, string> = {
   "payable.updated": "Título a pagar alterado",
   "payable.due_date_adjusted": "Vencimento do título corrigido",
   "payable.reclassified": "Título pago reclassificado (categoria/custo/centro)",
+  // Fluxo de Caixa
+  "cashflow.parameter_updated": "Fluxo de caixa: parâmetros do exercício alterados",
+  "cashflow.scenario_updated": "Fluxo de caixa: cenário de projeção alterado",
+  "cashflow.mapping_upserted": "Fluxo de caixa: de-para de categoria gravado",
+  "cashflow.manual_entry_created": "Fluxo de caixa: ajuste manual criado",
+  "cashflow.manual_entry_updated": "Fluxo de caixa: ajuste manual alterado",
+  "cashflow.manual_entry_deleted": "Fluxo de caixa: ajuste manual excluído",
   "payable.canceled": "Título a pagar cancelado",
   "payable.settled_via_reconciliation": "Título baixado pela conciliação",
   "payment.requested": "Pagamento solicitado",

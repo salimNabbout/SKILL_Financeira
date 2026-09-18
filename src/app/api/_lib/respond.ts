@@ -36,6 +36,8 @@ export function statusForErrorCode(code: string): number {
       return 403;
     case "not_found":
       return 404;
+    case "conflict":
+      return 409;
     default:
       return 500;
   }

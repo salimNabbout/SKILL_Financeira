@@ -180,17 +180,33 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
   const consumedPayments = new Set<ID>();
   const consumedReceipts = new Set<ID>();
 
-  const categoryOfPayable = (p: Payable): Resolved =>
-    resolver.exact("plano_contas", p.categoryId) ??
-    resolver.exact("categoria_ap", p.supplierCategory) ??
-    resolver.text(p.description) ??
-    resolver.unclassified();
-  const categoryOfReceivable = (r: Receivable): Resolved =>
-    resolver.exact("categoria_ar", r.categoryId) ??
-    resolver.text(r.description) ??
-    resolver.unclassified();
-  const categoryOfText = (description: string): Resolved =>
-    resolver.text(description) ?? resolver.unclassified();
+  type Keys = CashflowEntry["mappingKeys"];
+  const keysOfPayable = (p: Payable): Keys => [
+    ...(p.categoryId ? [{ source: "plano_contas" as const, sourceKey: p.categoryId }] : []),
+    ...(p.supplierCategory ? [{ source: "categoria_ap" as const, sourceKey: p.supplierCategory }] : []),
+    { source: "regra_texto" as const, sourceKey: p.description },
+  ];
+  const keysOfReceivable = (r: Receivable): Keys => [
+    ...(r.categoryId ? [{ source: "categoria_ar" as const, sourceKey: r.categoryId }] : []),
+    { source: "regra_texto" as const, sourceKey: r.description },
+  ];
+  const keysOfText = (description: string): Keys => [{ source: "regra_texto" as const, sourceKey: description }];
+
+  const categoryOfPayable = (p: Payable): Resolved & { mappingKeys: Keys } => ({
+    ...(resolver.exact("plano_contas", p.categoryId) ??
+      resolver.exact("categoria_ap", p.supplierCategory) ??
+      resolver.text(p.description) ??
+      resolver.unclassified()),
+    mappingKeys: keysOfPayable(p),
+  });
+  const categoryOfReceivable = (r: Receivable): Resolved & { mappingKeys: Keys } => ({
+    ...(resolver.exact("categoria_ar", r.categoryId) ?? resolver.text(r.description) ?? resolver.unclassified()),
+    mappingKeys: keysOfReceivable(r),
+  });
+  const categoryOfText = (description: string): Resolved & { mappingKeys: Keys } => ({
+    ...(resolver.text(description) ?? resolver.unclassified()),
+    mappingKeys: keysOfText(description),
+  });
 
   const push = (
     e: Omit<CashflowEntry, "month" | "year" | "group"> & { group?: CashflowGroup }
@@ -265,13 +281,13 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
           const payable = pay ? payableById.get(pay.payableId) : undefined;
           if (pay) consumedPayments.add(pay.id);
           const cat = payable ? categoryOfPayable(payable) : categoryOfText(tx.description);
-          push({ ...base, competenceDate: payable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, description: payable?.description ?? tx.description, costCenterId: payable?.costCenterId });
+          push({ ...base, competenceDate: payable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys, description: payable?.description ?? tx.description, costCenterId: payable?.costCenterId });
           break;
         }
         case "payable": {
           const payable = m.targetId ? payableById.get(m.targetId) : undefined;
           const cat = payable ? categoryOfPayable(payable) : categoryOfText(tx.description);
-          push({ ...base, competenceDate: payable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, description: payable?.description ?? tx.description, costCenterId: payable?.costCenterId });
+          push({ ...base, competenceDate: payable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys, description: payable?.description ?? tx.description, costCenterId: payable?.costCenterId });
           break;
         }
         case "receipt": {
@@ -279,18 +295,18 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
           const receivable = rec ? receivableById.get(rec.receivableId) : undefined;
           if (rec) consumedReceipts.add(rec.id);
           const cat = receivable ? categoryOfReceivable(receivable) : categoryOfText(tx.description);
-          push({ ...base, competenceDate: receivable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, description: receivable?.description ?? tx.description, costCenterId: receivable?.costCenterId });
+          push({ ...base, competenceDate: receivable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys, description: receivable?.description ?? tx.description, costCenterId: receivable?.costCenterId });
           break;
         }
         case "receivable": {
           const receivable = m.targetId ? receivableById.get(m.targetId) : undefined;
           const cat = receivable ? categoryOfReceivable(receivable) : categoryOfText(tx.description);
-          push({ ...base, competenceDate: receivable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, description: receivable?.description ?? tx.description, costCenterId: receivable?.costCenterId });
+          push({ ...base, competenceDate: receivable?.issueDate ?? tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys, description: receivable?.description ?? tx.description, costCenterId: receivable?.costCenterId });
           break;
         }
         default: {
           const cat = categoryOfText(tx.description);
-          push({ ...base, competenceDate: tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, description: tx.description });
+          push({ ...base, competenceDate: tx.date, categoryId: cat.categoryId, mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys, description: tx.description });
         }
       }
     }
@@ -334,7 +350,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
         consumedPayments.add(pay.id);
         const payable = payableById.get(pay.payableId);
         const cat = payable ? categoryOfPayable(payable) : categoryOfText(tx.description);
-        push({ cashDate: tx.date, competenceDate: payable?.issueDate ?? tx.date, kind: "saida", categoryId: cat.categoryId, mappingSource: cat.mappingSource, description: payable?.description ?? tx.description, costCenterId: payable?.costCenterId, bankAccountId: tx.bankAccountId, status: "realizado", realizedBy: "conciliacao", amountCents: -tx.amountCents, origin: "conciliacao", originId: tx.id, matchCriteria: criteriaImplicit });
+        push({ cashDate: tx.date, competenceDate: payable?.issueDate ?? tx.date, kind: "saida", categoryId: cat.categoryId, mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys, description: payable?.description ?? tx.description, costCenterId: payable?.costCenterId, bankAccountId: tx.bankAccountId, status: "realizado", realizedBy: "conciliacao", amountCents: -tx.amountCents, origin: "conciliacao", originId: tx.id, matchCriteria: criteriaImplicit });
         continue;
       }
     } else {
@@ -346,7 +362,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
         consumedReceipts.add(rec.id);
         const receivable = receivableById.get(rec.receivableId);
         const cat = receivable ? categoryOfReceivable(receivable) : categoryOfText(tx.description);
-        push({ cashDate: tx.date, competenceDate: receivable?.issueDate ?? tx.date, kind: "entrada", categoryId: cat.categoryId, mappingSource: cat.mappingSource, description: receivable?.description ?? tx.description, costCenterId: receivable?.costCenterId, bankAccountId: tx.bankAccountId, status: "realizado", realizedBy: "conciliacao", amountCents: tx.amountCents, origin: "conciliacao", originId: tx.id, matchCriteria: criteriaImplicit });
+        push({ cashDate: tx.date, competenceDate: receivable?.issueDate ?? tx.date, kind: "entrada", categoryId: cat.categoryId, mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys, description: receivable?.description ?? tx.description, costCenterId: receivable?.costCenterId, bankAccountId: tx.bankAccountId, status: "realizado", realizedBy: "conciliacao", amountCents: tx.amountCents, origin: "conciliacao", originId: tx.id, matchCriteria: criteriaImplicit });
         continue;
       }
     }
@@ -368,7 +384,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
       competenceDate: payable.issueDate,
       kind: "saida",
       categoryId: cat.categoryId,
-      mappingSource: cat.mappingSource,
+      mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys,
       description: payable.description,
       costCenterId: payable.costCenterId,
       bankAccountId: pay.bankAccountId,
@@ -393,7 +409,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
       competenceDate: receivable.issueDate,
       kind: "entrada",
       categoryId: cat.categoryId,
-      mappingSource: cat.mappingSource,
+      mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys,
       description: receivable.description,
       costCenterId: receivable.costCenterId,
       bankAccountId: rec.bankAccountId,
@@ -426,7 +442,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
       competenceDate: p.issueDate,
       kind: "saida",
       categoryId: cat.categoryId,
-      mappingSource: cat.mappingSource,
+      mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys,
       description: p.description,
       costCenterId: p.costCenterId,
       status: "previsto",
@@ -448,7 +464,7 @@ export function unifyCashflow(input: UnifyInput): UnifyResult {
       competenceDate: r.issueDate,
       kind: "entrada",
       categoryId: cat.categoryId,
-      mappingSource: cat.mappingSource,
+      mappingSource: cat.mappingSource, mappingKeys: cat.mappingKeys,
       description: r.description,
       costCenterId: r.costCenterId,
       status: "previsto",
