@@ -792,6 +792,9 @@ export default async function ContasAPagarPage({
                           installmentCount: p.installmentCount,
                           recurrenceFrequency: editingRecurrenceFrequency,
                           scheduled: p.status === "scheduled",
+                          // Título pago: data da conciliação (a mesma do badge de
+                          // situação), exibida só para consulta no modo restrito.
+                          paymentDate: paidAtByPayable.get(p.id),
                         }}
                         mode={reclassificavel ? "classificationOnly" : "full"}
                         action={reclassificavel ? reclassifyPayableAction : updatePayableAction}
