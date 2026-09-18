@@ -14,6 +14,11 @@ import type {
   StatementImport,
   Budget,
   BudgetLine,
+  CashflowCategory,
+  CashflowManualEntry,
+  CashflowMapping,
+  CashflowParameter,
+  CashflowScenario,
   Category,
   ChartAccount,
   CollectionMessage,
@@ -37,6 +42,8 @@ import type {
   SupplierCategory,
   User,
 } from "@/core/entities";
+
+import { seedCashflowCategories } from "@/core/cashflow/plan";
 
 export class MemoryDb {
   companies: Company[] = [];
@@ -71,6 +78,12 @@ export class MemoryDb {
   accountingEntries: AccountingEntry[] = [];
   flowRuns: FlowRun[] = [];
   idempotencyRecords: IdempotencyRecord[] = [];
+  // Fluxo de Caixa: o plano de categorias já vem semeado (referência global).
+  cashflowCategories: CashflowCategory[] = seedCashflowCategories();
+  cashflowMappings: CashflowMapping[] = [];
+  cashflowParameters: CashflowParameter[] = [];
+  cashflowScenarios: CashflowScenario[] = [];
+  cashflowManualEntries: CashflowManualEntry[] = [];
   /** Âncora do head da trilha por empresa (chave: companyId). */
   auditHeads: Array<{ companyId: string; seq: number; hash: string }> = [];
 }

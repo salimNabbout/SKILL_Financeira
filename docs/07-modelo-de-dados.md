@@ -94,3 +94,21 @@ npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma 
 
 Aplicação: `npm run db:migrate` (com `DATABASE_URL` apontando para o Postgres do
 `docker-compose.yml`) e carga de demonstração com `npm run db:seed`.
+
+## Fluxo de Caixa (tabelas `fc_*`, migração 0020)
+
+Disciplina que reproduz a planilha "Fluxo de Caixa CETEM" dentro do app. É **somente
+leitura** sobre as tabelas acima; escreve apenas nas suas próprias:
+
+| Tabela (Prisma) | Papel | Campos-chave |
+|---|---|---|
+| `fc_categoria` (`CashflowCategory`) | Plano de 37 categorias da planilha + `transferencia_interna` (neutra). Referência global, `id` = slug estável | `kind` (entrada/saida/neutro), `groupKey`, `classification` (fixo/variavel), `sortOrder`, `active` |
+| `fc_mapeamento` (`CashflowMapping`) | De-para entre chaves do app e o plano; chave não mapeada cai em `a_classificar` | `source` (plano_contas / categoria_ap / categoria_ar / regra_texto), `sourceKey`, `categoryId`, `priority`; único `(companyId, source, sourceKey)` |
+| `fc_parametro` (`CashflowParameter`) | Parâmetros por exercício | `baseYear`, `openingBalanceCents`, `minimumReserveCents`, `realizedMonthsOverride?`; único `(companyId, baseYear)` |
+| `fc_cenario` (`CashflowScenario`) | Premissas dos cenários, em pontos-base inteiros (1% = 100) | `code` (otimista/realista/pessimista), `revenueAdjustmentBp`, `expenseAdjustmentBp`, `monthlyGrowthBp` |
+| `fc_ajuste_manual` (`CashflowManualEntry`) | Lançamento que não existe em nenhum módulo; valor sempre positivo, sinal por `kind` | `competenceDate`, `kind`, `categoryId`, `status` (previsto/realizado), `amountCents`, `sourceNote?` |
+
+Todas as tabelas de escrita carregam `createdBy`/`updatedBy`/carimbos e `version` (trava
+otimista). A unificação dos lançamentos (`vw_fc_lancamento` da especificação) é a função de
+domínio `unifyCashflow` em `src/core/cashflow/unify.ts` — a mesma para o adaptador em memória e
+para o Prisma —, com as regras de precedência, deduplicação e exclusão documentadas no arquivo.

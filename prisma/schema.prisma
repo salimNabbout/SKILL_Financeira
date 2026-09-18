@@ -28,35 +28,39 @@ model Company {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  memberships        Membership[]
-  customers          Customer[]
-  suppliers          Supplier[]
-  supplierCategories SupplierCategory[]
-  recurringTemplates RecurringTemplate[]
-  bankAccounts       BankAccount[]
-  bankTransactions   BankTransaction[]
-  statementImports   StatementImport[]
-  payables           Payable[]
-  receivables        Receivable[]
-  payments           Payment[]
-  receipts           Receipt[]
-  documents          FinancialDocument[]
-  categories         Category[]
-  costCenters        CostCenter[]
-  chartAccounts      ChartAccount[]
-  budgets            Budget[]
-  approvals          Approval[]
-  reconciliations    ReconciliationMatch[]
-  events             EventRecord[]
-  alerts             Alert[]
-  skillExecutions    SkillExecution[]
-  auditRecords       AuditRecord[]
-  activityEvents     ActivityEvent[]
-  invoices           Invoice[]
-  collectionMsgs     CollectionMessage[]
-  accountingEntries  AccountingEntry[]
-  flowRuns           FlowRun[]
-  idempotencyKeys    IdempotencyRecord[]
+  memberships           Membership[]
+  customers             Customer[]
+  suppliers             Supplier[]
+  supplierCategories    SupplierCategory[]
+  recurringTemplates    RecurringTemplate[]
+  bankAccounts          BankAccount[]
+  bankTransactions      BankTransaction[]
+  statementImports      StatementImport[]
+  payables              Payable[]
+  receivables           Receivable[]
+  payments              Payment[]
+  receipts              Receipt[]
+  documents             FinancialDocument[]
+  categories            Category[]
+  costCenters           CostCenter[]
+  chartAccounts         ChartAccount[]
+  budgets               Budget[]
+  approvals             Approval[]
+  reconciliations       ReconciliationMatch[]
+  events                EventRecord[]
+  alerts                Alert[]
+  skillExecutions       SkillExecution[]
+  auditRecords          AuditRecord[]
+  activityEvents        ActivityEvent[]
+  invoices              Invoice[]
+  collectionMsgs        CollectionMessage[]
+  accountingEntries     AccountingEntry[]
+  flowRuns              FlowRun[]
+  idempotencyKeys       IdempotencyRecord[]
+  cashflowMappings      CashflowMapping[]
+  cashflowParameters    CashflowParameter[]
+  cashflowScenarios     CashflowScenario[]
+  cashflowManualEntries CashflowManualEntry[]
 
   @@unique([cnpj])
 }
@@ -438,10 +442,11 @@ model CostCenter {
   /// Default "both" preserva os cadastros anteriores, que não tinham destino.
   scope     String  @default("both")
 
-  company     Company      @relation(fields: [companyId], references: [id])
-  payables    Payable[]
-  receivables Receivable[]
-  budgetLines BudgetLine[]
+  company               Company               @relation(fields: [companyId], references: [id])
+  payables              Payable[]
+  receivables           Receivable[]
+  budgetLines           BudgetLine[]
+  cashflowManualEntries CashflowManualEntry[]
 
   @@unique([companyId, code])
 }
@@ -764,4 +769,124 @@ model IdempotencyRecord {
   company Company @relation(fields: [companyId], references: [id])
 
   @@unique([companyId, key])
+}
+
+// ---------------------------------------------------------------------------
+// Fluxo de Caixa (disciplina "Fluxo de Caixa CETEM") — tabelas fc_*.
+// O módulo é SOMENTE LEITURA sobre as tabelas acima; escreve só aqui.
+// Dinheiro em BigInt de centavos (convenção do app); premissas de cenário em
+// pontos-base inteiros (1% = 100) — nunca float.
+// ---------------------------------------------------------------------------
+
+/// Plano de 37 categorias da planilha (+ `transferencia_interna`, neutra).
+/// Dado de referência global (sem empresa); o id é o slug estável.
+model CashflowCategory {
+  id             String  @id
+  name           String
+  kind           String // entrada | saida | neutro
+  groupKey       String // receita_operacional | receita_nao_operacional | pessoal | operacional | tributos | financeiro | crescimento | outras
+  classification String // fixo | variavel
+  sortOrder      Int
+  active         Boolean @default(true)
+
+  mappings      CashflowMapping[]
+  manualEntries CashflowManualEntry[]
+
+  @@map("fc_categoria")
+}
+
+/// De-para entre o que o app já tem e o plano acima. Chave de origem não
+/// mapeada cai em `a_classificar` (fila de revisão).
+model CashflowMapping {
+  id         String   @id
+  companyId  String
+  source     String // plano_contas | categoria_ap | categoria_ar | regra_texto
+  sourceKey  String
+  categoryId String
+  priority   Int      @default(100)
+  active     Boolean  @default(true)
+  createdBy  String
+  createdAt  DateTime @default(now())
+  updatedBy  String?
+  updatedAt  DateTime @updatedAt
+  version    Int      @default(1)
+
+  company  Company          @relation(fields: [companyId], references: [id])
+  category CashflowCategory @relation(fields: [categoryId], references: [id])
+
+  @@unique([companyId, source, sourceKey])
+  @@index([companyId, active])
+  @@map("fc_mapeamento")
+}
+
+/// Parâmetros do exercício: saldo inicial, reserva mínima e o override de
+/// meses realizados (nulo = o sistema calcula).
+model CashflowParameter {
+  id                     String   @id
+  companyId              String
+  baseYear               Int
+  openingBalanceCents    BigInt   @default(0)
+  minimumReserveCents    BigInt   @default(0)
+  realizedMonthsOverride Int?
+  createdBy              String
+  createdAt              DateTime @default(now())
+  updatedBy              String?
+  updatedAt              DateTime @updatedAt
+  version                Int      @default(1)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, baseYear])
+  @@map("fc_parametro")
+}
+
+/// Cenários de projeção (otimista | realista | pessimista), editáveis pela UI.
+model CashflowScenario {
+  id                  String   @id
+  companyId           String
+  code                String // otimista | realista | pessimista
+  name                String
+  revenueAdjustmentBp Int // ajuste_receita em pontos-base (+15% = 1500)
+  expenseAdjustmentBp Int // ajuste_despesa em pontos-base
+  monthlyGrowthBp     Int // crescimento_mensal em pontos-base
+  active              Boolean  @default(true)
+  createdBy           String
+  createdAt           DateTime @default(now())
+  updatedBy           String?
+  updatedAt           DateTime @updatedAt
+  version             Int      @default(1)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, code])
+  @@map("fc_cenario")
+}
+
+/// Lançamento que não existe em nenhum módulo (aporte previsto, compra
+/// planejada sem título). Valor sempre positivo — o sinal vem de `kind`.
+model CashflowManualEntry {
+  id             String   @id
+  companyId      String
+  competenceDate DateTime @db.Date
+  kind           String // entrada | saida
+  categoryId     String
+  description    String
+  costCenterId   String?
+  status         String // previsto | realizado
+  amountCents    BigInt
+  sourceNote     String?
+  createdBy      String
+  createdAt      DateTime @default(now())
+  updatedBy      String?
+  updatedAt      DateTime @updatedAt
+  version        Int      @default(1)
+
+  company    Company          @relation(fields: [companyId], references: [id])
+  category   CashflowCategory @relation(fields: [categoryId], references: [id])
+  costCenter CostCenter?      @relation(fields: [costCenterId], references: [id])
+
+  @@index([companyId, competenceDate])
+  @@index([companyId, categoryId])
+  @@index([companyId, status])
+  @@map("fc_ajuste_manual")
 }

@@ -20,6 +20,11 @@ import type {
   BankTransaction as DbBankTransaction,
   Budget as DbBudget,
   BudgetLine as DbBudgetLine,
+  CashflowCategory as DbCashflowCategory,
+  CashflowManualEntry as DbCashflowManualEntry,
+  CashflowMapping as DbCashflowMapping,
+  CashflowParameter as DbCashflowParameter,
+  CashflowScenario as DbCashflowScenario,
   Category as DbCategory,
   ChartAccount as DbChartAccount,
   CollectionMessage as DbCollectionMessage,
@@ -58,6 +63,11 @@ import type {
   BankTransaction,
   StatementImport,
   Budget,
+  CashflowCategory,
+  CashflowManualEntry,
+  CashflowMapping,
+  CashflowParameter,
+  CashflowScenario,
   BudgetLine,
   Category,
   ChartAccount,
@@ -99,6 +109,11 @@ import type {
   BankTransactionRepo,
   StatementImportRepo,
   BudgetLineRepo,
+  CashflowCategoryRepo,
+  CashflowManualEntryRepo,
+  CashflowMappingRepo,
+  CashflowParameterRepo,
+  CashflowScenarioRepo,
   BudgetRepo,
   CategoryRepo,
   ChartAccountRepo,
@@ -1107,6 +1122,153 @@ const idempotencyToDb = (e: IdempotencyRecord): Prisma.IdempotencyRecordUnchecke
 // ---------------------------------------------------------------------------
 
 /** Cliente Prisma completo OU cliente de transação (subconjunto com os modelos). */
+// ---------------------------------------------------------------------------
+// Fluxo de Caixa (fc_*)
+// ---------------------------------------------------------------------------
+
+const cashflowCategoryToDomain = (r: DbCashflowCategory): CashflowCategory => ({
+  id: r.id,
+  name: r.name,
+  kind: r.kind as CashflowCategory["kind"],
+  group: r.groupKey as CashflowCategory["group"],
+  classification: r.classification as CashflowCategory["classification"],
+  sortOrder: r.sortOrder,
+  active: r.active,
+});
+const cashflowCategoryToDb = (e: CashflowCategory): Prisma.CashflowCategoryUncheckedCreateInput => ({
+  id: e.id,
+  name: e.name,
+  kind: e.kind,
+  groupKey: e.group,
+  classification: e.classification,
+  sortOrder: e.sortOrder,
+  active: e.active,
+});
+
+const cashflowMappingToDomain = (r: DbCashflowMapping): CashflowMapping => ({
+  id: r.id,
+  companyId: r.companyId,
+  source: r.source as CashflowMapping["source"],
+  sourceKey: r.sourceKey,
+  categoryId: r.categoryId,
+  priority: r.priority,
+  active: r.active,
+  createdBy: r.createdBy,
+  createdAt: fromInstant(r.createdAt),
+  updatedBy: strOpt(r.updatedBy),
+  updatedAt: fromInstant(r.updatedAt),
+  version: r.version,
+});
+const cashflowMappingToDb = (e: CashflowMapping): Prisma.CashflowMappingUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  source: e.source,
+  sourceKey: e.sourceKey,
+  categoryId: e.categoryId,
+  priority: e.priority,
+  active: e.active,
+  createdBy: e.createdBy,
+  createdAt: toInstant(e.createdAt),
+  updatedBy: e.updatedBy ?? null,
+  updatedAt: toInstant(e.updatedAt),
+  version: e.version,
+});
+
+const cashflowParameterToDomain = (r: DbCashflowParameter): CashflowParameter => ({
+  id: r.id,
+  companyId: r.companyId,
+  baseYear: r.baseYear,
+  openingBalanceCents: fromCents(r.openingBalanceCents),
+  minimumReserveCents: fromCents(r.minimumReserveCents),
+  realizedMonthsOverride: r.realizedMonthsOverride ?? undefined,
+  createdBy: r.createdBy,
+  createdAt: fromInstant(r.createdAt),
+  updatedBy: strOpt(r.updatedBy),
+  updatedAt: fromInstant(r.updatedAt),
+  version: r.version,
+});
+const cashflowParameterToDb = (e: CashflowParameter): Prisma.CashflowParameterUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  baseYear: e.baseYear,
+  openingBalanceCents: toCents(e.openingBalanceCents),
+  minimumReserveCents: toCents(e.minimumReserveCents),
+  realizedMonthsOverride: e.realizedMonthsOverride ?? null,
+  createdBy: e.createdBy,
+  createdAt: toInstant(e.createdAt),
+  updatedBy: e.updatedBy ?? null,
+  updatedAt: toInstant(e.updatedAt),
+  version: e.version,
+});
+
+const cashflowScenarioToDomain = (r: DbCashflowScenario): CashflowScenario => ({
+  id: r.id,
+  companyId: r.companyId,
+  code: r.code as CashflowScenario["code"],
+  name: r.name,
+  revenueAdjustmentBp: r.revenueAdjustmentBp,
+  expenseAdjustmentBp: r.expenseAdjustmentBp,
+  monthlyGrowthBp: r.monthlyGrowthBp,
+  active: r.active,
+  createdBy: r.createdBy,
+  createdAt: fromInstant(r.createdAt),
+  updatedBy: strOpt(r.updatedBy),
+  updatedAt: fromInstant(r.updatedAt),
+  version: r.version,
+});
+const cashflowScenarioToDb = (e: CashflowScenario): Prisma.CashflowScenarioUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  code: e.code,
+  name: e.name,
+  revenueAdjustmentBp: e.revenueAdjustmentBp,
+  expenseAdjustmentBp: e.expenseAdjustmentBp,
+  monthlyGrowthBp: e.monthlyGrowthBp,
+  active: e.active,
+  createdBy: e.createdBy,
+  createdAt: toInstant(e.createdAt),
+  updatedBy: e.updatedBy ?? null,
+  updatedAt: toInstant(e.updatedAt),
+  version: e.version,
+});
+
+const cashflowManualEntryToDomain = (r: DbCashflowManualEntry): CashflowManualEntry => ({
+  id: r.id,
+  companyId: r.companyId,
+  competenceDate: fromDbDate(r.competenceDate),
+  kind: r.kind as CashflowManualEntry["kind"],
+  categoryId: r.categoryId,
+  description: r.description,
+  costCenterId: strOpt(r.costCenterId),
+  status: r.status as CashflowManualEntry["status"],
+  amountCents: fromCents(r.amountCents),
+  sourceNote: strOpt(r.sourceNote),
+  createdBy: r.createdBy,
+  createdAt: fromInstant(r.createdAt),
+  updatedBy: strOpt(r.updatedBy),
+  updatedAt: fromInstant(r.updatedAt),
+  version: r.version,
+});
+const cashflowManualEntryToDb = (
+  e: CashflowManualEntry
+): Prisma.CashflowManualEntryUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  competenceDate: toDbDate(e.competenceDate),
+  kind: e.kind,
+  categoryId: e.categoryId,
+  description: e.description,
+  costCenterId: e.costCenterId ?? null,
+  status: e.status,
+  amountCents: toCents(e.amountCents),
+  sourceNote: e.sourceNote ?? null,
+  createdBy: e.createdBy,
+  createdAt: toInstant(e.createdAt),
+  updatedBy: e.updatedBy ?? null,
+  updatedAt: toInstant(e.updatedAt),
+  version: e.version,
+});
+
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
 export function createPrismaRepositories(prisma: PrismaLike): Repositories {
@@ -2417,6 +2579,151 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     },
   };
 
+
+  // --- Fluxo de Caixa -------------------------------------------------------
+  const cashflowCategories: CashflowCategoryRepo = {
+    async listAll() {
+      const rows = await prisma.cashflowCategory.findMany({ orderBy: { sortOrder: "asc" } });
+      return rows.map(cashflowCategoryToDomain);
+    },
+    async getById(id: ID) {
+      const row = await prisma.cashflowCategory.findUnique({ where: { id } });
+      return row ? cashflowCategoryToDomain(row) : null;
+    },
+    async update(entity: CashflowCategory) {
+      const row = await prisma.cashflowCategory.update({
+        where: { id: entity.id },
+        data: cashflowCategoryToDb(entity),
+      });
+      return cashflowCategoryToDomain(row);
+    },
+  };
+
+  const cashflowMappings: CashflowMappingRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.cashflowMapping.findFirst({ where: { id, companyId } });
+      return row ? cashflowMappingToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.cashflowMapping.findMany({
+        where: { companyId },
+        orderBy: [{ source: "asc" }, { priority: "asc" }, { sourceKey: "asc" }],
+      });
+      return rows.map(cashflowMappingToDomain);
+    },
+    async create(entity: CashflowMapping) {
+      const row = await prisma.cashflowMapping.create({ data: cashflowMappingToDb(entity) });
+      return cashflowMappingToDomain(row);
+    },
+    async update(entity: CashflowMapping) {
+      const row = await prisma.cashflowMapping.update({
+        where: { id: entity.id, companyId: entity.companyId },
+        data: cashflowMappingToDb(entity),
+      });
+      return cashflowMappingToDomain(row);
+    },
+    async delete(companyId: ID, id: ID) {
+      await prisma.cashflowMapping.deleteMany({ where: { id, companyId } });
+    },
+  };
+
+  const cashflowParameters: CashflowParameterRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.cashflowParameter.findFirst({ where: { id, companyId } });
+      return row ? cashflowParameterToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.cashflowParameter.findMany({
+        where: { companyId },
+        orderBy: { baseYear: "asc" },
+      });
+      return rows.map(cashflowParameterToDomain);
+    },
+    async findByYear(companyId: ID, baseYear: number) {
+      const row = await prisma.cashflowParameter.findFirst({ where: { companyId, baseYear } });
+      return row ? cashflowParameterToDomain(row) : null;
+    },
+    async create(entity: CashflowParameter) {
+      const row = await prisma.cashflowParameter.create({ data: cashflowParameterToDb(entity) });
+      return cashflowParameterToDomain(row);
+    },
+    async update(entity: CashflowParameter) {
+      const row = await prisma.cashflowParameter.update({
+        where: { id: entity.id, companyId: entity.companyId },
+        data: cashflowParameterToDb(entity),
+      });
+      return cashflowParameterToDomain(row);
+    },
+  };
+
+  const cashflowScenarios: CashflowScenarioRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.cashflowScenario.findFirst({ where: { id, companyId } });
+      return row ? cashflowScenarioToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.cashflowScenario.findMany({
+        where: { companyId },
+        orderBy: { code: "asc" },
+      });
+      return rows.map(cashflowScenarioToDomain);
+    },
+    async findByCode(companyId: ID, code: CashflowScenario["code"]) {
+      const row = await prisma.cashflowScenario.findFirst({ where: { companyId, code } });
+      return row ? cashflowScenarioToDomain(row) : null;
+    },
+    async create(entity: CashflowScenario) {
+      const row = await prisma.cashflowScenario.create({ data: cashflowScenarioToDb(entity) });
+      return cashflowScenarioToDomain(row);
+    },
+    async update(entity: CashflowScenario) {
+      const row = await prisma.cashflowScenario.update({
+        where: { id: entity.id, companyId: entity.companyId },
+        data: cashflowScenarioToDb(entity),
+      });
+      return cashflowScenarioToDomain(row);
+    },
+  };
+
+  const cashflowManualEntries: CashflowManualEntryRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.cashflowManualEntry.findFirst({ where: { id, companyId } });
+      return row ? cashflowManualEntryToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.cashflowManualEntry.findMany({
+        where: { companyId },
+        orderBy: [{ competenceDate: "asc" }, { id: "asc" }],
+      });
+      return rows.map(cashflowManualEntryToDomain);
+    },
+    async listByYear(companyId: ID, year: number) {
+      const rows = await prisma.cashflowManualEntry.findMany({
+        where: {
+          companyId,
+          competenceDate: { gte: toDbDate(`${year}-01-01`), lte: toDbDate(`${year}-12-31`) },
+        },
+        orderBy: [{ competenceDate: "asc" }, { id: "asc" }],
+      });
+      return rows.map(cashflowManualEntryToDomain);
+    },
+    async create(entity: CashflowManualEntry) {
+      const row = await prisma.cashflowManualEntry.create({ data: cashflowManualEntryToDb(entity) });
+      return cashflowManualEntryToDomain(row);
+    },
+    async update(entity: CashflowManualEntry) {
+      const row = await prisma.cashflowManualEntry.update({
+        where: { id: entity.id, companyId: entity.companyId },
+        data: cashflowManualEntryToDb(entity),
+      });
+      return cashflowManualEntryToDomain(row);
+    },
+    async delete(companyId: ID, id: ID) {
+      await prisma.cashflowManualEntry.deleteMany({ where: { id, companyId } });
+    },
+  };
+
+
   return {
     companies,
     users,
@@ -2450,6 +2757,11 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     accountingEntries,
     flowRuns,
     idempotency,
+    cashflowCategories,
+    cashflowMappings,
+    cashflowParameters,
+    cashflowScenarios,
+    cashflowManualEntries,
     async withTransaction<T>(fn: (txRepos: Repositories) => Promise<T>): Promise<T> {
       // Transação real do Postgres. Se já estivermos dentro de uma transação
       // (cliente sem $transaction), reutiliza o mesmo escopo (sem aninhar).
