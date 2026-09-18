@@ -62,6 +62,27 @@ describe("toCsv", () => {
     expect(dataLine.endsWith("-0,5")).toBe(true);
   });
 
+  it("forceText: envolve o texto na fórmula =\"…\" para a planilha não converter em data (parcela 1/17)", () => {
+    const csv = toCsv(
+      [{ parcela: "1/17", desc: "Título" }, { parcela: "", desc: "sem parcela" }],
+      [
+        { key: "parcela", label: "Parcela", forceText: true },
+        { key: "desc", label: "Descrição" },
+      ]
+    );
+    const lines = csv.slice(1).split("\r\n");
+    expect(lines[0]).toBe("Parcela;Descrição");
+    // Célula = ="1/17" com as aspas dobradas pelo escape do CSV; sem apóstrofo-guarda.
+    expect(lines[1]).toBe('"=""1/17""";Título');
+    // Vazio continua vazio (não vira ="").
+    expect(lines[2]).toBe(";sem parcela");
+  });
+
+  it("forceText dobra aspas internas dentro da fórmula", () => {
+    const csv = toCsv([{ t: 'a"b' }], [{ key: "t", label: "T", forceText: true }]);
+    expect(csv.slice(1).split("\r\n")[1]).toBe('"=""a""""b"""');
+  });
+
   it("neutraliza o hífen inicial apenas em texto, preservando datas ISO e números", () => {
     const csv = toCsv([{ texto: "-DESCONTO", numero: -42, data: "2026-01-10" }]);
     const dataLine = csv.slice(1).split("\r\n")[1];

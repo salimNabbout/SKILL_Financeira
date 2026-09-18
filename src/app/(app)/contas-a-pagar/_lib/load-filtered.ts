@@ -7,6 +7,7 @@
  * ninguém notaria até somar os totais.
  */
 
+import { todayInTz, type ISODate } from "@/core/dates";
 import type { Payable } from "@/core/entities";
 import type { Repositories } from "@/core/repositories";
 import type { PayableFilters } from "./filters";
@@ -24,10 +25,17 @@ export interface FilteredPayables {
   truncado: boolean;
 }
 
+/**
+ * `timeZone` (fuso da empresa) liga o cálculo da data de pagamento por título:
+ * a MAIOR data de conciliação entre os pagamentos executados, convertida do
+ * executedAt (UTC) para a data local — a mesma regra do badge de situação da
+ * tela. Sem fuso (impressão), a data não é calculada.
+ */
 export async function loadFilteredPayables(
   repos: Repositories,
   companyId: string,
-  filtros: PayableFilters
+  filtros: PayableFilters,
+  timeZone?: string
 ): Promise<FilteredPayables> {
   const [page, suppliers, costCenters, bankAccounts] = await Promise.all([
     repos.payables.listPage(companyId, {
@@ -49,6 +57,7 @@ export async function loadFilteredPayables(
   // getById dentro do laço.
   const bankAccountIdByPayable = new Map<string, string>();
   const documentNumberByPayable = new Map<string, string>();
+  const paymentDateByPayable = new Map<string, ISODate>();
 
   await Promise.all(
     payables.map(async (p) => {
@@ -57,6 +66,15 @@ export async function loadFilteredPayables(
       const executado = pagamentos.find((pg) => pg.status === "executed");
       const relevante = executado ?? pagamentos.find((pg) => pg.status !== "canceled");
       if (relevante) bankAccountIdByPayable.set(p.id, relevante.bankAccountId);
+
+      if (timeZone) {
+        for (const pg of pagamentos) {
+          if (pg.status !== "executed" || !pg.executedAt) continue;
+          const localDate = todayInTz(new Date(pg.executedAt), timeZone);
+          const prev = paymentDateByPayable.get(p.id);
+          if (!prev || localDate > prev) paymentDateByPayable.set(p.id, localDate);
+        }
+      }
 
       if (p.documentId) {
         const doc = await repos.documents.getById(companyId, p.documentId);
@@ -73,6 +91,7 @@ export async function loadFilteredPayables(
       bankAccounts,
       bankAccountIdByPayable,
       documentNumberByPayable,
+      paymentDateByPayable,
     },
     supplierNameFiltrado: filtros.supplierId
       ? suppliers.find((s) => s.id === filtros.supplierId)?.name

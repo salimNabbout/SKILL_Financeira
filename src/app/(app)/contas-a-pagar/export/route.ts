@@ -7,6 +7,8 @@ import { buildPdfReport } from "@/lib/exporters/pdf";
 import { formatBRL } from "@/lib/format";
 import { describeFilters, parsePayableFilters } from "../_lib/filters";
 import {
+  PAYABLE_CSV_COLUMNS,
+  PAYABLE_CSV_TEXT_COLUMNS,
   PAYABLE_EXPORT_COLUMNS,
   payablesToExportRows,
   totalsLabel,
@@ -40,7 +42,12 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const container = container0;
-  const dados = await loadFilteredPayables(container.repos, session.company.id, filtros);
+  const dados = await loadFilteredPayables(
+    container.repos,
+    session.company.id,
+    filtros,
+    session.config.timezone
+  );
   const rows = payablesToExportRows(dados.payables, dados.lookups);
   const totais = totalsOf(dados.payables);
 
@@ -48,9 +55,15 @@ export async function GET(req: Request): Promise<Response> {
   const formato = url.searchParams.get("format") === "pdf" ? "pdf" : "csv";
 
   if (formato === "csv") {
+    // CSV: colunas do PDF + "Data de Pagamento"; Parcela forçada como texto
+    // para o Excel não transformar "1/17" em data.
     const conteudo = toCsv(
       rows,
-      PAYABLE_EXPORT_COLUMNS.map((c) => ({ key: c, label: c }))
+      PAYABLE_CSV_COLUMNS.map((c) => ({
+        key: c,
+        label: c,
+        forceText: PAYABLE_CSV_TEXT_COLUMNS.has(c),
+      }))
     );
     return new Response(conteudo, {
       status: 200,
