@@ -525,12 +525,6 @@ export default async function ContasAReceberPage({
             >
               CSV (Excel)
             </a>
-            <a
-              href={`/contas-a-receber/export?format=pdf${queryFiltros}`}
-              className="block rounded px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
-            >
-              PDF (paisagem)
-            </a>
           </div>
         </details>
 

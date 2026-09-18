@@ -1,10 +1,13 @@
 /**
- * Linhas de exportação de Contas a Receber — as mesmas colunas em CSV, PDF e na
- * visão de impressão, para os três nunca divergirem.
+ * Linhas de exportação de Contas a Receber — as mesmas colunas no CSV e na
+ * visão de impressão, para os dois nunca divergirem. Única exceção, pedida
+ * para a planilha: o CSV leva também "Data de Recebimento"
+ * (RECEIVABLE_CSV_COLUMNS).
  *
  * Função pura, sem dependência de Next/server.
  */
 
+import type { ISODate } from "@/core/dates";
 import type { BankAccount, CostCenter, Customer, Receivable } from "@/core/entities";
 import { formatBR, formatBRL, statusLabel } from "@/lib/format";
 
@@ -24,7 +27,30 @@ export const RECEIVABLE_EXPORT_COLUMNS = [
 ] as const;
 
 export type ReceivableExportColumn = (typeof RECEIVABLE_EXPORT_COLUMNS)[number];
-export type ReceivableExportRow = Record<ReceivableExportColumn, string>;
+
+/**
+ * Colunas do CSV: as da impressão mais "Data de Recebimento" (a data do
+ * recebimento que quitou o título — a mesma que define Recebido / Recebido no
+ * Vencimento / Recebido em Atraso na tela), logo após o valor recebido.
+ */
+export const RECEIVABLE_CSV_COLUMNS = [
+  "Cliente",
+  "Descrição",
+  "Nº do Documento",
+  "Categoria",
+  "Centro de Custo",
+  "Parcela",
+  "Emissão",
+  "Vencimento",
+  "Valor (R$)",
+  "Valor Recebido (R$)",
+  "Data de Recebimento",
+  "Status",
+  "Conta de Recebimento",
+] as const;
+
+export type ReceivableCsvColumn = (typeof RECEIVABLE_CSV_COLUMNS)[number];
+export type ReceivableExportRow = Record<ReceivableCsvColumn, string>;
 
 /** Dados auxiliares para resolver os nomes exibidos. */
 export interface ExportLookups {
@@ -36,6 +62,8 @@ export interface ExportLookups {
   bankAccountIdByReceivable?: Map<string, string>;
   /** Nº do documento por título, quando há documento vinculado. */
   documentNumberByReceivable?: Map<string, string>;
+  /** Data do recebimento (ativo) mais recente por título. */
+  receivedDateByReceivable?: Map<string, ISODate>;
 }
 
 /**
@@ -56,6 +84,7 @@ export function receivablesToExportRows(
 
   return receivables.map((r) => {
     const contaId = lookups.bankAccountIdByReceivable?.get(r.id);
+    const recebidoEm = lookups.receivedDateByReceivable?.get(r.id);
     return {
       Cliente: customerName.get(r.customerId) ?? r.customerId,
       Descrição: r.description,
@@ -69,6 +98,8 @@ export function receivablesToExportRows(
       // reconhece o número em vez de tratar tudo como texto.
       "Valor (R$)": formatBRL(r.amountCents).replace("R$", "").trim(),
       "Valor Recebido (R$)": formatBRL(r.receivedCents).replace("R$", "").trim(),
+      // Vazia sem recebimento ativo (título em aberto ou recebimento estornado).
+      "Data de Recebimento": recebidoEm ? formatBR(recebidoEm) : "",
       Status: statusLabel(r.status),
       "Conta de Recebimento": contaId ? (bankAccountName.get(contaId) ?? "") : "",
     };

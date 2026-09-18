@@ -7,6 +7,7 @@
  * ninguém notaria até somar os totais.
  */
 
+import type { ISODate } from "@/core/dates";
 import type { Receivable } from "@/core/entities";
 import type { Repositories } from "@/core/repositories";
 import { receiptIsActive } from "@/core/money";
@@ -51,6 +52,10 @@ export async function loadFilteredReceivables(
   // getById dentro do laço.
   const bankAccountIdByReceivable = new Map<string, string>();
   const documentNumberByReceivable = new Map<string, string>();
+  // Data de recebimento = MAIOR receivedDate dos recebimentos ativos (o que
+  // completou o valor) — a mesma regra do badge de situação da tela.
+  // receivedDate já é ISODate local: não há fuso a converter.
+  const receivedDateByReceivable = new Map<string, ISODate>();
 
   await Promise.all(
     receivables.map(async (r) => {
@@ -59,6 +64,10 @@ export async function loadFilteredReceivables(
       ).filter(receiptIsActive);
       const comConta = recibos.find((x) => x.bankAccountId);
       if (comConta?.bankAccountId) bankAccountIdByReceivable.set(r.id, comConta.bankAccountId);
+      for (const rec of recibos) {
+        const prev = receivedDateByReceivable.get(r.id);
+        if (!prev || rec.receivedDate > prev) receivedDateByReceivable.set(r.id, rec.receivedDate);
+      }
 
       if (r.documentId) {
         const doc = await repos.documents.getById(companyId, r.documentId);
@@ -78,6 +87,7 @@ export async function loadFilteredReceivables(
       categoryNameById: new Map(categories.map((c) => [c.id, c.name])),
       bankAccountIdByReceivable,
       documentNumberByReceivable,
+      receivedDateByReceivable,
     },
     customerNameFiltrado: filtros.customerId
       ? customers.find((c) => c.id === filtros.customerId)?.name
