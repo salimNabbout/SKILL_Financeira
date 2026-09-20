@@ -20,6 +20,11 @@ import type {
   StatementImport,
   Budget,
   BudgetLine,
+  CashflowCategory,
+  CashflowManualEntry,
+  CashflowMapping,
+  CashflowParameter,
+  CashflowScenario,
   Category,
   ChartAccount,
   CollectionMessage,
@@ -287,6 +292,33 @@ export interface BudgetLineRepo {
   update(entity: BudgetLine): Promise<BudgetLine>;
 }
 
+// --- Fluxo de Caixa ---------------------------------------------------------
+
+/** Plano de categorias: referência global (sem empresa). */
+export interface CashflowCategoryRepo {
+  listAll(): Promise<CashflowCategory[]>;
+  getById(id: ID): Promise<CashflowCategory | null>;
+  update(entity: CashflowCategory): Promise<CashflowCategory>;
+}
+
+export interface CashflowMappingRepo extends BaseRepo<CashflowMapping> {
+  delete(companyId: ID, id: ID): Promise<void>;
+}
+
+export interface CashflowParameterRepo extends BaseRepo<CashflowParameter> {
+  findByYear(companyId: ID, baseYear: number): Promise<CashflowParameter | null>;
+}
+
+export interface CashflowScenarioRepo extends BaseRepo<CashflowScenario> {
+  findByCode(companyId: ID, code: CashflowScenario["code"]): Promise<CashflowScenario | null>;
+}
+
+export interface CashflowManualEntryRepo extends BaseRepo<CashflowManualEntry> {
+  /** Ajustes com competência dentro do ano (ordenados por data, id). */
+  listByYear(companyId: ID, year: number): Promise<CashflowManualEntry[]>;
+  delete(companyId: ID, id: ID): Promise<void>;
+}
+
 // --- Governança -------------------------------------------------------------
 
 export interface ApprovalRepo extends BaseRepo<Approval> {
@@ -481,6 +513,12 @@ export interface Repositories {
   accountingEntries: AccountingEntryRepo;
   flowRuns: FlowRunRepo;
   idempotency: IdempotencyRepo;
+  // Fluxo de Caixa (tabelas fc_*; o módulo só escreve aqui)
+  cashflowCategories: CashflowCategoryRepo;
+  cashflowMappings: CashflowMappingRepo;
+  cashflowParameters: CashflowParameterRepo;
+  cashflowScenarios: CashflowScenarioRepo;
+  cashflowManualEntries: CashflowManualEntryRepo;
   /**
    * Executa `fn` numa transação: as escritas feitas pelos repositórios passados
    * a `fn` commitam juntas, ou são revertidas por completo se `fn` lançar.

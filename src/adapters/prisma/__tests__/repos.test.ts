@@ -80,6 +80,11 @@ function makeFakePrisma(overrides: Partial<Record<string, unknown>> = {}) {
     "accountingEntry",
     "flowRun",
     "idempotencyRecord",
+    "cashflowCategory",
+    "cashflowMapping",
+    "cashflowParameter",
+    "cashflowScenario",
+    "cashflowManualEntry",
   ] as const;
   const fake: Record<string, unknown> = {};
   for (const m of models) fake[m] = delegateStub();
@@ -122,6 +127,11 @@ describe("createPrismaRepositories — bundle", () => {
       "accountingEntries",
       "flowRuns",
       "idempotency",
+      "cashflowCategories",
+      "cashflowMappings",
+      "cashflowParameters",
+      "cashflowScenarios",
+      "cashflowManualEntries",
     ];
     for (const key of expectedKeys) {
       expect(repos, `repositório ausente: ${key}`).toHaveProperty(key);
@@ -352,5 +362,104 @@ describe("conversões domínio -> banco", () => {
     };
     expect(callArg.where.dueDate.gte.toISOString()).toBe("2026-03-01T00:00:00.000Z");
     expect(callArg.where.dueDate.lte.toISOString()).toBe("2026-03-31T00:00:00.000Z");
+  });
+});
+
+describe("Fluxo de Caixa (fc_*) — conversões", () => {
+  it("parâmetro: BigInt de centavos -> number; override nulo -> undefined; findByYear escopa por empresa e ano", async () => {
+    const cashflowParameter = delegateStub({
+      id: "fcp_1",
+      companyId: "co_demo",
+      baseYear: 2026,
+      openingBalanceCents: BigInt(8_500_000),
+      minimumReserveCents: BigInt(6_000_000),
+      realizedMonthsOverride: null,
+      createdBy: "usr_1",
+      createdAt: new Date("2026-09-18T12:00:00.000Z"),
+      updatedBy: null,
+      updatedAt: new Date("2026-09-18T12:00:00.000Z"),
+      version: 1,
+    });
+    const repos = createPrismaRepositories(asClient(makeFakePrisma({ cashflowParameter })));
+
+    const found = await repos.cashflowParameters.findByYear("co_demo", 2026);
+    expect(found?.openingBalanceCents).toBe(8_500_000);
+    expect(typeof found?.openingBalanceCents).toBe("number");
+    expect(found?.minimumReserveCents).toBe(6_000_000);
+    expect(found?.realizedMonthsOverride).toBeUndefined();
+    expect(found?.updatedBy).toBeUndefined();
+    expect(found?.version).toBe(1);
+    expect(cashflowParameter.findFirst).toHaveBeenCalledWith({ where: { companyId: "co_demo", baseYear: 2026 } });
+  });
+
+  it("ajuste manual: @db.Date -> ISODate e o create envia BigInt, Date UTC e null nos opcionais", async () => {
+    const cashflowManualEntry = delegateStub({
+      id: "fca_1",
+      companyId: "co_demo",
+      competenceDate: new Date("2026-10-05T00:00:00.000Z"),
+      kind: "entrada",
+      categoryId: "outras_receitas",
+      description: "Aporte de sócio previsto",
+      costCenterId: null,
+      status: "previsto",
+      amountCents: BigInt(5_000_000),
+      sourceNote: null,
+      createdBy: "usr_1",
+      createdAt: new Date("2026-09-18T12:00:00.000Z"),
+      updatedBy: null,
+      updatedAt: new Date("2026-09-18T12:00:00.000Z"),
+      version: 1,
+    });
+    const repos = createPrismaRepositories(asClient(makeFakePrisma({ cashflowManualEntry })));
+
+    const found = await repos.cashflowManualEntries.getById("co_demo", "fca_1");
+    expect(found?.competenceDate).toBe("2026-10-05");
+    expect(found?.amountCents).toBe(5_000_000);
+    expect(found?.costCenterId).toBeUndefined();
+
+    await repos.cashflowManualEntries.create({
+      id: "fca_2",
+      companyId: "co_demo",
+      competenceDate: "2026-11-01",
+      kind: "saida",
+      categoryId: "materiais_equipamentos",
+      description: "Compra planejada",
+      status: "previsto",
+      amountCents: 4_400_000,
+      createdBy: "usr_1",
+      createdAt: "2026-09-18T12:00:00.000Z",
+      updatedAt: "2026-09-18T12:00:00.000Z",
+      version: 1,
+    });
+    const data = (cashflowManualEntry.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+    expect(data.amountCents).toBe(BigInt(4_400_000));
+    expect(data.competenceDate).toEqual(new Date("2026-11-01T00:00:00.000Z"));
+    expect(data.costCenterId).toBeNull();
+    expect(data.sourceNote).toBeNull();
+    expect(data.updatedBy).toBeNull();
+
+    await repos.cashflowManualEntries.listByYear("co_demo", 2026);
+    expect(cashflowManualEntry.findMany).toHaveBeenCalledWith({
+      where: {
+        companyId: "co_demo",
+        competenceDate: { gte: new Date("2026-01-01T00:00:00.000Z"), lte: new Date("2026-12-31T00:00:00.000Z") },
+      },
+      orderBy: [{ competenceDate: "asc" }, { id: "asc" }],
+    });
+  });
+
+  it("categoria do plano: groupKey/sortOrder do banco viram group/sortOrder no domínio", async () => {
+    const cashflowCategory = delegateStub({
+      id: "folha_salarios",
+      name: "Folha e Salários",
+      kind: "saida",
+      groupKey: "pessoal",
+      classification: "fixo",
+      sortOrder: 5,
+      active: true,
+    });
+    const repos = createPrismaRepositories(asClient(makeFakePrisma({ cashflowCategory })));
+    const found = await repos.cashflowCategories.getById("folha_salarios");
+    expect(found).toEqual({ id: "folha_salarios", name: "Folha e Salários", kind: "saida", group: "pessoal", classification: "fixo", sortOrder: 5, active: true });
   });
 });

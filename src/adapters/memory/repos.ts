@@ -11,6 +11,11 @@ import type {
   BankTransaction,
   StatementImport,
   BudgetLine,
+  CashflowCategory,
+  CashflowManualEntry,
+  CashflowMapping,
+  CashflowParameter,
+  CashflowScenario,
   CollectionMessage,
   CollectionMessageStatus,
   Company,
@@ -49,6 +54,11 @@ import type {
   StatementImportRepo,
   BaseRepo,
   BudgetLineRepo,
+  CashflowCategoryRepo,
+  CashflowManualEntryRepo,
+  CashflowMappingRepo,
+  CashflowParameterRepo,
+  CashflowScenarioRepo,
   CollectionMessageRepo,
   CompanyRepo,
   EventRepo,
@@ -840,6 +850,64 @@ class MemIdempotencyRepo implements IdempotencyRepo {
   }
 }
 
+// --- Fluxo de Caixa ---------------------------------------------------------
+
+class MemCashflowCategoryRepo implements CashflowCategoryRepo {
+  constructor(private readonly items: CashflowCategory[]) {}
+  async listAll(): Promise<CashflowCategory[]> {
+    return clone([...this.items].sort((a, b) => a.sortOrder - b.sortOrder));
+  }
+  async getById(id: ID): Promise<CashflowCategory | null> {
+    const found = this.items.find((c) => c.id === id);
+    return found ? clone(found) : null;
+  }
+  async update(entity: CashflowCategory): Promise<CashflowCategory> {
+    const idx = this.items.findIndex((c) => c.id === entity.id);
+    if (idx < 0) throw new NotFoundError("Categoria do fluxo de caixa", entity.id);
+    this.items[idx] = clone(entity);
+    return clone(entity);
+  }
+}
+
+class MemCashflowMappingRepo extends MemBase<CashflowMapping> implements CashflowMappingRepo {
+  async delete(companyId: ID, id: ID): Promise<void> {
+    const idx = this.items.findIndex((m) => m.companyId === companyId && m.id === id);
+    if (idx >= 0) this.items.splice(idx, 1);
+  }
+}
+
+class MemCashflowParameterRepo extends MemBase<CashflowParameter> implements CashflowParameterRepo {
+  async findByYear(companyId: ID, baseYear: number): Promise<CashflowParameter | null> {
+    const found = this.items.find((p) => p.companyId === companyId && p.baseYear === baseYear);
+    return found ? clone(found) : null;
+  }
+}
+
+class MemCashflowScenarioRepo extends MemBase<CashflowScenario> implements CashflowScenarioRepo {
+  async findByCode(companyId: ID, code: CashflowScenario["code"]): Promise<CashflowScenario | null> {
+    const found = this.items.find((s) => s.companyId === companyId && s.code === code);
+    return found ? clone(found) : null;
+  }
+}
+
+class MemCashflowManualEntryRepo
+  extends MemBase<CashflowManualEntry>
+  implements CashflowManualEntryRepo
+{
+  async listByYear(companyId: ID, year: number): Promise<CashflowManualEntry[]> {
+    const prefix = `${year}-`;
+    return clone(
+      this.items
+        .filter((e) => e.companyId === companyId && e.competenceDate.startsWith(prefix))
+        .sort((a, b) => a.competenceDate.localeCompare(b.competenceDate) || a.id.localeCompare(b.id))
+    );
+  }
+  async delete(companyId: ID, id: ID): Promise<void> {
+    const idx = this.items.findIndex((e) => e.companyId === companyId && e.id === id);
+    if (idx >= 0) this.items.splice(idx, 1);
+  }
+}
+
 export function createMemoryRepositories(db: MemoryDb): Repositories {
   const repos: Repositories = {
     companies: new MemCompanyRepo(db.companies),
@@ -874,6 +942,11 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     accountingEntries: new MemAccountingEntryRepo(db.accountingEntries),
     flowRuns: new MemFlowRunRepo(db.flowRuns),
     idempotency: new MemIdempotencyRepo(db.idempotencyRecords),
+    cashflowCategories: new MemCashflowCategoryRepo(db.cashflowCategories),
+    cashflowMappings: new MemCashflowMappingRepo(db.cashflowMappings),
+    cashflowParameters: new MemCashflowParameterRepo(db.cashflowParameters),
+    cashflowScenarios: new MemCashflowScenarioRepo(db.cashflowScenarios),
+    cashflowManualEntries: new MemCashflowManualEntryRepo(db.cashflowManualEntries),
     async withTransaction<T>(fn: (txRepos: Repositories) => Promise<T>): Promise<T> {
       // Transação em memória (single-thread): snapshot do conteúdo de cada tabela;
       // em caso de erro, restaura tudo no lugar (os repos apontam para os mesmos

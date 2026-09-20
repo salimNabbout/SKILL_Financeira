@@ -44,6 +44,11 @@ export const AUDIT_ENTITIES = {
   RECONCILIATION_MATCH: "reconciliation_match",
   RECURRING_TEMPLATE: "recurring_template",
   REPORT: "report",
+  // Fluxo de Caixa (tabelas fc_*)
+  CASHFLOW_PARAMETER: "cashflow_parameter",
+  CASHFLOW_SCENARIO: "cashflow_scenario",
+  CASHFLOW_MAPPING: "cashflow_mapping",
+  CASHFLOW_MANUAL_ENTRY: "cashflow_manual_entry",
 } as const;
 
 export type AuditEntityType = (typeof AUDIT_ENTITIES)[keyof typeof AUDIT_ENTITIES];
@@ -100,6 +105,14 @@ export const AUDIT_ACTIONS = {
   PAYABLE_CANCELED: "payable.canceled",
   PAYABLE_DUE_DATE_ADJUSTED: "payable.due_date_adjusted",
   PAYABLE_RECLASSIFIED: "payable.reclassified",
+  // Fluxo de Caixa (escrita só nas tabelas fc_*)
+  CASHFLOW_PARAMETER_UPDATED: "cashflow.parameter_updated",
+  CASHFLOW_SCENARIO_UPDATED: "cashflow.scenario_updated",
+  CASHFLOW_MAPPING_UPSERTED: "cashflow.mapping_upserted",
+  CASHFLOW_MANUAL_ENTRY_CREATED: "cashflow.manual_entry_created",
+  CASHFLOW_MANUAL_ENTRY_UPDATED: "cashflow.manual_entry_updated",
+  CASHFLOW_MANUAL_ENTRY_DELETED: "cashflow.manual_entry_deleted",
+  CASHFLOW_IMPORTED: "cashflow.imported",
   RECEIVABLE_CREATED: "receivable.created",
   RECEIVABLE_UPDATED: "receivable.updated",
   RECEIVABLE_RECLASSIFIED: "receivable.reclassified",

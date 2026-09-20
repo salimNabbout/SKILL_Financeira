@@ -45,3 +45,11 @@ export class IntegrationUnavailableError extends DomainError {
     this.name = "IntegrationUnavailableError";
   }
 }
+
+/** Escrita concorrente: a versão enviada não é mais a atual (trava otimista). HTTP 409. */
+export class ConflictError extends DomainError {
+  constructor(message: string) {
+    super("conflict", message);
+    this.name = "ConflictError";
+  }
+}

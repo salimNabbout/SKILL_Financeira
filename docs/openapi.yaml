@@ -28,6 +28,7 @@ tags:
   - name: auth
   - name: sessão
   - name: cadastros
+  - name: fluxo-caixa
   - name: títulos
   - name: orquestrador
   - name: governança
@@ -1189,6 +1190,191 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+
+  # --- Fluxo de Caixa (disciplina "Fluxo de Caixa CETEM") -------------------
+  # Leitura: report.view. Escrita (parâmetros, cenários, de-para, ajustes): budget.manage.
+  # Dinheiro em centavos inteiros; escrita com trava otimista (`version`) → 409 `conflict`.
+  /fluxo-caixa/parametros:
+    get:
+      tags: [fluxo-caixa]
+      summary: Parâmetros do exercício (saldo inicial, reserva mínima, override) e cenários
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+      responses:
+        "200": { description: "{ data: { parameter, scenarios } }; `configured=false` = padrões não gravados" }
+    put:
+      tags: [fluxo-caixa]
+      summary: Grava parâmetros e, opcionalmente, premissas dos cenários (pontos-base)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [year, openingBalanceCents, minimumReserveCents]
+              properties:
+                year: { type: integer }
+                openingBalanceCents: { type: integer }
+                minimumReserveCents: { type: integer }
+                realizedMonthsOverride: { type: integer, nullable: true }
+                version: { type: integer }
+                scenarios:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      code: { type: string, enum: [otimista, realista, pessimista] }
+                      revenueAdjustmentBp: { type: integer }
+                      expenseAdjustmentBp: { type: integer }
+                      monthlyGrowthBp: { type: integer }
+                      active: { type: boolean }
+                      version: { type: integer }
+      responses:
+        "200": { description: Parâmetros gravados }
+        "409": { description: Versão defasada (outro usuário gravou antes) }
+  /fluxo-caixa/categorias:
+    get:
+      tags: [fluxo-caixa]
+      summary: Plano de categorias da planilha (37 + transferencia_interna)
+      responses:
+        "200": { description: Lista de categorias }
+  /fluxo-caixa/mapeamentos:
+    get:
+      tags: [fluxo-caixa]
+      summary: De-para entre chaves do app e o plano
+      responses:
+        "200": { description: Lista }
+    put:
+      tags: [fluxo-caixa]
+      summary: Cria (201) ou atualiza (200) o de-para de uma chave
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, sourceKey, categoryId]
+              properties:
+                source: { type: string, enum: [plano_contas, categoria_ap, categoria_ar, regra_texto] }
+                sourceKey: { type: string }
+                categoryId: { type: string }
+                priority: { type: integer }
+                active: { type: boolean }
+                version: { type: integer }
+      responses:
+        "200": { description: Atualizado }
+        "201": { description: Criado }
+  /fluxo-caixa/lancamentos:
+    get:
+      tags: [fluxo-caixa]
+      summary: Lançamentos unificados (paginado, com totais do conjunto filtrado)
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+        - { name: mes, in: query, schema: { type: integer } }
+        - { name: categoria, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [previsto, realizado] } }
+        - { name: centro_custo, in: query, schema: { type: string } }
+        - { name: origem, in: query, schema: { type: string, enum: [conciliacao, contas_pagar, contas_receber, ajuste_manual] } }
+        - { name: offset, in: query, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 500 } }
+      responses:
+        "200": { description: "{ items, total, offset, limit, totals: { entradasCents, saidasCents, liquidoCents }, computedAt }" }
+  /fluxo-caixa/ajustes-manuais:
+    post:
+      tags: [fluxo-caixa]
+      summary: Cria lançamento manual (valor positivo; sinal pelo tipo)
+      responses:
+        "201": { description: Criado }
+  /fluxo-caixa/ajustes-manuais/{id}:
+    put:
+      tags: [fluxo-caixa]
+      summary: Altera lançamento manual (409 se versão defasada)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Alterado }
+    delete:
+      tags: [fluxo-caixa]
+      summary: Exclui lançamento manual (valor anterior fica na auditoria)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Excluído }
+  /fluxo-caixa/exportar:
+    get:
+      tags: [fluxo-caixa]
+      summary: Baixa a pasta "Fluxo de Caixa CETEM" (.xlsx, 7 abas com fórmulas vivas, sem macros)
+      description: Instruções (data/origem), Parâmetros, Lançamentos (dados reais com a coluna Origem), Fluxo Mensal, Previsto x Realizado, Projeção e Dashboard. Fórmulas SUMIFS/SUM/encadeamento apontam para a aba Lançamentos; cada fórmula leva o valor calculado pelo app em cache. Só leitura.
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+        - { name: formato, in: query, schema: { type: string, enum: [xlsx], default: xlsx } }
+      responses:
+        "200": { description: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (Content-Disposition: attachment)" }
+  /fluxo-caixa/importar:
+    post:
+      tags: [fluxo-caixa]
+      summary: Importa a aba Lançamentos de um .xlsx (validação total, tudo-ou-nada, relatório linha a linha)
+      description: multipart/form-data com o campo `arquivo`. Linhas com Origem do app (Contas a pagar, Contas a receber, Conciliação bancária) e ajustes manuais já existentes são ignoradas (sem dupla contagem); só linhas novas viram fc_ajuste_manual com sourceNote "importação planilha <arquivo>". Qualquer erro rejeita o arquivo inteiro. `simular=1` só valida.
+      parameters:
+        - { name: simular, in: query, schema: { type: string, enum: ["1"] } }
+      responses:
+        "200": { description: "{ arquivo, aba, linhasLidas, validas[], erros[], ignoradas[{linha, motivo, detalhe}], avisos[], totais, resultado: simulado|aplicado, criadas, ids[], atualizadoEm }" }
+        "422": { description: "resultado=rejeitado — erros[{linha, motivo, conteudo}]; nada gravado" }
+  /fluxo-caixa/mensal:
+    get:
+      tags: [fluxo-caixa]
+      summary: Fluxo Mensal (12 meses × categorias, subtotais, saldo encadeado, situação vs reserva)
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+      responses:
+        "200": { description: Grade }
+  /fluxo-caixa/previsto-realizado:
+    get:
+      tags: [fluxo-caixa]
+      summary: Previsto × Realizado por totais e grupos de saída
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+      responses:
+        "200": { description: Grade }
+  /fluxo-caixa/projecao:
+    get:
+      tags: [fluxo-caixa]
+      summary: Projeção de 12 meses por cenário
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+        - { name: cenario, in: query, schema: { type: string, enum: [otimista, realista, pessimista] } }
+      responses:
+        "200": { description: Projeção }
+  /fluxo-caixa/dashboard:
+    get:
+      tags: [fluxo-caixa]
+      summary: KPIs, séries dos gráficos e alertas acionáveis
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+      responses:
+        "200": { description: Dashboard }
+  /fluxo-caixa/pendencias:
+    get:
+      tags: [fluxo-caixa]
+      summary: Lançamentos em a_classificar, agrupados pela chave sugerida para o de-para
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+      responses:
+        "200": { description: Fila de revisão }
+  /fluxo-caixa/recalcular:
+    post:
+      tags: [fluxo-caixa]
+      summary: Recomputa a unificação e devolve atualizadoEm e contagens (idempotente)
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
+      responses:
+        "200": { description: "{ atualizadoEm, lancamentos, excluidos, naoClassificados }" }
 
 components:
   parameters:

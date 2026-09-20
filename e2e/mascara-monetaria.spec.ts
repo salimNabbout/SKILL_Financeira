@@ -97,8 +97,13 @@ test("máscara monetária: digitação, valor pequeno, colagem e gravação", as
 
   await page.getByRole("button", { name: "Criar título" }).click();
 
+  // A action redireciona para a listagem com ?ok= (ou ?erro=). Em modo dev, no
+  // runner do CI, a página pode levar mais que os 5 s padrão para renderizar.
+  await page.waitForURL(/[?&](ok|erro)=/, { timeout: 60_000 });
+  expect(page.url(), "a criação do título voltou com erro").not.toMatch(/[?&]erro=/);
+
   // O título gravado aparece com o valor formatado pelo servidor (formatBRL).
-  await expect(page.getByText(descricao)).toBeVisible();
+  await expect(page.getByText(descricao)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("row", { name: new RegExp(descricao) })).toContainText(
     "R$ 1.500.000,00"
   );
