@@ -23,6 +23,9 @@ Documentação completa (entregáveis): [`docs/`](docs/) — resumo e premissas,
 arquitetura (diagramas), catálogo e contratos das skills, orquestrador (regras + pseudocódigo),
 modelo de dados, APIs e eventos (`docs/openapi.yaml`), wireframes, estrutura, roadmap e
 critérios de aceite.
+Manual de uso do Fluxo de Caixa CETEM (origem de cada entrada e fórmula de cada resultado):
+[`docs/manual-fluxo-caixa-cetem.html`](docs/manual-fluxo-caixa-cetem.html), também em PDF
+([`docs/manual-fluxo-caixa-cetem-v1.0.pdf`](docs/manual-fluxo-caixa-cetem-v1.0.pdf)).
 
 ## Publicação
 

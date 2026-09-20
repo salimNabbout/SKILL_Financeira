@@ -1,0 +1,705 @@
+<title>Manual do Fluxo de Caixa CETEM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f7f8fb;
+    --surface: #ffffff;
+    --surface-2: #eef1f7;
+    --ink: #1c2333;
+    --ink-muted: #5b6577;
+    --line: #d9dee8;
+    --navy: #1f3864;
+    --blue: #2f5597;
+    --band: #d9e2f3;
+    --band-strong: #bdd7ee;
+    --input: #0b3ccf;
+    --link: #0f7a3a;
+    --premise: #fff2cc;
+    --premise-ink: #6b4d00;
+    --ok: #1f7a4d;
+    --warn: #9c5700;
+    --crit: #b42318;
+    --ok-bg: #e3f3ea;
+    --warn-bg: #fff4e0;
+    --crit-bg: #fde8e6;
+    --code-bg: #f1f3f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0f1420;
+      --surface: #161d2c;
+      --surface-2: #1d2637;
+      --ink: #e6eaf2;
+      --ink-muted: #a3adc0;
+      --line: #2c3649;
+      --navy: #a9c0ea;
+      --blue: #8fb0e8;
+      --band: #22304d;
+      --band-strong: #2a3d63;
+      --input: #8ab4ff;
+      --link: #6fd39a;
+      --premise: #3a3214;
+      --premise-ink: #f0d98a;
+      --ok: #6fd39a;
+      --warn: #f0b860;
+      --crit: #ff8a80;
+      --ok-bg: #16301f;
+      --warn-bg: #3a2c10;
+      --crit-bg: #3d1a17;
+      --code-bg: #1a2232;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1420;
+    --surface: #161d2c;
+    --surface-2: #1d2637;
+    --ink: #e6eaf2;
+    --ink-muted: #a3adc0;
+    --line: #2c3649;
+    --navy: #a9c0ea;
+    --blue: #8fb0e8;
+    --band: #22304d;
+    --band-strong: #2a3d63;
+    --input: #8ab4ff;
+    --link: #6fd39a;
+    --premise: #3a3214;
+    --premise-ink: #f0d98a;
+    --ok: #6fd39a;
+    --warn: #f0b860;
+    --crit: #ff8a80;
+    --ok-bg: #16301f;
+    --warn-bg: #3a2c10;
+    --crit-bg: #3d1a17;
+    --code-bg: #1a2232;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    padding-inline: 16px;
+    padding-block: 0 64px;
+  }
+  .page { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 1fr; gap: 32px; }
+  @media (min-width: 1100px) {
+    .page { grid-template-columns: 250px minmax(0, 1fr); }
+    .toc { position: sticky; top: env(safe-area-inset-top, 0px); align-self: start; max-height: 100vh; overflow-y: auto; padding-block: 28px 16px; }
+  }
+  .toc { font-size: 14px; }
+  .toc .eyebrow { margin-bottom: 8px; }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .toc a { color: var(--ink-muted); text-decoration: none; display: block; padding: 4px 10px; border-left: 2px solid var(--line); }
+  .toc a:hover, .toc a:focus-visible { color: var(--navy); border-left-color: var(--navy); outline: none; }
+  .toc .sub { padding-left: 14px; font-size: 13px; }
+
+  main { min-width: 0; }
+  header.hero { padding-block: 40px 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); font-weight: 600; }
+  h1, h2, h3, h4 { font-family: "IBM Plex Serif", Georgia, "Times New Roman", serif; color: var(--navy); text-wrap: balance; line-height: 1.2; margin: 0; }
+  h1 { font-size: clamp(30px, 4vw, 42px); font-weight: 600; margin-top: 8px; }
+  h2 { font-size: 26px; font-weight: 600; margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); }
+  h3 { font-size: 19px; font-weight: 600; margin-top: 32px; }
+  h4 { font-size: 16px; font-weight: 600; margin-top: 22px; color: var(--ink); font-family: "IBM Plex Sans", system-ui, sans-serif; }
+  p { max-width: 72ch; margin: 12px 0; }
+  .lead { font-size: 18px; color: var(--ink-muted); max-width: 70ch; }
+  ul, ol { max-width: 72ch; padding-left: 22px; }
+  li { margin: 4px 0; }
+  a { color: var(--blue); }
+  code { font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: .92em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 14px; color: var(--ink-muted); margin-top: 16px; }
+  .meta b { color: var(--ink); font-weight: 500; }
+
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin: 20px 0; }
+  .legend div { border: 1px solid var(--line); background: var(--surface); padding: 10px 12px; font-size: 14px; }
+  .legend b { display: block; margin-bottom: 2px; }
+  .lg-input b { color: var(--input); }
+  .lg-formula b { color: var(--ink); }
+  .lg-link b { color: var(--link); }
+  .lg-premise { background: var(--premise); border-color: transparent; }
+  .lg-premise b, .lg-premise { color: var(--premise-ink); }
+
+  .formula {
+    font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+    font-size: 14px;
+    background: var(--code-bg);
+    border-left: 3px solid var(--navy);
+    padding: 12px 16px;
+    margin: 14px 0;
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.6;
+  }
+  .formula .in { color: var(--input); }
+  .formula .lk { color: var(--link); }
+  .formula .cm { color: var(--ink-muted); }
+
+  .callout { border: 1px solid var(--line); border-left-width: 4px; background: var(--surface); padding: 12px 16px; margin: 16px 0; max-width: 78ch; font-size: 15px; }
+  .callout.rule { border-left-color: var(--navy); }
+  .callout.origin { border-left-color: var(--input); }
+  .callout.premise { border-left-color: var(--premise-ink); background: var(--premise); color: var(--premise-ink); }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+  .callout .tag { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; display: block; margin-bottom: 4px; }
+  .callout.rule .tag { color: var(--navy); }
+  .callout.origin .tag { color: var(--input); }
+  .callout.warn .tag { color: var(--warn); }
+
+  .tbl { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { background: var(--band); color: var(--navy); font-weight: 600; font-size: 12.5px; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 13px; }
+  tr.total td { background: var(--band-strong); font-weight: 600; }
+  tr.sub td { background: var(--band); font-weight: 600; }
+  tr.band td { background: var(--surface-2); font-weight: 600; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.crit { background: var(--crit-bg); color: var(--crit); }
+  .pill.neutral { background: var(--surface-2); color: var(--ink-muted); }
+
+  .steps { counter-reset: step; list-style: none; padding: 0; max-width: 78ch; }
+  .steps li { position: relative; padding-left: 44px; margin: 14px 0; }
+  .steps li::before { counter-increment: step; content: counter(step); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%; background: var(--navy); color: var(--bg); font-family: "IBM Plex Mono", monospace; font-size: 14px; font-weight: 500; display: grid; place-items: center; }
+  .steps li b { display: block; }
+
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 16px 0; }
+  .card { border: 1px solid var(--line); background: var(--surface); padding: 14px 16px; }
+  .card h4 { margin-top: 0; }
+  .card p { margin: 6px 0; font-size: 14.5px; }
+
+  footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--ink-muted); font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  html { scroll-behavior: smooth; }
+</style>
+
+<div class="page">
+  <nav class="toc" aria-label="Sumário">
+    <div class="eyebrow">Sumário</div>
+    <ol>
+      <li><a href="#visao">1. Visão geral</a></li>
+      <li><a href="#entradas">2. Entradas (inputs)</a></li>
+      <li><a href="#unificacao">3. Unificação dos lançamentos</a></li>
+      <li><a href="#saidas">4. Saídas (outputs) e fórmulas</a></li>
+      <li><a href="#lancamentos" class="sub">4.1 Lançamentos</a></li>
+      <li><a href="#mensal" class="sub">4.2 Fluxo Mensal</a></li>
+      <li><a href="#pxr" class="sub">4.3 Previsto × Realizado</a></li>
+      <li><a href="#projecao" class="sub">4.4 Projeção</a></li>
+      <li><a href="#dashboard" class="sub">4.5 Dashboard e alertas</a></li>
+      <li><a href="#parametros" class="sub">4.6 Parâmetros</a></li>
+      <li><a href="#planilha" class="sub">4.7 Planilha XLSX</a></li>
+      <li><a href="#importacao" class="sub">4.8 Importação</a></li>
+      <li><a href="#api" class="sub">4.9 API</a></li>
+      <li><a href="#exemplo">5. Exemplo completo</a></li>
+      <li><a href="#garantias">6. Garantias e permissões</a></li>
+      <li><a href="#glossario">7. Glossário</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="eyebrow">Financeira PME · disciplina Fluxo de Caixa CETEM</div>
+      <h1>Manual do Fluxo de Caixa CETEM</h1>
+      <p class="lead">Origem de cada dado que entra, regra de cada número que sai. O fluxo de caixa não é digitado: ele é derivado dos módulos do app, com as mesmas fórmulas da planilha "Fluxo de Caixa CETEM".</p>
+      <div class="meta">
+        <span>Manual: <b>versão 1.0</b></span>
+        <span>Versão do app: <b>main 6e8b3b5</b></span>
+        <span>Publicado em <b>20/09/2026</b></span>
+        <span>Menu: <b>Fluxo de Caixa CETEM</b> (rota <code>/fluxo-caixa</code>)</span>
+        <span>Moeda: <b>BRL, centavos inteiros</b></span>
+        <span>Fuso: <b>America/Sao_Paulo</b></span>
+      </div>
+    </header>
+
+    <div class="legend" aria-label="Legenda de cores">
+      <div class="lg-input"><b>Azul</b>Dado que alguém digita ou cadastra em algum módulo do app.</div>
+      <div class="lg-formula"><b>Preto</b>Fórmula calculada na própria tela, a cada carga.</div>
+      <div class="lg-link"><b>Verde</b>Dado buscado de outra tela ou de outro módulo.</div>
+      <div class="lg-premise"><b>Fundo amarelo</b>Premissa-chave: muda o resultado de todas as telas.</div>
+    </div>
+    <p>A legenda é a mesma da planilha original. Nas fórmulas deste manual, os termos em azul são entradas, os em verde vêm de outra parte e o restante é cálculo.</p>
+
+    <!-- ================================================================ 1 -->
+    <h2 id="visao">1. Visão geral</h2>
+    <p>A disciplina lê os módulos que a empresa já usa todos os dias, transforma cada evento de caixa em um lançamento único e calcula, a partir desses lançamentos, cinco telas: <b>Dashboard</b>, <b>Fluxo Mensal</b>, <b>Previsto × Realizado</b>, <b>Lançamentos</b> e <b>Parâmetros</b>. A mesma base gera a planilha de 7 abas e recebe de volta linhas novas por importação.</p>
+
+    <div class="callout rule"><span class="tag">Regras invioláveis</span>
+      <ul>
+        <li><b>Realizado</b> é o que passou pela conciliação bancária. Um título pago no app sem conciliação conta como realizado por "baixa no app", e isso fica declarado no lançamento. No modo estrito ele volta a ser previsto.</li>
+        <li><b>Nunca conta duas vezes.</b> Título, baixa e movimento bancário do mesmo evento viram uma linha só.</li>
+        <li><b>Transferência entre contas próprias é neutra.</b> Não é receita nem despesa, fica fora do fluxo.</li>
+        <li><b>Nada é inventado.</b> Sem regra de categoria, o lançamento cai em "A Classificar" e espera revisão.</li>
+        <li><b>Nenhum número fixo no código.</b> Saldo inicial, reserva, meses realizados e cenários são parâmetros gravados e editáveis.</li>
+        <li><b>Só leitura sobre os módulos.</b> A disciplina nunca altera títulos, baixas, extrato ou conciliação. Ela escreve apenas nas suas próprias tabelas <code>fc_*</code>.</li>
+        <li><b>Regime de caixa.</b> O mês de cada lançamento é o mês da data de caixa, não o da competência.</li>
+      </ul>
+    </div>
+
+    <h3>Ordem de uso recomendada</h3>
+    <ol class="steps">
+      <li><b>Parâmetros.</b> Grave o saldo inicial de 1º de janeiro do ano base e a reserva mínima. Sem isso, o app usa saldo 0 e a reserva igual ao caixa mínimo da empresa, e avisa no Dashboard.</li>
+      <li><b>Lançamentos, fila "A classificar".</b> Escolha a categoria do plano para cada chave de origem sem regra. Um clique grava o de-para e vale para o passado e para o futuro.</li>
+      <li><b>Fluxo Mensal e Previsto × Realizado.</b> Confira as grades. Todo número tem link para o registro de origem na tela Lançamentos.</li>
+      <li><b>Dashboard.</b> Leia os KPIs, os três cenários e os alertas. O carimbo "Dados calculados em" mostra o instante do cálculo.</li>
+      <li><b>Exportar planilha.</b> Baixe o XLSX quando precisar apresentar ou trabalhar fora do app. As fórmulas continuam vivas.</li>
+    </ol>
+
+    <!-- ================================================================ 2 -->
+    <h2 id="entradas">2. Entradas (inputs): de onde vem cada dado</h2>
+    <p>Tudo o que a disciplina usa vem de um destes onze lugares. As sete primeiras fontes são dos módulos existentes e são apenas lidas. As quatro últimas são tabelas próprias da disciplina, alimentadas pelas telas Parâmetros e Lançamentos.</p>
+
+    <div class="tbl"><table>
+      <thead><tr><th>Entrada</th><th>Onde é alimentada</th><th>Campos usados</th><th>Como entra no fluxo</th></tr></thead>
+      <tbody>
+        <tr><td><b>Títulos a pagar</b></td><td>Contas a pagar (cadastro manual, importação CSV, recorrências)</td><td>valor, valor pago, situação, emissão, vencimento, descrição, categoria de fornecedor, categoria contábil, centro de custo</td><td>Saldo em aberto (valor − pago) vira <b>saída prevista</b> no vencimento. Cancelado fica fora. A descrição e as categorias alimentam o de-para.</td></tr>
+        <tr><td><b>Pagamentos (baixas)</b></td><td>Contas a pagar, ação de pagar; aprovações</td><td>valor, conta bancária, data agendada, data de execução, situação</td><td>Executado sem conciliação vira <b>saída realizada por baixa no app</b>. Pendente ou aprovado antecipa a data prevista do título para a data agendada.</td></tr>
+        <tr><td><b>Títulos a receber</b></td><td>Contas a receber, Faturamento</td><td>valor, valor recebido, situação, emissão, vencimento, descrição, categoria a receber, centro de custo</td><td>Saldo em aberto vira <b>entrada prevista</b> no vencimento.</td></tr>
+        <tr><td><b>Recebimentos</b></td><td>Contas a receber, ação de receber</td><td>valor, conta bancária, data do recebimento, situação (registrado ou estornado)</td><td>Registrado e não estornado, sem conciliação, vira <b>entrada realizada por baixa no app</b>.</td></tr>
+        <tr><td><b>Contas bancárias</b></td><td>Cadastros</td><td>id da conta</td><td>Define quais movimentos são da própria empresa. Movimento de conta desconhecida é ignorado.</td></tr>
+        <tr><td><b>Movimentos bancários</b></td><td>Conciliação, importação OFX, CSV, CNAB 240 ou API</td><td>data, valor com sinal, descrição, conta, origem</td><td>Base do <b>realizado por conciliação</b>. Movimento de origem <code>api_mock</code> é descartado. Movimento sem conciliação e sem casamento fica fora do fluxo, como pendência da Conciliação.</td></tr>
+        <tr><td><b>Conciliação (matches)</b></td><td>Conciliação, confirmação manual ou automática</td><td>movimento, tipo do alvo (pagamento, recebimento, título, transferência, tarifa, desconhecido), alvo, porção do valor, situação</td><td>Só <code>confirmed</code> e <code>auto_confirmed</code> contam. É o que decide o realizado e consome a baixa correspondente para não somar de novo.</td></tr>
+        <tr><td><span style="color:var(--input)"><b>Ajustes manuais</b></span></td><td>Fluxo de Caixa → Lançamentos (criar, editar, excluir) e Importar planilha</td><td>data, tipo, categoria do plano, descrição, centro de custo, situação, valor</td><td>Entram como registrados. Tabela <code>fc_ajuste_manual</code>. Servem para o que os módulos não capturam.</td></tr>
+        <tr><td><span style="color:var(--input)"><b>De-para de categorias</b></span></td><td>Fluxo de Caixa → Parâmetros e fila "A classificar"</td><td>origem da chave, chave, categoria do plano, prioridade, ativo</td><td>Liga as categorias que o app já tem ao plano da planilha. Tabela <code>fc_mapeamento</code>.</td></tr>
+        <tr><td><span style="color:var(--input)"><b>Parâmetros do exercício</b></span></td><td>Fluxo de Caixa → Parâmetros</td><td>ano base, saldo inicial, reserva mínima, override de meses realizados</td><td>Premissas do Fluxo Mensal e da Projeção. Tabela <code>fc_parametro</code>, uma linha por empresa e ano.</td></tr>
+        <tr><td><span style="color:var(--input)"><b>Cenários</b></span></td><td>Fluxo de Caixa → Parâmetros</td><td>ajuste de receita, ajuste de despesa, crescimento mensal (em %)</td><td>Premissas da Projeção. Tabela <code>fc_cenario</code>, três por empresa.</td></tr>
+        <tr><td><b>Plano de categorias</b></td><td>Semeado pelo app (referência)</td><td>37 categorias + 1 neutra: nome, tipo, grupo, fixo ou variável</td><td>Linhas do Fluxo Mensal e grupos dos subtotais. Tabela <code>fc_categoria</code>, igual para todas as empresas.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Premissas do exercício</h3>
+    <div class="callout premise"><span class="tag">Fundo amarelo: alteram todos os resultados</span>
+      <ul>
+        <li><b>Ano base</b>: o ano consolidado pelas grades. Seletor no cabeçalho de cada tela; padrão é o ano corrente.</li>
+        <li><b>Saldo inicial</b>: caixa em 1º de janeiro do ano base. Padrão 0 quando não gravado.</li>
+        <li><b>Reserva mínima</b>: piso de segurança. Padrão igual ao "caixa mínimo" configurado na empresa.</li>
+        <li><b>Meses realizados (override)</b>: quando informado, substitui a contagem automática de meses com movimento realizado. Vazio = calculado.</li>
+        <li><b>Cenários</b>: otimista +15% de receita; realista 0; pessimista −20% de receita e +5% de despesa. Crescimento mensal 0 nos três. São os padrões da planilha até alguém gravar outros. Internamente ficam em pontos-base (1% = 100).</li>
+      </ul>
+    </div>
+
+    <h3>Plano de categorias</h3>
+    <p>Reprodução fiel da aba Parâmetros da planilha. O identificador de cada categoria é fixo e é o que o de-para e os ajustes manuais referenciam.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Tipo</th><th>Grupo</th><th>Categorias (classificação)</th></tr></thead>
+      <tbody>
+        <tr><td>Entrada</td><td>Receita Operacional</td><td>Vendas de Produtos (variável) · Prestação de Serviços (variável)</td></tr>
+        <tr><td>Entrada</td><td>Receita Não Operacional</td><td>Receita Financeira (variável) · Outras Receitas (variável)</td></tr>
+        <tr><td>Saída</td><td>Pessoal</td><td>Folha e Salários · Pró-labore · Encargos INSS · Encargos FGTS · Benefícios (VR/VT/Saúde) — todos fixos</td></tr>
+        <tr><td>Saída</td><td>Operacional</td><td>Aluguel (fixo) · Condomínio (fixo) · Energia Elétrica · Água e Esgoto · Internet e Telefonia (fixo) · Fornecedores · Materiais e Equipamentos · Frete e Logística</td></tr>
+        <tr><td>Saída</td><td>Tributos</td><td>Simples Nacional / DAS · IRPJ · CSLL · PIS / COFINS · ISS · ICMS · Tributos Municipais (fixo)</td></tr>
+        <tr><td>Saída</td><td>Financeiro</td><td>Tarifas Bancárias (fixo) · Juros e Multas · Empréstimos e Financiamentos (fixo) · Cartão de Crédito</td></tr>
+        <tr><td>Saída</td><td>Crescimento</td><td>Marketing e Publicidade · Software e Assinaturas (fixo) · Consultorias e Contabilidade (fixo) · Treinamento e Certificações</td></tr>
+        <tr><td>Saída</td><td>Outras</td><td>Manutenção · Seguros (fixo) · Combustível e Deslocamento · Viagens e Hospedagem · <b>A Classificar</b></td></tr>
+        <tr><td>Neutro</td><td>—</td><td><b>Transferência entre contas próprias</b>: reservada, nunca entra no resultado nem na grade</td></tr>
+      </tbody>
+    </table></div>
+    <p>Sem menção explícita, a classificação é variável. A classificação fixo ou variável é informativa nas grades; ela não muda nenhum total.</p>
+
+    <!-- ================================================================ 3 -->
+    <h2 id="unificacao">3. Unificação: como cada lançamento nasce</h2>
+    <p>Antes de qualquer grade, as fontes passam por uma função única e determinística que produz a lista de lançamentos do fluxo. A mesma entrada gera sempre a mesma saída, byte a byte. As fontes são consumidas nesta ordem de precedência.</p>
+
+    <ol class="steps">
+      <li><b>Movimento bancário com conciliação confirmada</b>
+        Cada match <code>confirmed</code> ou <code>auto_confirmed</code> gera um lançamento <b>realizado por conciliação</b>, na data do movimento. Valor = porção do match, ou o valor absoluto do movimento quando o match não informa porção. Tipo = entrada se o movimento é crédito, saída se é débito. O que acontece depende do alvo:
+        <div class="tbl"><table>
+          <thead><tr><th>Alvo do match</th><th>Efeito</th></tr></thead>
+          <tbody>
+            <tr><td>pagamento</td><td>O pagamento é consumido (não soma de novo no passo 3). Categoria, descrição, centro de custo e competência vêm do título a pagar.</td></tr>
+            <tr><td>recebimento</td><td>O recebimento é consumido. Categoria, descrição, centro e competência vêm do título a receber.</td></tr>
+            <tr><td>título a pagar ou a receber</td><td>Mesma coisa, sem consumir baixa.</td></tr>
+            <tr><td>transferência</td><td>Excluído como <code>transferencia_interna</code>.</td></tr>
+            <tr><td>tarifa do banco</td><td>Categoria <b>Tarifas Bancárias</b>, sem passar pelo de-para. Competência = data do movimento.</td></tr>
+            <tr><td>desconhecido</td><td>Categoria resolvida pelo texto da descrição do movimento.</td></tr>
+          </tbody>
+        </table></div>
+      </li>
+      <li><b>Par espelhado de transferência</b>
+        Entre os movimentos sem match: um débito em uma conta própria e um crédito do mesmo valor em outra conta própria, com no máximo 1 dia de diferença, são excluídos juntos como <code>transferencia_interna</code>. O par mais antigo é casado primeiro.</li>
+      <li><b>Casamento implícito</b>
+        Movimento sem match que tem, na mesma conta, um pagamento executado (ou recebimento registrado) de mesmo valor com até 3 dias de diferença vira uma linha só, <b>realizada por conciliação</b>, com o critério gravado no lançamento. A baixa é consumida. Movimento que sobra sem match e sem casamento é excluído como <code>sem_conciliacao</code>: é pendência da tela Conciliação, não do fluxo.</li>
+      <li><b>Baixas no app sem conciliação</b>
+        Pagamento executado e não consumido vira saída na data de execução (no fuso da empresa); recebimento registrado e não consumido vira entrada na data do recebimento. Situação: <b>realizado por baixa no app</b> no modo padrão; <b>previsto</b> no modo estrito. Título cancelado é excluído como <code>cancelado</code>.</li>
+      <li><b>Títulos em aberto</b>
+        Saldo restante = valor − pago (ou − recebido), quando maior que zero, vira <b>previsto</b>. Data de caixa: vencimento; para título a pagar com pagamento pendente ou aprovado, a menor data agendada. Competência = emissão.</li>
+      <li><b>Ajustes manuais</b>
+        Entram como registrados. Data de caixa = data informada. Ajuste realizado é apurado como "baixa no app".</li>
+    </ol>
+
+    <div class="callout rule"><span class="tag">Regra final, aplicada a todo lançamento</span>
+      <ul>
+        <li>Categoria neutra (transferência entre contas próprias) → excluído como <code>categoria_neutra</code>.</li>
+        <li>Valor menor ou igual a zero → descartado.</li>
+        <li>Grupo = grupo da categoria. <b>Mês e ano = data de caixa.</b></li>
+        <li>Ordenação por data de caixa, origem, referência e valor.</li>
+      </ul>
+    </div>
+
+    <h3>Resolução da categoria (de-para)</h3>
+    <p>Chaves são normalizadas antes da comparação: minúsculas, sem acentos, espaços repetidos colapsados. Só regras ativas e que apontem para uma categoria existente valem.</p>
+    <div class="formula">categoria(título a pagar) =
+  <span class="lk">de-para</span>(plano_contas, <span class="in">categoria contábil do título</span>)
+  ?? <span class="lk">de-para</span>(categoria_ap, <span class="in">categoria de fornecedor</span>)
+  ?? <span class="lk">regra por texto</span>(<span class="in">descrição</span>)          <span class="cm">-- menor prioridade primeiro; empate: chave mais longa</span>
+  ?? A Classificar
+
+categoria(título a receber) =
+  <span class="lk">de-para</span>(categoria_ar, <span class="in">categoria a receber</span>)
+  ?? <span class="lk">regra por texto</span>(<span class="in">descrição</span>)
+  ?? A Classificar
+
+categoria(movimento sem título) = <span class="lk">regra por texto</span>(<span class="in">descrição do movimento</span>) ?? A Classificar</div>
+    <p>A regra por texto vale quando a chave está contida na descrição normalizada. Cada lançamento carrega as chaves candidatas, e a fila "A classificar" agrupa por elas.</p>
+
+    <h3>Campos de um lançamento</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Campo</th><th>Significado</th></tr></thead>
+      <tbody>
+        <tr><td>Data de caixa</td><td>Data que define o mês. Movimento, execução da baixa, recebimento, vencimento ou data do ajuste.</td></tr>
+        <tr><td>Competência</td><td>Emissão do título (ou a própria data de caixa nas demais origens). Só consulta.</td></tr>
+        <tr><td>Tipo</td><td>Entrada ou saída. Valor sempre positivo; o sinal vem do tipo.</td></tr>
+        <tr><td>Categoria e grupo</td><td>Do plano, resolvidos pelo de-para.</td></tr>
+        <tr><td>Situação</td><td>Previsto ou realizado.</td></tr>
+        <tr><td>Apuração do realizado</td><td>Conciliação bancária ou baixa no app.</td></tr>
+        <tr><td>Origem e referência</td><td>Contas a pagar, Contas a receber, Conciliação ou Ajuste manual, com o identificador do registro. Na tela, a origem é um link para o registro.</td></tr>
+        <tr><td>Critério</td><td>Texto que explica a dedupe aplicada (por exemplo "casamento implícito: mesma conta, mesmo valor, ±3 dia(s)").</td></tr>
+        <tr><td>Chaves de de-para</td><td>As chaves candidatas, em ordem de precedência.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Exclusões (o que fica fora e por quê)</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Motivo</th><th>Quando</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">extrato_mock</td><td>Movimento bancário de origem <code>api_mock</code> (dados de demonstração da integração).</td></tr>
+        <tr><td class="mono">transferencia_interna</td><td>Match de transferência ou par espelhado entre contas próprias.</td></tr>
+        <tr><td class="mono">sem_conciliacao</td><td>Movimento sem match confirmado e sem casamento implícito.</td></tr>
+        <tr><td class="mono">cancelado</td><td>Título cancelado, ou baixa cujo título foi cancelado.</td></tr>
+        <tr><td class="mono">categoria_neutra</td><td>De-para apontando para "Transferência entre contas próprias".</td></tr>
+      </tbody>
+    </table></div>
+    <p>A rota <code>POST /api/v1/fluxo-caixa/recalcular</code> devolve a contagem por motivo.</p>
+
+    <!-- ================================================================ 4 -->
+    <h2 id="saidas">4. Saídas (outputs) e as fórmulas de cada uma</h2>
+    <p>Todas as telas partem da mesma lista de lançamentos, filtrada pelo ano base. Nada é gravado na leitura e não há cache: o carimbo "Dados calculados em" é o instante real do cálculo.</p>
+
+    <!-- 4.1 -->
+    <h3 id="lancamentos">4.1 Lançamentos</h3>
+    <p>Grade de todos os lançamentos do ano base, com filtros por mês, categoria, situação, centro de custo e origem, paginada. Cada linha mostra origem (com link para o registro original), situação, apuração e critério.</p>
+    <div class="formula">Totais do conjunto filtrado:
+  entradas = Σ valor dos lançamentos filtrados com tipo entrada
+  saídas   = Σ valor dos lançamentos filtrados com tipo saída
+  líquido  = entradas − saídas</div>
+    <h4>Fila "A classificar"</h4>
+    <div class="formula">pendentes = lançamentos do ano com categoria = A Classificar
+grupo = primeira chave candidata do lançamento (plano contábil → categoria de fornecedor → texto)
+por grupo: quantidade, Σ valor, tipos presentes, até 3 descrições de exemplo, referências
+ordem: maior Σ valor primeiro</div>
+    <p>Escolher a categoria em um grupo grava um de-para com aquela origem e chave (prioridade 100). Na próxima carga, todos os lançamentos com a mesma chave já saem classificados.</p>
+    <h4>Ajustes manuais</h4>
+    <p>Criar, editar e excluir exigem a permissão de escrita. Validações: categoria do plano existente e não neutra; tipo do lançamento igual ao tipo da categoria; valor positivo; centro de custo existente. Alterações usam trava otimista (versão) e ficam na auditoria com o valor anterior e o novo.</p>
+
+    <!-- 4.2 -->
+    <h3 id="mensal">4.2 Fluxo Mensal</h3>
+    <p>Grade categorias × 12 meses do ano base, previsto e realizado somados, com subtotais por grupo, resultado, saldo encadeado e situação de cada mês.</p>
+    <div class="formula">valor(categoria, mês)  = Σ valor dos lançamentos do ano base com aquela categoria e mês (previsto + realizado)
+A Classificar (entradas) = Σ lançamentos de ENTRADA em A Classificar     <span class="cm">-- linha só aparece quando existe</span>
+Total de Entradas(mês) = Σ valor das 4 categorias de entrada (+ A Classificar (entradas))
+Subtotal grupo(mês)    = Σ valor das categorias de saída do grupo         <span class="cm">-- Pessoal, Operacional, Tributos, Financeiro, Crescimento, Outras</span>
+Total de Saídas(mês)   = Σ dos 6 subtotais
+Resultado(mês)         = Total de Entradas(mês) − Total de Saídas(mês)
+Saldo Inicial(jan)     = <span class="in">saldo inicial do parâmetro</span>
+Saldo Inicial(mês)     = Saldo Final(mês − 1)
+Saldo Final(mês)       = Saldo Inicial(mês) + Resultado(mês)
+Situação(mês)          = CAIXA NEGATIVO se Saldo Final < 0
+                       = Abaixo da reserva se Saldo Final < <span class="in">reserva mínima</span>
+                       = OK caso contrário
+Total do Ano(linha)    = Σ dos 12 meses
+Saldo Final do Ano     = Saldo Final(dez)
+Não classificados      = quantidade e Σ valor dos lançamentos do ano em A Classificar</div>
+    <div class="callout rule"><span class="tag">Detalhe importante</span>"A Classificar" é categoria de saída no plano. Uma entrada sem de-para nunca é somada como despesa: ela aparece na linha "A Classificar (entradas)" no bloco de entradas e conta em Total de Entradas até ser classificada.</div>
+    <p>Grupos podem ser recolhidos pelo parâmetro <code>?colapsar=</code> da URL, sem alterar nenhum total.</p>
+
+    <!-- 4.3 -->
+    <h3 id="pxr">4.3 Previsto × Realizado</h3>
+    <p>Três linhas (Previsto, Realizado, Variação) para Total de Entradas, Total de Saídas e cada um dos seis grupos de saída, mês a mês e no ano.</p>
+    <div class="formula">Previsto(linha, mês)  = Σ valor dos lançamentos da linha com situação previsto
+Realizado(linha, mês) = Σ valor dos lançamentos da linha com situação realizado
+Variação(linha, mês)  = Realizado − Previsto
+Total do ano          = Σ dos 12 meses, em cada uma das três visões
+
+linha Total de Entradas: tipo entrada (categoria de entrada, ou A Classificar com tipo entrada)
+linha Total de Saídas:   tipo saída
+linha do grupo:          tipo saída e grupo da categoria</div>
+    <p>Em saídas, variação positiva significa gasto acima do planejado. Em entradas, variação negativa significa receita abaixo do previsto.</p>
+    <div class="formula">Destaque de variação relevante (limiares editáveis na tela; padrão R$ 1.000 e 10%):
+  destaca se |Variação| ≥ <span class="in">valor absoluto</span>
+          e, quando Previsto > 0, |Variação| ≥ <span class="in">percentual</span> × Previsto</div>
+
+    <!-- 4.4 -->
+    <h3 id="projecao">4.4 Projeção</h3>
+    <p>Doze meses à frente em três cenários, a partir da média dos meses já realizados. Os cálculos usam frações exatas e só arredondam para centavos na saída, uma vez, exatamente como a planilha arredonda na célula e não no cálculo.</p>
+    <div class="formula">realizado = lançamentos do ano base com situação realizado
+
+meses realizados  = <span class="in">override do parâmetro</span>, se informado
+                  = senão, nº de meses distintos do ano base com ao menos um lançamento realizado
+entradas realizadas = Σ valor dos realizados de entrada
+saídas realizadas   = Σ valor dos realizados de saída
+
+média de entradas = entradas realizadas ÷ meses realizados     <span class="cm">-- meses realizados = 0 → média 0, sem dividir</span>
+média de saídas   = saídas realizadas ÷ meses realizados
+
+saldo de partida  = <span class="in">saldo inicial</span> + entradas realizadas − saídas realizadas
+mês inicial (M+1) = mês seguinte ao último mês com realizado no ano base    <span class="cm">-- sem realizado: janeiro do ano base</span>
+
+para cada cenário, i = 0 … 11:
+  entradas_i  = média de entradas × (1 + <span class="in">ajuste de receita</span>) × (1 + <span class="in">crescimento mensal</span>)^i
+  saídas_i    = média de saídas   × (1 + <span class="in">ajuste de despesa</span>) × (1 + <span class="in">crescimento mensal</span>)^i
+  resultado_i = entradas_i − saídas_i
+  saldo_0     = saldo de partida + resultado_0
+  saldo_i     = saldo_(i−1) + resultado_i
+
+meses abaixo da reserva = quantidade de i com saldo_i < <span class="in">reserva mínima</span>
+meses negativos         = quantidade de i com saldo_i < 0
+saldo em 12 meses       = saldo_11
+primeiro mês abaixo da reserva / negativo = menor i que satisfaz a condição
+baixa confiabilidade    = meses realizados < 3</div>
+    <p>Arredondamento para centavos: metade para longe de zero (meio centavo sobe em valores positivos e desce em negativos). Percentuais são guardados em pontos-base; 15% é 1500, e o fator é (10000 + pontos) ÷ 10000.</p>
+
+    <!-- 4.5 -->
+    <h3 id="dashboard">4.5 Dashboard e alertas</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>KPI</th><th>Fórmula</th></tr></thead>
+      <tbody>
+        <tr><td>Entradas do ano</td><td>Total de Entradas do ano (Fluxo Mensal, previsto + realizado)</td></tr>
+        <tr><td>Saídas do ano</td><td>Total de Saídas do ano</td></tr>
+        <tr><td>Resultado do ano</td><td>Entradas do ano − Saídas do ano</td></tr>
+        <tr><td>Saldo final do ano</td><td>Saldo Final de dezembro, com a situação de dezembro</td></tr>
+        <tr><td>Saldo em 12 meses, por cenário</td><td>saldo_11 do cenário (Projeção)</td></tr>
+        <tr><td>Meses de risco, por cenário</td><td>meses abaixo da reserva e meses negativos (Projeção)</td></tr>
+        <tr><td>Meses realizados</td><td>meses realizados da Projeção; marcado em amarelo quando a confiabilidade é baixa</td></tr>
+      </tbody>
+    </table></div>
+    <p>Séries dos gráficos: entradas, saídas e saldo final mês a mês (Fluxo Mensal); composição das saídas do ano por grupo (subtotais anuais); saldo projetado mês a mês nos três cenários (Projeção).</p>
+    <p>Avisos no topo: "Parâmetros do exercício não configurados" quando ainda não há linha gravada para o ano; os avisos da Projeção (nenhum mês realizado, ou menos de três); e a quantidade de lançamentos em A Classificar com link para a fila.</p>
+
+    <h4>Alertas</h4>
+    <div class="tbl"><table>
+      <thead><tr><th>Código</th><th>Severidade</th><th>Condição e fórmula</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">reserva_realista</td><td><span class="pill warn">Atenção</span></td><td>Cenário realista tem algum saldo_i abaixo da reserva mínima. Cita o primeiro mês e o saldo.</td></tr>
+        <tr><td class="mono">negativo_pessimista</td><td><span class="pill crit">Crítico</span></td><td>Cenário pessimista tem algum saldo_i negativo. Cita o primeiro mês, o saldo, a quantidade de meses negativos e abaixo da reserva.</td></tr>
+        <tr><td class="mono">crescimento_categoria</td><td><span class="pill warn">Atenção</span></td><td>Para cada categoria de saída e cada mês de fevereiro a dezembro com realizado &gt; 0: média = média dos meses anteriores do ano com realizado &gt; 0 na mesma categoria; alerta se realizado do mês &gt; média × 1,15. Crescimento exibido = (realizado − média) ÷ média.</td></tr>
+        <tr><td class="mono">concentracao_categoria</td><td><span class="pill neutral">Informativo</span></td><td>Categoria de saída cujo Total do Ano (previsto + realizado) &gt; 30% do Total de Saídas do ano. Participação exibida = total da categoria ÷ total de saídas.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Os limiares de 15% e 30% são constantes da regra de alerta, documentadas no código como pontos-base. Todo alerta cita mês e valores; não há mensagens genéricas.</p>
+
+    <!-- 4.6 -->
+    <h3 id="parametros">4.6 Parâmetros</h3>
+    <p>Tela de escrita das premissas: saldo inicial, reserva mínima e override de meses realizados do ano base; as três linhas de cenários em percentual; o de-para completo (com prioridade e ativo/inativo) e o plano de categorias como referência.</p>
+    <ul>
+      <li>Gravar exige a permissão de escrita e envia a versão atual. Se outra pessoa gravou antes, o app recusa com "alterado por outro usuário" e pede para recarregar.</li>
+      <li>Cada gravação vira um registro de auditoria com antes e depois: <code>cashflow.parameter_updated</code>, <code>cashflow.scenario_updated</code>, <code>cashflow.mapping_upserted</code>.</li>
+      <li>Enquanto nada foi gravado, a tela mostra os padrões e a Situação "padrão da planilha".</li>
+    </ul>
+
+    <!-- 4.7 -->
+    <h3 id="planilha">4.7 Planilha XLSX exportada</h3>
+    <p>Botão "Exportar planilha (XLSX)" em todas as telas, ou <code>GET /api/v1/fluxo-caixa/exportar?ano=AAAA&amp;formato=xlsx</code>. Sete abas, nas mesmas células da planilha original, sem macros e sem linhas de exemplo. Cada célula de fórmula leva o valor calculado pelo app em cache; ao abrir, o Excel recalcula tudo.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Aba</th><th>Conteúdo e fórmulas</th></tr></thead>
+      <tbody>
+        <tr><td>Instruções</td><td>Data e hora da geração, empresa, ano base, quem gerou, origem dos dados, como usar, legenda de cores, regra de reimportação, limite de linhas.</td></tr>
+        <tr><td>Parâmetros</td><td>C4 ano base, C5 saldo inicial, C6 reserva, C7 meses realizados; cenários em C11:E13; plano B18:E54; listas de centros de custo (G), tipo (I5:I6) e status (I9:I10). Nomes definidos: <code>lista_categorias</code>, <code>lista_centros</code>, <code>lista_tipo</code>, <code>lista_status</code>.</td></tr>
+        <tr><td>Lançamentos</td><td>Uma linha por lançamento: Data, Tipo, Categoria, Descrição, Centro de Custo, Status, Valor, Grupo, Mês, Ano, Origem, Referência, Apuração do realizado, Competência. Depois dos dados, 200 linhas livres com fórmulas auxiliares e listas de validação.</td></tr>
+        <tr><td>Fluxo Mensal</td><td>SUMIFS por categoria, mês e ano; SUM nos subtotais; encadeamento do saldo; IF na situação.</td></tr>
+        <tr><td>Previsto x Realizado</td><td>SUMIFS por tipo ou grupo, status e mês; variação por subtração.</td></tr>
+        <tr><td>Projeção</td><td>SUMIFS do realizado; IFERROR nas médias; potência do crescimento; COUNTIF para meses de risco.</td></tr>
+        <tr><td>Dashboard</td><td>KPIs apontando para Fluxo Mensal e Projeção; série mensal e tabela por grupo como fonte para gráficos; alertas do app como texto.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="formula"><span class="cm">-- Lançamentos, colunas auxiliares (por linha r)</span>
+H (Grupo) = IF($Cr="","",IFERROR(INDEX(Parâmetros!$D$18:$D$54,MATCH($Cr,lista_categorias,0)),"Categoria inválida"))
+I (Mês)   = IF($Ar="","",MONTH($Ar))
+J (Ano)   = IF($Ar="","",YEAR($Ar))
+
+<span class="cm">-- Fluxo Mensal (N = última linha coberta; C$4 = número do mês; $C$3 = ano base)</span>
+valor(categoria, mês) = SUMIFS(Lançamentos!$G$2:$G$N, Lançamentos!$C$2:$C$N, $B9, Lançamentos!$I$2:$I$N, C$4, Lançamentos!$J$2:$J$N, $C$3)
+A Classificar (saída)   = … mesmo SUMIFS com o critério extra Lançamentos!$B$2:$B$N, "Saída"
+A Classificar (entradas)= … critério extra Lançamentos!$B$2:$B$N, "Entrada"
+Total de Entradas = SUM(C9:C12)      Subtotal grupo = SUM(linhas do grupo)
+Total de Saídas   = C21+C30+C38+C43+C48+C54
+Resultado         = C13−C55          Saldo Inicial(fev…) = C58 do mês anterior     Saldo Final = C6+C57
+Situação          = IF(C58&lt;0,"CAIXA NEGATIVO",IF(C58&lt;Parâmetros!$C$6,"Abaixo da reserva","OK"))
+
+<span class="cm">-- Previsto x Realizado</span>
+Previsto (entradas) = SUMIFS(valor, tipo, "Entrada", status, "Previsto", mês, D$4, ano, $C$3)
+Previsto (grupo)    = SUMIFS(valor, grupo, "Pessoal", tipo, "Saída", status, "Previsto", mês, D$4, ano, $C$3)
+Variação            = Realizado − Previsto
+
+<span class="cm">-- Projeção</span>
+C3 = Parâmetros!$C$7                          C4 = SUMIFS(valor, tipo,"Entrada", status,"Realizado", ano, Parâmetros!$C$4)
+C6 = IFERROR($C$4/$C$3,0)                     C8 = Parâmetros!$C$5+$C$4−$C$5
+entradas_i = $C$6*(1+Parâmetros!$C$11)*(1+Parâmetros!$E$11)^i      saldo_i = saldo_(i−1)+resultado_i
+meses abaixo da reserva = COUNTIF(saldo_0:saldo_11,"&lt;"&amp;$C$9)      meses negativos = COUNTIF(saldo_0:saldo_11,"&lt;0")</div>
+    <p>As linhas da grade têm as mesmas posições da planilha original (Total de Entradas na linha 13, subtotais em 21, 30, 38, 43, 48 e 54, Total de Saídas em 55, Resultado em 57, Saldo Final em 58). Quando existe a linha "A Classificar (entradas)", tudo desloca uma linha para baixo e as referências do Dashboard acompanham.</p>
+    <div class="callout warn"><span class="tag">Limites conhecidos</span>Os gráficos da planilha original não são gerados; o Dashboard traz as tabelas-fonte para inserir o gráfico no Excel. As fórmulas leem até 200 linhas depois dos dados; passando disso, exporte de novo. Na Projeção, o Excel pode diferir do app em centavos por arredondamento.</div>
+
+    <!-- 4.8 -->
+    <h3 id="importacao">4.8 Importação da aba Lançamentos</h3>
+    <p>Tela "Importar planilha" (a partir de Lançamentos) ou <code>POST /api/v1/fluxo-caixa/importar</code>. Duas etapas: analisar, que valida tudo e mostra o relatório linha a linha sem gravar; e confirmar, que grava as linhas novas em uma única transação.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Linha da planilha</th><th>Resultado</th></tr></thead>
+      <tbody>
+        <tr><td>Origem em branco (linha nova)</td><td>Vira ajuste manual com a observação "importação planilha &lt;arquivo&gt;".</td></tr>
+        <tr><td>Origem do app (Contas a pagar, Contas a receber, Conciliação bancária)</td><td>Ignorada: o app já tem o lançamento. Correção de categoria é pelo de-para.</td></tr>
+        <tr><td>Ajuste manual com Referência conhecida</td><td>Ignorada como já existente. Se o conteúdo diverge, aviso: edite no app.</td></tr>
+        <tr><td>Idêntica a um ajuste já gravado (data, tipo, categoria, descrição, centro, status e valor)</td><td>Ignorada como duplicada. Importar o mesmo arquivo duas vezes não cria nada.</td></tr>
+        <tr><td>Qualquer erro em qualquer linha</td><td>O arquivo inteiro é rejeitado e nada é gravado. O relatório aponta linha e motivo.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Validações por linha: data (DD/MM/AAAA ou data do Excel), tipo Entrada ou Saída, categoria existente no plano e do mesmo tipo, descrição até 300 caracteres, centro de custo cadastrado (por nome ou código), status Realizado ou Previsto, valor positivo. As colunas são reconhecidas pelo cabeçalho, com as posições da exportação como reserva.</p>
+
+    <!-- 4.9 -->
+    <h3 id="api">4.9 API</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Rota</th><th>Permissão</th><th>Devolve</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/dashboard</td><td>report.view</td><td>KPIs, séries, alertas, avisos, não classificados</td></tr>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/mensal</td><td>report.view</td><td>Grade do Fluxo Mensal</td></tr>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/previsto-realizado</td><td>report.view</td><td>Linhas previsto, realizado e variação</td></tr>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/projecao?cenario=</td><td>report.view</td><td>Projeção; filtro opcional por cenário</td></tr>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/lancamentos</td><td>report.view</td><td>Lançamentos paginados com totais do conjunto filtrado</td></tr>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/pendencias</td><td>report.view</td><td>Fila A classificar agrupada por chave</td></tr>
+        <tr><td class="mono">POST /api/v1/fluxo-caixa/recalcular</td><td>report.view</td><td>Contagens do recálculo e exclusões por motivo. Não grava nada</td></tr>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/exportar</td><td>report.view</td><td>Arquivo .xlsx</td></tr>
+        <tr><td class="mono">GET, PUT /api/v1/fluxo-caixa/parametros</td><td>report.view, budget.manage</td><td>Parâmetros e cenários; PUT com versão (409 se defasada)</td></tr>
+        <tr><td class="mono">GET, PUT /api/v1/fluxo-caixa/mapeamentos</td><td>report.view, budget.manage</td><td>De-para; PUT faz upsert por origem e chave</td></tr>
+        <tr><td class="mono">GET /api/v1/fluxo-caixa/categorias</td><td>report.view</td><td>Plano de categorias</td></tr>
+        <tr><td class="mono">POST, PUT, DELETE /api/v1/fluxo-caixa/ajustes-manuais</td><td>budget.manage</td><td>Ajustes manuais com auditoria e versão</td></tr>
+        <tr><td class="mono">POST /api/v1/fluxo-caixa/importar?simular=1</td><td>budget.manage</td><td>Relatório da importação; 422 quando rejeitado</td></tr>
+      </tbody>
+    </table></div>
+    <p>Todas as leituras aceitam <code>ano=</code> e <code>estrito=1</code>. No modo estrito, baixas sem conciliação ficam previstas e a resposta traz <code>modoEstrito: true</code>.</p>
+
+    <!-- ================================================================ 5 -->
+    <h2 id="exemplo">5. Exemplo completo, número a número</h2>
+    <p>Este é o dataset de referência da planilha, usado nos testes de aceitação do app. Premissas: saldo inicial R$ 85.000,00; reserva mínima R$ 60.000,00; meses realizados = 3 (override); cenários padrão.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Mês</th><th>Categoria</th><th>Tipo</th><th class="num">Valor</th><th>Situação</th></tr></thead>
+      <tbody>
+        <tr><td>jul</td><td>Prestação de Serviços</td><td>Entrada</td><td class="num">92.000,00</td><td>Realizado</td></tr>
+        <tr><td>jul</td><td>Folha e Salários</td><td>Saída</td><td class="num">48.000,00</td><td>Realizado</td></tr>
+        <tr><td>jul</td><td>Simples Nacional / DAS</td><td>Saída</td><td class="num">9.400,00</td><td>Realizado</td></tr>
+        <tr><td>ago</td><td>Prestação de Serviços</td><td>Entrada</td><td class="num">76.000,00</td><td>Realizado</td></tr>
+        <tr><td>ago</td><td>Folha e Salários</td><td>Saída</td><td class="num">48.000,00</td><td>Realizado</td></tr>
+        <tr><td>ago</td><td>Fornecedores</td><td>Saída</td><td class="num">31.000,00</td><td>Realizado</td></tr>
+        <tr><td>ago</td><td>Software e Assinaturas</td><td>Saída</td><td class="num">4.200,00</td><td>Realizado</td></tr>
+        <tr><td>set</td><td>Vendas de Produtos</td><td>Entrada</td><td class="num">58.000,00</td><td>Realizado</td></tr>
+        <tr><td>set</td><td>Folha e Salários</td><td>Saída</td><td class="num">49.500,00</td><td>Realizado</td></tr>
+        <tr><td>set</td><td>Aluguel</td><td>Saída</td><td class="num">12.800,00</td><td>Realizado</td></tr>
+        <tr><td>out</td><td>Prestação de Serviços</td><td>Entrada</td><td class="num">110.000,00</td><td>Previsto</td></tr>
+        <tr><td>out</td><td>Materiais e Equipamentos</td><td>Saída</td><td class="num">44.000,00</td><td>Previsto</td></tr>
+      </tbody>
+    </table></div>
+
+    <h4>Fluxo Mensal</h4>
+    <div class="tbl"><table>
+      <thead><tr><th>Linha</th><th class="num">jul</th><th class="num">ago</th><th class="num">set</th><th class="num">out</th><th class="num">Ano</th></tr></thead>
+      <tbody>
+        <tr class="total"><td>Total de Entradas</td><td class="num">92.000,00</td><td class="num">76.000,00</td><td class="num">58.000,00</td><td class="num">110.000,00</td><td class="num">336.000,00</td></tr>
+        <tr class="sub"><td>Subtotal Pessoal</td><td class="num">48.000,00</td><td class="num">48.000,00</td><td class="num">49.500,00</td><td class="num">–</td><td class="num">145.500,00</td></tr>
+        <tr class="sub"><td>Subtotal Operacional</td><td class="num">–</td><td class="num">31.000,00</td><td class="num">12.800,00</td><td class="num">44.000,00</td><td class="num">87.800,00</td></tr>
+        <tr class="sub"><td>Subtotal Tributos</td><td class="num">9.400,00</td><td class="num">–</td><td class="num">–</td><td class="num">–</td><td class="num">9.400,00</td></tr>
+        <tr class="sub"><td>Subtotal Crescimento</td><td class="num">–</td><td class="num">4.200,00</td><td class="num">–</td><td class="num">–</td><td class="num">4.200,00</td></tr>
+        <tr class="total"><td>Total de Saídas</td><td class="num">57.400,00</td><td class="num">83.200,00</td><td class="num">62.300,00</td><td class="num">44.000,00</td><td class="num">246.900,00</td></tr>
+        <tr class="total"><td>Resultado do Mês</td><td class="num">34.600,00</td><td class="num">−7.200,00</td><td class="num">−4.300,00</td><td class="num">66.000,00</td><td class="num">89.100,00</td></tr>
+        <tr class="band"><td>Saldo Inicial</td><td class="num">85.000,00</td><td class="num">119.600,00</td><td class="num">112.400,00</td><td class="num">108.100,00</td><td class="num">85.000,00</td></tr>
+        <tr class="band"><td>Saldo Final</td><td class="num">119.600,00</td><td class="num">112.400,00</td><td class="num">108.100,00</td><td class="num">174.100,00</td><td class="num">174.100,00</td></tr>
+        <tr><td>Situação</td><td><span class="pill ok">OK</span></td><td><span class="pill ok">OK</span></td><td><span class="pill ok">OK</span></td><td><span class="pill ok">OK</span></td><td></td></tr>
+      </tbody>
+    </table></div>
+    <p>Janeiro a junho não têm movimento: o saldo inicial de R$ 85.000,00 atravessa os seis meses. Em julho, 85.000 + 34.600 = 119.600. Em agosto, 119.600 − 7.200 = 112.400, e assim por diante. Novembro e dezembro repetem 174.100,00.</p>
+
+    <h4>Previsto × Realizado</h4>
+    <p>Entradas: realizado no ano 226.000,00, previsto 110.000,00, variação de outubro −110.000,00 (a receita de outubro ainda não entrou). Saídas: realizado 202.900,00, previsto 44.000,00.</p>
+
+    <h4>Projeção</h4>
+    <div class="formula">meses realizados   = 3 (override)
+média de entradas  = 226.000 ÷ 3 = 75.333,33…     média de saídas = 202.900 ÷ 3 = 67.633,33…
+saldo de partida   = 85.000 + 226.000 − 202.900 = 108.100,00
+mês inicial        = out/2026 (mês seguinte ao último realizado, set/2026)
+
+realista   : resultado mensal = 75.333,33 − 67.633,33 = 7.700,00  → saldo em 12 meses = 108.100 + 12 × 7.700 = 200.500,00
+otimista   : entradas × 1,15 = 86.633,33 → resultado 19.000,00 → saldo em 12 meses = 336.100,00
+pessimista : entradas × 0,80 = 60.266,67; saídas × 1,05 = 71.015,00 → resultado −10.748,33
+             saldo em 12 meses = 108.100 − 12 × 10.748,33 = −20.880,00
+             8 meses abaixo da reserva, 2 meses negativos; primeiro negativo em ago/2027 (M+11) com −10.131,67</div>
+    <p>Com aritmética de frações, o saldo pessimista fecha em exatos −20.880,00. Somando meses já arredondados, a planilha derivaria alguns centavos.</p>
+
+    <h4>Dashboard</h4>
+    <ul>
+      <li>KPIs: entradas 336.000,00; saídas 246.900,00; resultado 89.100,00; saldo final do ano 174.100,00; saldo em 12 meses 336.100,00 / 200.500,00 / −20.880,00.</li>
+      <li>Alerta crítico <code>negativo_pessimista</code>: "caixa fica negativo em ago/2027 (saldo projetado −R$ 10.131,67); 2 mês(es) negativo(s) e 8 abaixo da reserva".</li>
+      <li>Alerta informativo <code>concentracao_categoria</code>: Folha e Salários concentra 58,9% das saídas do ano (145.500 de 246.900).</li>
+      <li>Sem alerta de reserva no realista (nenhum saldo projetado abaixo de 60.000) e sem crescimento de categoria (nenhum mês supera em 15% a média anterior).</li>
+    </ul>
+
+    <!-- ================================================================ 6 -->
+    <h2 id="garantias">6. Garantias, permissões e auditoria</h2>
+    <div class="grid2">
+      <div class="card"><h4>Permissões</h4><p>Ver qualquer tela ou rota de leitura: <code>report.view</code>. Gravar parâmetros, cenários, de-para, ajustes manuais e importar: <code>budget.manage</code>. Quem não tem escrita vê a tela em modo somente leitura.</p></div>
+      <div class="card"><h4>Auditoria</h4><p>Toda escrita fica na trilha de auditoria com usuário, instante, valor anterior e novo: parâmetros, cenários, de-para, ajuste manual criado, alterado e excluído, e o resumo de cada importação (<code>cashflow.imported</code>).</p></div>
+      <div class="card"><h4>Concorrência</h4><p>Parâmetros, cenários, de-para e ajustes manuais têm versão. Gravar com versão defasada é recusado (HTTP 409) para não sobrescrever a alteração de outra pessoa.</p></div>
+      <div class="card"><h4>Idempotência</h4><p>Ler ou recalcular não grava nada e devolve sempre o mesmo resultado para os mesmos dados. Importar o mesmo arquivo duas vezes não duplica.</p></div>
+      <div class="card"><h4>Precisão</h4><p>Dinheiro é inteiro de centavos em todo o percurso; nunca ponto flutuante. Percentuais em pontos-base. Projeção em frações exatas.</p></div>
+      <div class="card"><h4>Fuso e datas</h4><p>Datas de caixa e de competência são datas civis no fuso America/Sao_Paulo. A data de execução de um pagamento é convertida para esse fuso antes de definir o mês.</p></div>
+    </div>
+    <h4>Tabelas próprias da disciplina</h4>
+    <div class="tbl"><table>
+      <thead><tr><th>Tabela</th><th>Conteúdo</th><th>Escopo</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">fc_categoria</td><td>Plano de categorias (id, nome, tipo, grupo, classificação, ordem)</td><td>Global, semeada pelo app</td></tr>
+        <tr><td class="mono">fc_mapeamento</td><td>De-para: origem da chave, chave, categoria, prioridade, ativo, auditoria, versão</td><td>Por empresa</td></tr>
+        <tr><td class="mono">fc_parametro</td><td>Ano base, saldo inicial, reserva mínima, override de meses realizados, auditoria, versão</td><td>Por empresa e ano</td></tr>
+        <tr><td class="mono">fc_cenario</td><td>Código, nome, ajustes e crescimento em pontos-base, ativo, auditoria, versão</td><td>Por empresa</td></tr>
+        <tr><td class="mono">fc_ajuste_manual</td><td>Data, tipo, categoria, descrição, centro, situação, valor, observação de origem, auditoria, versão</td><td>Por empresa</td></tr>
+      </tbody>
+    </table></div>
+
+    <!-- ================================================================ 7 -->
+    <h2 id="glossario">7. Glossário</h2>
+    <div class="tbl"><table>
+      <tbody>
+        <tr><td><b>Ano base</b></td><td>Ano consolidado pelas grades; escolhido no seletor de cada tela.</td></tr>
+        <tr><td><b>Data de caixa</b></td><td>Data em que o dinheiro entra ou sai (ou deve entrar ou sair). Define o mês do lançamento.</td></tr>
+        <tr><td><b>Competência</b></td><td>Data de emissão do título. Só consulta; não define mês.</td></tr>
+        <tr><td><b>Realizado</b></td><td>Já passou pelo banco: conciliação bancária ou, no modo padrão, baixa no app.</td></tr>
+        <tr><td><b>Previsto</b></td><td>Compromisso ou receita ainda por acontecer: título em aberto pelo saldo restante.</td></tr>
+        <tr><td><b>Modo estrito</b></td><td>Leitura em que só a conciliação bancária gera realizado. Baixas sem conciliação ficam previstas. Opção <code>estrito=1</code> da API.</td></tr>
+        <tr><td><b>Baixa no app</b></td><td>Pagamento executado ou recebimento registrado no Financeira PME sem movimento bancário conciliado.</td></tr>
+        <tr><td><b>Casamento implícito</b></td><td>Movimento e baixa da mesma conta, mesmo valor, até 3 dias de diferença, unidos em uma linha.</td></tr>
+        <tr><td><b>Par espelhado</b></td><td>Débito e crédito de mesmo valor em contas próprias distintas, até 1 dia de diferença: transferência.</td></tr>
+        <tr><td><b>De-para</b></td><td>Regra que liga uma chave do app (categoria contábil, categoria de fornecedor, categoria a receber ou texto da descrição) a uma categoria do plano.</td></tr>
+        <tr><td><b>A Classificar</b></td><td>Categoria de espera para lançamentos sem de-para. Fila de revisão na tela Lançamentos.</td></tr>
+        <tr><td><b>Reserva mínima</b></td><td>Piso de caixa. Saldo abaixo dela marca o mês como "Abaixo da reserva".</td></tr>
+        <tr><td><b>Pontos-base</b></td><td>Unidade dos percentuais gravados: 100 pontos = 1%.</td></tr>
+        <tr><td><b>Meses realizados</b></td><td>Meses do ano base com movimento realizado (ou o override). Base das médias da Projeção.</td></tr>
+      </tbody>
+    </table></div>
+
+    <footer>Manual do Fluxo de Caixa CETEM no Financeira PME, versão 1.0 (20/09/2026), fonte em <code>docs/manual-fluxo-caixa-cetem.html</code> do repositório. Regras transcritas do código em produção (unificação, cálculo mensal, previsto × realizado, projeção, alertas, planilha e importação). Onde este manual e o app divergirem, vale o app; avise para corrigir o manual.</footer>
+  </main>
+</div>
