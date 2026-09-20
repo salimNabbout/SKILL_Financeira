@@ -143,18 +143,19 @@ test("exporta a planilha (7 abas, fórmulas vivas) e importa a aba Lançamentos 
   await expect(page).toHaveURL(/\/fluxo-caixa\/importar/, { timeout: 60_000 });
   await page.setInputFiles('input[name="arquivo"]', { name: download.suggestedFilename(), mimeType: XLSX_MIME, buffer: exportado });
   await page.getByRole("button", { name: "Analisar planilha" }).click();
-  await expect(page.getByTestId("fc-import-relatorio")).toBeVisible();
+  // A análise é uma server action: no runner do CI, em modo dev, pode passar dos 5 s padrão.
+  await expect(page.getByTestId("fc-import-relatorio")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("Nenhuma linha nova para importar")).toBeVisible();
   await expect(page.getByTestId("fc-import-ignoradas")).toBeVisible();
 
   // Importação 2: planilha com uma linha nova → analisar → confirmar → ajuste manual criado
   await page.setInputFiles('input[name="arquivo"]', { name: "novos.xlsx", mimeType: XLSX_MIME, buffer: novaLinhaXlsx("Contrato E2E importado") });
   await page.getByRole("button", { name: "Analisar planilha" }).click();
-  await expect(page.getByTestId("fc-import-validas")).toBeVisible();
+  await expect(page.getByTestId("fc-import-validas")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId("fc-import-validas")).toContainText("Contrato E2E importado");
   await page.getByRole("button", { name: /Confirmar importação \(1 linha\(s\)\)/ }).click();
   await expect(page).toHaveURL(/\/fluxo-caixa\/lancamentos/, { timeout: 60_000 });
-  await expect(page.getByText(/1 ajuste\(s\) manual\(is\) criado\(s\)/)).toBeVisible();
+  await expect(page.getByText(/1 ajuste\(s\) manual\(is\) criado\(s\)/)).toBeVisible({ timeout: 30_000 });
   await page.goto("/fluxo-caixa/lancamentos?ano=2026&origem=ajuste_manual");
   await expect(page.getByText("Contrato E2E importado")).toBeVisible();
 
@@ -165,7 +166,7 @@ test("exporta a planilha (7 abas, fórmulas vivas) e importa a aba Lançamentos 
   });
   await page.setInputFiles('input[name="arquivo"]', { name: "erro.xlsx", mimeType: XLSX_MIME, buffer: Buffer.from(invalida) });
   await page.getByRole("button", { name: "Analisar planilha" }).click();
-  await expect(page.getByTestId("fc-import-erros")).toBeVisible();
+  await expect(page.getByTestId("fc-import-erros")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/Arquivo rejeitado/)).toBeVisible();
   await expect(page.getByRole("button", { name: /Confirmar importação/ })).toHaveCount(0);
 });
