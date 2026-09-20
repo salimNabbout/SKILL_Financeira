@@ -63,6 +63,47 @@ export function YearSelect({ ano, years, path, extra = {} }: { ano: number; year
   );
 }
 
+/** Download da pasta "Fluxo de Caixa CETEM" (7 abas, fórmulas vivas, sem macros) do ano base. */
+export function ExportLink({ ano }: { ano: number }) {
+  return (
+    <a
+      href={`/api/v1/fluxo-caixa/exportar?ano=${ano}&formato=xlsx`}
+      className="rounded-lg border border-[var(--line)] px-2 py-1 text-sm hover:bg-slate-50"
+      title="Baixar a planilha Fluxo de Caixa CETEM (.xlsx) com os dados reais do ano base"
+      data-testid="fc-exportar"
+    >
+      Exportar planilha (XLSX)
+    </a>
+  );
+}
+
+/** Ações padrão do cabeçalho das telas: ano base + exportação (+ importação, quando pedido). */
+export function HeaderActions({
+  ano,
+  years,
+  path,
+  extra,
+  importar,
+}: {
+  ano: number;
+  years: number[];
+  path: string;
+  extra?: Record<string, string | undefined>;
+  importar?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <YearSelect ano={ano} years={years} path={path} extra={extra} />
+      <ExportLink ano={ano} />
+      {importar ? (
+        <Link href={`${BASE}/importar?ano=${ano}`} className="rounded-lg border border-[var(--line)] px-2 py-1 text-sm hover:bg-slate-50">
+          Importar planilha
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
 /** Carimbo "calculado em" — os números são recomputados a cada carga; não há cache. */
 export function ComputedAt({ iso }: { iso: string }) {
   return (

@@ -8,7 +8,7 @@ import { formatDateTime } from "@/lib/format";
 import { getCashflowParameters, listCashflowCategories, listCashflowMappings, loadCashflowContext } from "@/app/api/_lib/cashflow";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { saveMappingAction, saveParametersAction } from "../actions";
-import { BASE, CategorySelect, ComputedAt, FluxoTabs, YearSelect, bpToField } from "../_lib/shared";
+import { BASE, CategorySelect, ComputedAt, FluxoTabs, HeaderActions, bpToField } from "../_lib/shared";
 
 const SOURCE_LABEL: Record<string, string> = {
   plano_contas: "Plano contábil (id da categoria)",
@@ -46,7 +46,7 @@ export default async function ParametrosPage({
       <PageHeader
         title="Parâmetros do Fluxo de Caixa"
         subtitle="Saldo inicial, reserva mínima, meses realizados, cenários e o de-para de categorias. Nada aqui é constante no código."
-        actions={<YearSelect ano={year} years={years} path={`${BASE}/parametros`} />}
+        actions={<HeaderActions ano={year} years={years} path={`${BASE}/parametros`} />}
       />
       <FluxoTabs active="parametros" ano={year} />
       <Flash ok={sp.ok} erro={sp.erro} />

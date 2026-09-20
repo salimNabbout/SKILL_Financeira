@@ -4,7 +4,7 @@ import { requireSession } from "@/lib/session";
 import { formatBRL } from "@/lib/format";
 import { getCashflowVariance } from "@/app/api/_lib/cashflow";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
-import { BASE, ComputedAt, FluxoTabs, MESES_CURTOS, YearSelect, cell } from "../_lib/shared";
+import { BASE, ComputedAt, FluxoTabs, MESES_CURTOS, HeaderActions, cell } from "../_lib/shared";
 
 /**
  * Previsto × Realizado — para Total de Entradas, Total de Saídas e cada grupo
@@ -43,7 +43,7 @@ export default async function PrevistoRealizadoPage({
       <PageHeader
         title="Previsto × Realizado"
         subtitle={`Ano base ${data.year} — variação = realizado − previsto. Em saídas, variação positiva significa gasto acima do planejado.`}
-        actions={<YearSelect ano={data.year} years={data.years} path={`${BASE}/previsto-realizado`} extra={{ pct: sp.pct, abs: sp.abs }} />}
+        actions={<HeaderActions ano={data.year} years={data.years} path={`${BASE}/previsto-realizado`} extra={{ pct: sp.pct, abs: sp.abs }} />}
       />
       <FluxoTabs active="previsto-realizado" ano={data.year} />
       <Flash ok={sp.ok} erro={sp.erro} />

@@ -136,6 +136,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "cashflow.manual_entry_created": "Fluxo de caixa: ajuste manual criado",
   "cashflow.manual_entry_updated": "Fluxo de caixa: ajuste manual alterado",
   "cashflow.manual_entry_deleted": "Fluxo de caixa: ajuste manual excluído",
+  "cashflow.imported": "Fluxo de caixa: planilha importada (ajustes manuais criados)",
   "payable.canceled": "Título a pagar cancelado",
   "payable.settled_via_reconciliation": "Título baixado pela conciliação",
   "payment.requested": "Pagamento solicitado",

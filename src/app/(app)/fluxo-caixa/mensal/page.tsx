@@ -6,7 +6,7 @@ import { formatBRL } from "@/lib/format";
 import { CASH_SITUATION_LABEL, type CashSituation } from "@/core/cashflow";
 import { getCashflowMonthly } from "@/app/api/_lib/cashflow";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
-import { BASE, ComputedAt, FluxoTabs, MESES_CURTOS, YearSelect, cell } from "../_lib/shared";
+import { BASE, ComputedAt, FluxoTabs, MESES_CURTOS, HeaderActions, cell } from "../_lib/shared";
 
 const SITUACAO_TONE: Record<CashSituation, "ok" | "warn" | "crit"> = {
   ok: "ok",
@@ -49,7 +49,7 @@ export default async function FluxoMensalPage({
       <PageHeader
         title="Fluxo Mensal"
         subtitle={`Ano base ${data.year} — valores em R$, previsto e realizado somados; saldo encadeado mês a mês.`}
-        actions={<YearSelect ano={data.year} years={data.years} path={`${BASE}/mensal`} extra={{ colapsar: sp.colapsar }} />}
+        actions={<HeaderActions ano={data.year} years={data.years} path={`${BASE}/mensal`} extra={{ colapsar: sp.colapsar }} />}
       />
       <FluxoTabs active="mensal" ano={data.year} />
       <Flash ok={sp.ok} erro={sp.erro} />

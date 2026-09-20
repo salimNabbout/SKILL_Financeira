@@ -8,7 +8,7 @@ import { getCashflowDashboard } from "@/app/api/_lib/cashflow";
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { LabeledBarChart } from "@/app/(app)/_lib/charts";
 import { MultiLineChart } from "./_lib/charts";
-import { BASE, ComputedAt, FluxoTabs, MESES_CURTOS, YearSelect } from "./_lib/shared";
+import { BASE, ComputedAt, FluxoTabs, MESES_CURTOS, HeaderActions } from "./_lib/shared";
 
 const SITUACAO_TONE: Record<CashSituation, "ok" | "warn" | "crit"> = { ok: "ok", abaixo_reserva: "warn", caixa_negativo: "crit" };
 const SEV_TONE = { info: "neutral", warning: "warn", critical: "crit" } as const;
@@ -40,7 +40,7 @@ export default async function FluxoCaixaDashboardPage({
       <PageHeader
         title="Fluxo de Caixa CETEM"
         subtitle="Realizado pela conciliação e pelas baixas, previsto pelos títulos em aberto, projeção por cenário — nada digitado, tudo derivado dos módulos."
-        actions={<YearSelect ano={d.year} years={d.years} path={BASE} />}
+        actions={<HeaderActions ano={d.year} years={d.years} path={BASE} />}
       />
       <FluxoTabs active="dashboard" ano={d.year} />
       <Flash ok={sp.ok} erro={sp.erro} />

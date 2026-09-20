@@ -112,6 +112,7 @@ export const AUDIT_ACTIONS = {
   CASHFLOW_MANUAL_ENTRY_CREATED: "cashflow.manual_entry_created",
   CASHFLOW_MANUAL_ENTRY_UPDATED: "cashflow.manual_entry_updated",
   CASHFLOW_MANUAL_ENTRY_DELETED: "cashflow.manual_entry_deleted",
+  CASHFLOW_IMPORTED: "cashflow.imported",
   RECEIVABLE_CREATED: "receivable.created",
   RECEIVABLE_UPDATED: "receivable.updated",
   RECEIVABLE_RECLASSIFIED: "receivable.reclassified",

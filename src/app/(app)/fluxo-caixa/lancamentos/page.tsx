@@ -10,7 +10,7 @@ import { getCashflowPending, listCashflowCategories, listCashflowEntries } from 
 import { Flash } from "@/app/(app)/cadastros/_lib/flash";
 import { PAGE_SIZE, Pager, pageOffset } from "@/app/(app)/_lib/pager";
 import { createManualEntryAction, deleteManualEntryAction, saveMappingAction, updateManualEntryAction } from "../actions";
-import { BASE, CategorySelect, ComputedAt, FluxoTabs, ORIGEM_LABEL, OrigemBadge, STATUS_LABEL, YearSelect } from "../_lib/shared";
+import { BASE, CategorySelect, ComputedAt, FluxoTabs, ORIGEM_LABEL, OrigemBadge, STATUS_LABEL, HeaderActions } from "../_lib/shared";
 
 const SOURCE_SHORT: Record<string, string> = {
   plano_contas: "plano contábil",
@@ -59,7 +59,7 @@ export default async function LancamentosPage({
       <PageHeader
         title="Lançamentos do Fluxo de Caixa"
         subtitle={`Ano base ${page.year} — cada evento de caixa aparece uma única vez, com a origem e o critério de casamento.`}
-        actions={<YearSelect ano={page.year} years={page.years} path={`${BASE}/lancamentos`} />}
+        actions={<HeaderActions ano={page.year} years={page.years} path={`${BASE}/lancamentos`} importar />}
       />
       <FluxoTabs active="lancamentos" ano={page.year} />
       <Flash ok={sp.ok} erro={sp.erro} />

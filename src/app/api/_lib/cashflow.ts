@@ -36,12 +36,22 @@ import {
   CASHFLOW_TRANSFER_ID,
   CASHFLOW_UNCLASSIFIED_ID,
   computeCashflow,
+  manualEntrySignature,
   normalizeKey,
   unifyCashflow,
+  validateCashflowImport,
   type CashflowAlert,
   type CashflowComputeOutput,
+  type CashflowImportContext,
+  type CashflowImportError,
+  type CashflowImportRawRow,
+  type CashflowImportRow,
+  type CashflowImportSkipped,
+  type CashflowImportValidation,
   type UnifyExclusion,
 } from "@/core/cashflow";
+import { LANC_COL, SHEET, buildCashflowWorkbook } from "@/lib/exporters/cashflow-workbook";
+import { XlsxReadError, cellValue, readXlsx, sheetRows } from "@/lib/importers/xlsx-reader";
 import type { ApiDeps, ApiSession } from "./handlers";
 
 // ---------------------------------------------------------------------------
@@ -779,5 +789,286 @@ export async function recalculateCashflow(deps: ApiDeps, session: ApiSession, ra
     excluidos: byReason,
     naoClassificados: out.monthly.naoClassificadosCount,
     resultadoAnoCents: out.monthly.resultadoAnoCents,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Exportação (.xlsx com fórmulas vivas) e importação da aba Lançamentos
+// ---------------------------------------------------------------------------
+
+export const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const MAX_CASHFLOW_IMPORT_BYTES = 8 * 1024 * 1024;
+
+export const exportQuerySchema = z.object({
+  ano: yearSchema.optional(),
+  formato: z.enum(["xlsx"]).default("xlsx"),
+});
+
+export interface CashflowExportFile {
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+/**
+ * GET /fluxo-caixa/exportar — a pasta "Fluxo de Caixa CETEM" (7 abas) com os
+ * dados reais do ano base e as fórmulas da planilha. Só leitura.
+ */
+export async function exportCashflowWorkbook(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>): Promise<CashflowExportFile> {
+  const q = parse(exportQuerySchema, rawQuery);
+  const year = q.ano ?? currentYear(deps, session);
+  const ctx = await loadCashflowContext(deps, session, year);
+  const out = compute(ctx);
+  const costCenters = await deps.repos.costCenters.listAll(session.company.id);
+  const bytes = buildCashflowWorkbook({
+    year,
+    generatedAt: ctx.computedAt,
+    timeZone: session.config.timezone,
+    companyName: session.company.name,
+    generatedBy: `${session.user.name} <${session.user.email}>`,
+    categories: ctx.categories,
+    costCenters: costCenters.map((c) => ({ id: c.id, code: c.code, name: c.name })),
+    parameter: {
+      openingBalanceCents: ctx.parameter.openingBalanceCents,
+      minimumReserveCents: ctx.parameter.minimumReserveCents,
+      realizedMonthsOverride: ctx.parameter.realizedMonthsOverride,
+      configured: ctx.parameter.configured,
+    },
+    scenarios: ctx.scenarios.map((s) => ({
+      code: s.code,
+      name: s.name,
+      revenueAdjustmentBp: s.revenueAdjustmentBp,
+      expenseAdjustmentBp: s.expenseAdjustmentBp,
+      monthlyGrowthBp: s.monthlyGrowthBp,
+    })),
+    entries: ctx.entries,
+    monthly: out.monthly,
+    variance: out.variance,
+    projection: out.projection,
+    alerts: out.alerts,
+  });
+  const stamp = todayInTz(deps.clock.now(), session.config.timezone);
+  return { filename: `fluxo-caixa-cetem_${year}_${stamp}.xlsx`, contentType: XLSX_MIME, bytes };
+}
+
+export interface CashflowImportReport extends CashflowImportValidation {
+  arquivo: string;
+  aba: string;
+  /** rejeitado = há erros, nada gravado; simulado = válido, nada gravado; aplicado = ajustes criados. */
+  resultado: "rejeitado" | "simulado" | "aplicado";
+  criadas: number;
+  ids: string[];
+  atualizadoEm: string;
+}
+
+const IMPORT_HEADER_KEYS: Record<string, keyof CashflowImportRawRow> = {
+  data: "data",
+  tipo: "tipo",
+  categoria: "categoria",
+  descricao: "descricao",
+  "centro de custo": "centro",
+  centro: "centro",
+  status: "status",
+  valor: "valor",
+  origem: "origem",
+  referencia: "referencia",
+};
+const IMPORT_DEFAULT_COLS: Record<keyof CashflowImportRawRow, string> = {
+  linha: "",
+  data: LANC_COL.data,
+  tipo: LANC_COL.tipo,
+  categoria: LANC_COL.categoria,
+  descricao: LANC_COL.descricao,
+  centro: LANC_COL.centro,
+  status: LANC_COL.status,
+  valor: LANC_COL.valor,
+  origem: LANC_COL.origem,
+  referencia: LANC_COL.referencia,
+};
+
+/** Lê a aba "Lançamentos" de um .xlsx: colunas pelo cabeçalho (linha 1), com as posições padrão como reserva. */
+export function parseLancamentosSheet(bytes: Uint8Array): { aba: string; rows: CashflowImportRawRow[] } {
+  let wb: ReturnType<typeof readXlsx>;
+  try {
+    wb = readXlsx(bytes, { maxEntryBytes: 32 * 1024 * 1024 });
+  } catch (error) {
+    throw new ValidationError(error instanceof XlsxReadError ? error.message : "Arquivo .xlsx inválido.");
+  }
+  const sheet = wb.readSheet(SHEET.lancamentos);
+  if (!sheet) {
+    throw new ValidationError(`A planilha não tem a aba "${SHEET.lancamentos}" (abas encontradas: ${wb.sheetNames.join(", ") || "nenhuma"}).`);
+  }
+  const rows = sheetRows(sheet);
+  const colOf: Record<keyof CashflowImportRawRow, string> = { ...IMPORT_DEFAULT_COLS };
+  const header = rows.get(1);
+  if (header) {
+    for (const [col, cell] of header) {
+      const key = IMPORT_HEADER_KEYS[normalizeKey(String(cellValue(cell) ?? ""))];
+      if (key) colOf[key] = col;
+    }
+  }
+  const raw: CashflowImportRawRow[] = [];
+  for (const [linha, cols] of [...rows.entries()].sort((a, b) => a[0] - b[0])) {
+    if (linha === 1) continue;
+    raw.push({
+      linha,
+      data: cellValue(cols.get(colOf.data)),
+      tipo: cellValue(cols.get(colOf.tipo)),
+      categoria: cellValue(cols.get(colOf.categoria)),
+      descricao: cellValue(cols.get(colOf.descricao)),
+      centro: cellValue(cols.get(colOf.centro)),
+      status: cellValue(cols.get(colOf.status)),
+      valor: cellValue(cols.get(colOf.valor)),
+      origem: cellValue(cols.get(colOf.origem)),
+      referencia: cellValue(cols.get(colOf.referencia)),
+    });
+  }
+  return { aba: SHEET.lancamentos, rows: raw };
+}
+
+async function importContext(deps: ApiDeps, session: ApiSession): Promise<CashflowImportContext> {
+  const [categories, costCenters, manualEntries] = await Promise.all([
+    deps.repos.cashflowCategories.listAll(),
+    deps.repos.costCenters.listAll(session.company.id),
+    deps.repos.cashflowManualEntries.listAll(session.company.id),
+  ]);
+  return { categories, costCenters, manualEntries };
+}
+
+/** Etapa 1 — lê e valida a planilha inteira; não grava nada. */
+export async function parseCashflowImport(deps: ApiDeps, session: ApiSession, file: { fileName: string; bytes: Uint8Array }): Promise<CashflowImportReport> {
+  requirePermission(session, "budget.manage");
+  const { aba, rows } = parseLancamentosSheet(file.bytes);
+  const ctx = await importContext(deps, session);
+  const v = validateCashflowImport(rows, ctx);
+  return {
+    arquivo: file.fileName,
+    aba,
+    ...v,
+    resultado: v.erros.length > 0 ? "rejeitado" : "simulado",
+    criadas: 0,
+    ids: [],
+    atualizadoEm: deps.clock.now().toISOString(),
+  };
+}
+
+export const importRowSchema = z.object({
+  linha: z.number().int().min(1),
+  competenceDate: isoDate,
+  kind: z.enum(["entrada", "saida"]),
+  categoryId: z.string().trim().min(1),
+  categoryName: z.string().optional(),
+  description: z.string().trim().min(1).max(300),
+  costCenterId: z.string().trim().min(1).optional(),
+  costCenterName: z.string().optional(),
+  status: z.enum(["previsto", "realizado"]),
+  amountCents: centsSchema.positive(),
+});
+export const applyImportSchema = z.object({
+  fileName: z.string().trim().min(1).max(200),
+  rows: z.array(importRowSchema).max(5000),
+});
+
+/**
+ * Etapa 2 — grava as linhas validadas como ajustes manuais, numa única
+ * transação, com auditoria por linha e um registro-resumo da importação.
+ * Revalida categorias/centros e repete a deduplicação: reenviar a mesma
+ * confirmação não cria nada de novo.
+ */
+export async function applyCashflowImport(deps: ApiDeps, session: ApiSession, rawBody: unknown): Promise<CashflowImportReport> {
+  requirePermission(session, "budget.manage");
+  const body = parse(applyImportSchema, rawBody);
+  const ctx = await importContext(deps, session);
+  const now = deps.clock.now().toISOString();
+  const base: Omit<CashflowImportReport, "resultado" | "criadas" | "ids" | "validas" | "erros" | "ignoradas" | "totais"> = {
+    arquivo: body.fileName,
+    aba: SHEET.lancamentos,
+    linhasLidas: body.rows.length,
+    avisos: [],
+    atualizadoEm: now,
+  };
+
+  const byId = new Map(ctx.categories.map((c) => [c.id, c]));
+  const ccIds = new Set(ctx.costCenters.map((c) => c.id));
+  const erros: CashflowImportError[] = [];
+  for (const row of body.rows) {
+    const conteudo = [row.competenceDate, row.kind, row.categoryName ?? row.categoryId, row.description, row.costCenterName ?? row.costCenterId ?? "", row.status, String(row.amountCents)];
+    const cat = byId.get(row.categoryId);
+    if (!cat || cat.kind === "neutro") erros.push({ linha: row.linha, motivo: `Categoria "${row.categoryId}" não existe no plano`, conteudo });
+    else if (cat.kind !== row.kind) erros.push({ linha: row.linha, motivo: `Categoria "${cat.name}" é de ${cat.kind}; a linha é de ${row.kind}`, conteudo });
+    if (row.costCenterId && !ccIds.has(row.costCenterId)) erros.push({ linha: row.linha, motivo: `Centro de custo "${row.costCenterId}" não cadastrado`, conteudo });
+  }
+  const existing = new Map(ctx.manualEntries.map((e) => [manualEntrySignature(e), e]));
+  const ignoradas: CashflowImportSkipped[] = [];
+  const toCreate: CashflowImportRow[] = [];
+  for (const row of body.rows) {
+    const dup = existing.get(manualEntrySignature(row));
+    if (dup) ignoradas.push({ linha: row.linha, motivo: "duplicado", detalhe: `igual ao ajuste manual ${dup.id} (${dup.sourceNote ?? "criado no app"})` });
+    else toCreate.push({ ...row, categoryName: row.categoryName ?? byId.get(row.categoryId)?.name ?? row.categoryId });
+  }
+  const totais = toCreate.reduce(
+    (acc, r) => ({ entradasCents: acc.entradasCents + (r.kind === "entrada" ? r.amountCents : 0), saidasCents: acc.saidasCents + (r.kind === "saida" ? r.amountCents : 0) }),
+    { entradasCents: 0, saidasCents: 0 }
+  );
+  if (erros.length > 0) return { ...base, validas: [], erros, ignoradas, totais, resultado: "rejeitado", criadas: 0, ids: [] };
+
+  const sourceNote = `importação planilha ${body.fileName}`.slice(0, 300);
+  const ids = await deps.repos.withTransaction(async (tx) => {
+    const audit = deps.audit.withTx(tx);
+    const created: string[] = [];
+    for (const row of toCreate) {
+      const entity: CashflowManualEntry = {
+        id: deps.ids.next("fca"),
+        companyId: session.company.id,
+        competenceDate: row.competenceDate,
+        kind: row.kind,
+        categoryId: row.categoryId,
+        description: row.description,
+        costCenterId: row.costCenterId,
+        status: row.status,
+        amountCents: row.amountCents,
+        sourceNote,
+        createdBy: session.user.id,
+        createdAt: now,
+        updatedAt: now,
+        version: 1,
+      };
+      await tx.cashflowManualEntries.create(entity);
+      await audit.record(session.company.id, {
+        actor: session.actor,
+        action: AUDIT_ACTIONS.CASHFLOW_MANUAL_ENTRY_CREATED,
+        entityType: AUDIT_ENTITIES.CASHFLOW_MANUAL_ENTRY,
+        entityId: entity.id,
+        after: entity,
+      });
+      created.push(entity.id);
+    }
+    await audit.record(session.company.id, {
+      actor: session.actor,
+      action: AUDIT_ACTIONS.CASHFLOW_IMPORTED,
+      entityType: AUDIT_ENTITIES.CASHFLOW_MANUAL_ENTRY,
+      entityId: body.fileName,
+      after: { arquivo: body.fileName, criadas: created.length, ignoradas: ignoradas.length, ...totais, ids: created },
+    });
+    return created;
+  });
+  return { ...base, validas: toCreate, erros: [], ignoradas, totais, resultado: "aplicado", criadas: ids.length, ids };
+}
+
+/** POST /fluxo-caixa/importar — valida tudo e, sem erros e sem `simulate`, grava (tudo-ou-nada). */
+export async function importCashflowWorkbook(
+  deps: ApiDeps,
+  session: ApiSession,
+  file: { fileName: string; bytes: Uint8Array; simulate?: boolean }
+): Promise<CashflowImportReport> {
+  const report = await parseCashflowImport(deps, session, file);
+  if (report.resultado === "rejeitado" || file.simulate) return report;
+  if (report.validas.length === 0) return { ...report, resultado: "aplicado" };
+  const applied = await applyCashflowImport(deps, session, { fileName: file.fileName, rows: report.validas });
+  return {
+    ...applied,
+    linhasLidas: report.linhasLidas,
+    ignoradas: [...report.ignoradas, ...applied.ignoradas],
+    avisos: report.avisos,
   };
 }

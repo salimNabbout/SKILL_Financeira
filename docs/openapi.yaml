@@ -1298,6 +1298,26 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
       responses:
         "200": { description: Excluído }
+  /fluxo-caixa/exportar:
+    get:
+      tags: [fluxo-caixa]
+      summary: Baixa a pasta "Fluxo de Caixa CETEM" (.xlsx, 7 abas com fórmulas vivas, sem macros)
+      description: Instruções (data/origem), Parâmetros, Lançamentos (dados reais com a coluna Origem), Fluxo Mensal, Previsto x Realizado, Projeção e Dashboard. Fórmulas SUMIFS/SUM/encadeamento apontam para a aba Lançamentos; cada fórmula leva o valor calculado pelo app em cache. Só leitura.
+      parameters:
+        - { name: ano, in: query, schema: { type: integer } }
+        - { name: formato, in: query, schema: { type: string, enum: [xlsx], default: xlsx } }
+      responses:
+        "200": { description: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (Content-Disposition: attachment)" }
+  /fluxo-caixa/importar:
+    post:
+      tags: [fluxo-caixa]
+      summary: Importa a aba Lançamentos de um .xlsx (validação total, tudo-ou-nada, relatório linha a linha)
+      description: multipart/form-data com o campo `arquivo`. Linhas com Origem do app (Contas a pagar, Contas a receber, Conciliação bancária) e ajustes manuais já existentes são ignoradas (sem dupla contagem); só linhas novas viram fc_ajuste_manual com sourceNote "importação planilha <arquivo>". Qualquer erro rejeita o arquivo inteiro. `simular=1` só valida.
+      parameters:
+        - { name: simular, in: query, schema: { type: string, enum: ["1"] } }
+      responses:
+        "200": { description: "{ arquivo, aba, linhasLidas, validas[], erros[], ignoradas[{linha, motivo, detalhe}], avisos[], totais, resultado: simulado|aplicado, criadas, ids[], atualizadoEm }" }
+        "422": { description: "resultado=rejeitado — erros[{linha, motivo, conteudo}]; nada gravado" }
   /fluxo-caixa/mensal:
     get:
       tags: [fluxo-caixa]
