@@ -1268,6 +1268,7 @@ paths:
       summary: Lançamentos unificados (paginado, com totais do conjunto filtrado)
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
         - { name: mes, in: query, schema: { type: integer } }
         - { name: categoria, in: query, schema: { type: string } }
         - { name: status, in: query, schema: { type: string, enum: [previsto, realizado] } }
@@ -1305,6 +1306,7 @@ paths:
       description: Instruções (data/origem), Parâmetros, Lançamentos (dados reais com a coluna Origem), Fluxo Mensal, Previsto x Realizado, Projeção e Dashboard. Fórmulas SUMIFS/SUM/encadeamento apontam para a aba Lançamentos; cada fórmula leva o valor calculado pelo app em cache. Só leitura.
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
         - { name: formato, in: query, schema: { type: string, enum: [xlsx], default: xlsx } }
       responses:
         "200": { description: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet (Content-Disposition: attachment)" }
@@ -1324,6 +1326,7 @@ paths:
       summary: Fluxo Mensal (12 meses × categorias, subtotais, saldo encadeado, situação vs reserva)
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
       responses:
         "200": { description: Grade }
   /fluxo-caixa/previsto-realizado:
@@ -1332,6 +1335,7 @@ paths:
       summary: Previsto × Realizado por totais e grupos de saída
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
       responses:
         "200": { description: Grade }
   /fluxo-caixa/projecao:
@@ -1340,6 +1344,7 @@ paths:
       summary: Projeção de 12 meses por cenário
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
         - { name: cenario, in: query, schema: { type: string, enum: [otimista, realista, pessimista] } }
       responses:
         "200": { description: Projeção }
@@ -1349,6 +1354,7 @@ paths:
       summary: KPIs, séries dos gráficos e alertas acionáveis
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
       responses:
         "200": { description: Dashboard }
   /fluxo-caixa/pendencias:
@@ -1357,6 +1363,7 @@ paths:
       summary: Lançamentos em a_classificar, agrupados pela chave sugerida para o de-para
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
       responses:
         "200": { description: Fila de revisão }
   /fluxo-caixa/recalcular:
@@ -1365,6 +1372,7 @@ paths:
       summary: Recomputa a unificação e devolve atualizadoEm e contagens (idempotente)
       parameters:
         - { name: ano, in: query, schema: { type: integer } }
+        - { name: estrito, in: query, schema: { type: string, enum: ["1"] }, description: "Modo estrito: realizado só pela conciliação; pago/recebido no app sem conciliação fica previsto" }
       responses:
         "200": { description: "{ atualizadoEm, lancamentos, excluidos, naoClassificados }" }
 

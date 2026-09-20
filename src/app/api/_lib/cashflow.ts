@@ -87,6 +87,15 @@ function yearOf(deps: ApiDeps, session: ApiSession, raw: Record<string, string>)
   return raw.ano ? parse(yearSchema, raw.ano) : currentYear(deps, session);
 }
 
+/**
+ * `?estrito=1` — modo estrito: realizado SÓ pela conciliação bancária; um
+ * título pago/recebido no app sem conciliação permanece PREVISTO. O padrão é
+ * o fallback declarado (decisão A: `realizedBy = baixa_app`).
+ */
+function strictOf(raw: Record<string, string>): boolean {
+  return raw.estrito === "1" || raw.estrito === "true";
+}
+
 /** Trava otimista: versão informada tem de ser a atual. */
 function assertVersion(current: number, provided: number | undefined, what: string): void {
   if (provided !== undefined && provided !== current) {
@@ -126,6 +135,8 @@ export interface ScenarioView {
 export interface CashflowContext {
   year: number;
   computedAt: string;
+  /** true = modo estrito (realizado só por conciliação). */
+  strict: boolean;
   entries: CashflowEntry[];
   excluded: UnifyExclusion[];
   categories: CashflowCategory[];
@@ -194,7 +205,12 @@ async function loadScenarios(deps: ApiDeps, session: ApiSession) {
   return { entities, views };
 }
 
-export async function loadCashflowContext(deps: ApiDeps, session: ApiSession, year: number): Promise<CashflowContext> {
+export async function loadCashflowContext(
+  deps: ApiDeps,
+  session: ApiSession,
+  year: number,
+  opts: { strict?: boolean } = {}
+): Promise<CashflowContext> {
   requirePermission(session, "report.view");
   const companyId = session.company.id;
   const [payables, payments, receivables, receipts, bankAccounts, bankTransactions, matches, manualEntries, mappings, categories] =
@@ -222,12 +238,14 @@ export async function loadCashflowContext(deps: ApiDeps, session: ApiSession, ye
     manualEntries,
     mappings,
     categories,
+    options: { realizedFallback: !opts.strict },
   });
   const param = await loadParameter(deps, session, year);
   const scen = await loadScenarios(deps, session);
   return {
     year,
     computedAt: deps.clock.now().toISOString(),
+    strict: Boolean(opts.strict),
     entries: unified.entries,
     excluded: unified.excluded,
     categories,
@@ -459,7 +477,7 @@ export interface EntriesPage {
 export async function listCashflowEntries(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>): Promise<EntriesPage> {
   const q = parse(entriesQuerySchema, rawQuery);
   const year = q.ano ?? currentYear(deps, session);
-  const ctx = await loadCashflowContext(deps, session, year);
+  const ctx = await loadCashflowContext(deps, session, year, { strict: strictOf(rawQuery) });
   const filtered = ctx.entries.filter(
     (e) =>
       e.year === year &&
@@ -615,26 +633,27 @@ function meta(ctx: CashflowContext, out: CashflowComputeOutput) {
     year: ctx.year,
     years: yearsOf(ctx),
     computedAt: ctx.computedAt,
+    modoEstrito: ctx.strict,
     parameterConfigured: ctx.parameter.configured,
     naoClassificados: { count: out.monthly.naoClassificadosCount, totalCents: out.monthly.naoClassificadosCents },
   };
 }
 
 export async function getCashflowMonthly(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>) {
-  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery));
+  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery), { strict: strictOf(rawQuery) });
   const out = compute(ctx);
   return { ...meta(ctx, out), monthly: out.monthly };
 }
 
 export async function getCashflowVariance(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>) {
-  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery));
+  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery), { strict: strictOf(rawQuery) });
   const out = compute(ctx);
   return { ...meta(ctx, out), variance: out.variance };
 }
 
 export async function getCashflowProjection(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>) {
   const q = parse(z.object({ ano: yearSchema.optional(), cenario: scenarioCodeSchema.optional() }), rawQuery);
-  const ctx = await loadCashflowContext(deps, session, q.ano ?? currentYear(deps, session));
+  const ctx = await loadCashflowContext(deps, session, q.ano ?? currentYear(deps, session), { strict: strictOf(rawQuery) });
   const out = compute(ctx);
   const projection = q.cenario
     ? { ...out.projection, scenarios: out.projection.scenarios.filter((s) => s.code === q.cenario) }
@@ -648,6 +667,8 @@ export interface DashboardView {
   years: number[];
   computedAt: string;
   parameterConfigured: boolean;
+  /** true = calculado no modo estrito (?estrito=1). */
+  modoEstrito: boolean;
   kpis: {
     entradasAnoCents: number;
     saidasAnoCents: number;
@@ -672,7 +693,7 @@ export interface DashboardView {
 }
 
 export async function getCashflowDashboard(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>): Promise<DashboardView> {
-  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery));
+  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery), { strict: strictOf(rawQuery) });
   const out = compute(ctx);
   const { monthly, projection, alerts } = out;
   const saldo12: DashboardView["kpis"]["saldo12MesesCents"] = {};
@@ -685,6 +706,7 @@ export async function getCashflowDashboard(deps: ApiDeps, session: ApiSession, r
     year: ctx.year,
     years: yearsOf(ctx),
     computedAt: ctx.computedAt,
+    modoEstrito: ctx.strict,
     parameterConfigured: ctx.parameter.configured,
     kpis: {
       entradasAnoCents: monthly.entradasAnoCents,
@@ -736,7 +758,7 @@ export interface PendingGroup {
 }
 
 export async function getCashflowPending(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>) {
-  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery));
+  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery), { strict: strictOf(rawQuery) });
   const pending = ctx.entries.filter((e) => e.year === ctx.year && e.categoryId === CASHFLOW_UNCLASSIFIED_ID);
   const groups = new Map<string, PendingGroup>();
   for (const e of pending) {
@@ -777,7 +799,7 @@ export async function getCashflowPending(deps: ApiDeps, session: ApiSession, raw
  * resultado).
  */
 export async function recalculateCashflow(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>) {
-  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery));
+  const ctx = await loadCashflowContext(deps, session, yearOf(deps, session, rawQuery), { strict: strictOf(rawQuery) });
   const out = compute(ctx);
   const byReason: Record<string, number> = {};
   for (const x of ctx.excluded) byReason[x.reason] = (byReason[x.reason] ?? 0) + 1;
@@ -817,7 +839,7 @@ export interface CashflowExportFile {
 export async function exportCashflowWorkbook(deps: ApiDeps, session: ApiSession, rawQuery: Record<string, string>): Promise<CashflowExportFile> {
   const q = parse(exportQuerySchema, rawQuery);
   const year = q.ano ?? currentYear(deps, session);
-  const ctx = await loadCashflowContext(deps, session, year);
+  const ctx = await loadCashflowContext(deps, session, year, { strict: strictOf(rawQuery) });
   const out = compute(ctx);
   const costCenters = await deps.repos.costCenters.listAll(session.company.id);
   const bytes = buildCashflowWorkbook({
