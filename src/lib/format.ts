@@ -122,6 +122,11 @@ export const ACTION_LABELS: Record<string, string> = {
   "supplier_category.deleted": "Categoria de fornecedor excluída",
   "supplier_category.deactivated": "Categoria de fornecedor desativada",
   "supplier_category.reactivated": "Categoria de fornecedor reativada",
+  "payable_subcategory.created": "Subcategoria a pagar criada",
+  "payable_subcategory.updated": "Subcategoria a pagar alterada",
+  "payable_subcategory.deleted": "Subcategoria a pagar excluída",
+  "payable_subcategory.deactivated": "Subcategoria a pagar desativada",
+  "payable_subcategory.reactivated": "Subcategoria a pagar reativada",
 
   // Contas a pagar e pagamentos
   "document.created": "Documento fiscal registrado",

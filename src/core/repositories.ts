@@ -53,6 +53,7 @@ import type {
   SkillExecution,
   Supplier,
   SupplierCategory,
+  PayableSubcategory,
   User,
 } from "./entities";
 
@@ -119,6 +120,11 @@ export interface SupplierCategoryRepo extends BaseRepo<SupplierCategory> {
    * Remove uma categoria. O chamador garante que nenhum fornecedor, recorrência
    * ou título a pagar a referencia (a referência é por NOME, sem FK no banco).
    */
+  delete(companyId: ID, id: ID): Promise<void>;
+}
+
+export interface PayableSubcategoryRepo extends BaseRepo<PayableSubcategory> {
+  /** Remove uma subcategoria. O chamador garante que nenhum título a pagar a referencia (por NOME, sem FK). */
   delete(companyId: ID, id: ID): Promise<void>;
 }
 
@@ -487,6 +493,7 @@ export interface Repositories {
   customers: CustomerRepo;
   suppliers: SupplierRepo;
   supplierCategories: SupplierCategoryRepo;
+  payableSubcategories: PayableSubcategoryRepo;
   recurringTemplates: RecurringTemplateRepo;
   bankAccounts: BankAccountRepo;
   bankTransactions: BankTransactionRepo;

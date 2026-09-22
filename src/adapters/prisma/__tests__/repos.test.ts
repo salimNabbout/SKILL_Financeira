@@ -86,6 +86,7 @@ function makeFakePrisma(overrides: Partial<Record<string, unknown>> = {}) {
     "cashflowParameter",
     "cashflowScenario",
     "cashflowManualEntry",
+    "payableSubcategory",
   ] as const;
   const fake: Record<string, unknown> = {};
   for (const m of models) fake[m] = delegateStub();

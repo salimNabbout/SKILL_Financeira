@@ -40,6 +40,7 @@ import type {
   SkillExecution,
   Supplier,
   SupplierCategory,
+  PayableSubcategory,
   User,
 } from "@/core/entities";
 
@@ -52,6 +53,7 @@ export class MemoryDb {
   customers: Customer[] = [];
   suppliers: Supplier[] = [];
   supplierCategories: SupplierCategory[] = [];
+  payableSubcategories: PayableSubcategory[] = [];
   recurringTemplates: RecurringTemplate[] = [];
   bankAccounts: BankAccount[] = [];
   bankTransactions: BankTransaction[] = [];

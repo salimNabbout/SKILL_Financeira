@@ -120,6 +120,17 @@ export interface SupplierCategory {
   updatedAt: string;
 }
 
+/** Cadastro "Subcategoria a PAGAR": lista que alimenta a caixa SUBCATEGORIA do novo título (referenciada por NOME em Payable.subcategory). */
+export interface PayableSubcategory {
+  id: ID;
+  companyId: ID;
+  /** Nome guardado em Title Case; único por empresa. */
+  name: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Tipo de recorrência: título a pagar ou a receber. */
 export type RecurringKind = "payable" | "receivable";
 /** Estado da recorrência. `paused` suspende a geração; `ended` a encerra. */
@@ -212,7 +223,7 @@ export interface Payable {
   costCenterId?: ID;
   /** Categoria de fornecedor (texto), espelhada do cadastro no momento da entrada. */
   supplierCategory?: string;
-  /** Subcategoria (texto livre, opcional) informada na caixa "Subcategoria" do novo título. */
+  /** Subcategoria (opcional) escolhida na caixa "Subcategoria" do novo título — nome do cadastro Subcategoria a PAGAR. */
   subcategory?: string;
   /** Classificação de custo (Fixo/Variável), espelhada do fornecedor na entrada. */
   costClassification?: CostClassification;

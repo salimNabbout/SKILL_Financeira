@@ -219,7 +219,7 @@ export default async function ContasAPagarPage({
 
   const supplierId = fornecedor || undefined;
 
-  const [page, suppliers, supplierCategories, bankAccounts, allPayables, costCenters, executedPayments] =
+  const [page, suppliers, supplierCategories, bankAccounts, allPayables, costCenters, executedPayments, payableSubcategories] =
     await Promise.all([
       // Listagem paginada no repositório (volumetria) — ordem: vencimento asc.
       // Filtros de status/fornecedor/vencimento aplicados no banco.
@@ -241,6 +241,8 @@ export default async function ContasAPagarPage({
       // Pagamentos executados: para a data de quitação (situação "Pago Atrasado").
       // UMA consulta; monta-se um Map por payableId (sem getById em loop).
       repos.payments.listByStatus(companyId, ["executed"]),
+      // Subcategorias a PAGAR (cadastro) para a caixa SUBCATEGORIA do novo título.
+      repos.payableSubcategories.listAll(companyId),
     ]);
   const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
   const activeAccounts = bankAccounts.filter((b) => b.active);
@@ -267,6 +269,11 @@ export default async function ContasAPagarPage({
   const categoryOptions = supplierCategories
     .filter((c) => c.active)
     .map((c) => c.name)
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  // Só subcategorias ATIVAS (subcategoria "excluída" com vínculos fica inativa e some daqui).
+  const subcategoryOptions = payableSubcategories
+    .filter((s) => s.active)
+    .map((s) => s.name)
     .sort((a, b) => a.localeCompare(b, "pt-BR"));
   // Centros de custo ATIVOS, ordenados por código (pt-BR). Exibição "CÓDIGO — Nome";
   // Centros ATIVOS cujo destino serve a este lado. "both" atende os dois — é
@@ -486,6 +493,7 @@ export default async function ContasAPagarPage({
           <NewPayableForm
             suppliers={supplierOptions}
             categories={categoryOptions}
+            subcategories={subcategoryOptions}
             costCenters={costCenterOptions}
             today={today}
             prefill={newPayablePrefill}
