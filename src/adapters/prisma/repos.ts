@@ -47,6 +47,7 @@ import type {
   SkillExecution as DbSkillExecution,
   Supplier as DbSupplier,
   SupplierCategory as DbSupplierCategory,
+  PayableSubcategory as DbPayableSubcategory,
   User as DbUser,
 } from "@prisma/client";
 import { Prisma } from "@prisma/client";
@@ -96,6 +97,7 @@ import type {
   SkillExecution,
   Supplier,
   SupplierCategory,
+  PayableSubcategory,
   User,
 } from "@/core/entities";
 import type {
@@ -137,6 +139,7 @@ import type {
   SkillExecutionRepo,
   SupplierRepo,
   SupplierCategoryRepo,
+  PayableSubcategoryRepo,
   UserRepo,
 } from "@/core/repositories";
 
@@ -326,6 +329,23 @@ const supplierCategoryToDomain = (r: DbSupplierCategory): SupplierCategory => ({
   updatedAt: fromInstant(r.updatedAt),
 });
 const supplierCategoryToDb = (e: SupplierCategory): Prisma.SupplierCategoryUncheckedCreateInput => ({
+  id: e.id,
+  companyId: e.companyId,
+  name: e.name,
+  active: e.active,
+  createdAt: toInstant(e.createdAt),
+  updatedAt: toInstant(e.updatedAt),
+});
+
+const payableSubcategoryToDomain = (r: DbPayableSubcategory): PayableSubcategory => ({
+  id: r.id,
+  companyId: r.companyId,
+  name: r.name,
+  active: r.active,
+  createdAt: fromInstant(r.createdAt),
+  updatedAt: fromInstant(r.updatedAt),
+});
+const payableSubcategoryToDb = (e: PayableSubcategory): Prisma.PayableSubcategoryUncheckedCreateInput => ({
   id: e.id,
   companyId: e.companyId,
   name: e.name,
@@ -1441,6 +1461,31 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     },
     async delete(companyId: ID, id: ID) {
       await prisma.supplierCategory.deleteMany({ where: { id, companyId } });
+    },
+  };
+
+  const payableSubcategories: PayableSubcategoryRepo = {
+    async getById(companyId: ID, id: ID) {
+      const row = await prisma.payableSubcategory.findFirst({ where: { id, companyId } });
+      return row ? payableSubcategoryToDomain(row) : null;
+    },
+    async listAll(companyId: ID) {
+      const rows = await prisma.payableSubcategory.findMany({ where: { companyId }, orderBy: { name: "asc" } });
+      return rows.map(payableSubcategoryToDomain);
+    },
+    async create(entity: PayableSubcategory) {
+      const row = await prisma.payableSubcategory.create({ data: payableSubcategoryToDb(entity) });
+      return payableSubcategoryToDomain(row);
+    },
+    async update(entity: PayableSubcategory) {
+      const row = await prisma.payableSubcategory.update({
+        where: { id: entity.id, companyId: entity.companyId },
+        data: payableSubcategoryToDb(entity),
+      });
+      return payableSubcategoryToDomain(row);
+    },
+    async delete(companyId: ID, id: ID) {
+      await prisma.payableSubcategory.deleteMany({ where: { id, companyId } });
     },
   };
 
@@ -2733,6 +2778,7 @@ export function createPrismaRepositories(prisma: PrismaLike): Repositories {
     customers,
     suppliers,
     supplierCategories,
+    payableSubcategories,
     recurringTemplates,
     bankAccounts,
     bankTransactions,

@@ -32,6 +32,7 @@ model Company {
   customers             Customer[]
   suppliers             Supplier[]
   supplierCategories    SupplierCategory[]
+  payableSubcategories  PayableSubcategory[]
   recurringTemplates    RecurringTemplate[]
   bankAccounts          BankAccount[]
   bankTransactions      BankTransaction[]
@@ -142,6 +143,22 @@ model Supplier {
 }
 
 model SupplierCategory {
+  id        String   @id
+  companyId String
+  name      String // Title Case; único por empresa
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+// Cadastro "Subcategoria a PAGAR": lista da caixa SUBCATEGORIA do novo título
+// (referenciada por NOME em Payable.subcategory, sem FK — como SupplierCategory).
+model PayableSubcategory {
   id        String   @id
   companyId String
   name      String // Title Case; único por empresa
@@ -276,7 +293,7 @@ model Payable {
   categoryId         String?
   costCenterId       String?
   supplierCategory   String? // categoria de fornecedor (texto) espelhada na entrada
-  subcategory        String? // subcategoria (texto livre, opcional) informada no novo título
+  subcategory        String? // subcategoria (opcional) escolhida no novo título — nome de PayableSubcategory
   costClassification String? // fixed | variable — espelho do fornecedor na entrada
   installmentNumber  Int       @default(1)
   installmentCount   Int       @default(1)

@@ -34,6 +34,7 @@ export const AUDIT_ENTITIES = {
   RECEIVABLE: "receivable",
   SUPPLIER: "supplier",
   SUPPLIER_CATEGORY: "supplier_category",
+  PAYABLE_SUBCATEGORY: "payable_subcategory",
   USER: "user",
   ACCOUNTING_ENTRY: "accounting_entry",
   BANK_TRANSACTION: "bank_transaction",
@@ -97,6 +98,11 @@ export const AUDIT_ACTIONS = {
   SUPPLIER_CATEGORY_DELETED: "supplier_category.deleted",
   SUPPLIER_CATEGORY_DEACTIVATED: "supplier_category.deactivated",
   SUPPLIER_CATEGORY_REACTIVATED: "supplier_category.reactivated",
+  PAYABLE_SUBCATEGORY_CREATED: "payable_subcategory.created",
+  PAYABLE_SUBCATEGORY_UPDATED: "payable_subcategory.updated",
+  PAYABLE_SUBCATEGORY_DELETED: "payable_subcategory.deleted",
+  PAYABLE_SUBCATEGORY_DEACTIVATED: "payable_subcategory.deactivated",
+  PAYABLE_SUBCATEGORY_REACTIVATED: "payable_subcategory.reactivated",
 
   // Documentos e títulos
   DOCUMENT_CREATED: "document.created",

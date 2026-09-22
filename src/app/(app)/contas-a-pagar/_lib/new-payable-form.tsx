@@ -59,6 +59,7 @@ export interface NewPayablePrefill {
 export function NewPayableForm({
   suppliers,
   categories,
+  subcategories,
   costCenters,
   today,
   prefill,
@@ -66,6 +67,8 @@ export function NewPayableForm({
 }: {
   suppliers: SupplierOption[];
   categories: string[];
+  /** Nomes das Subcategorias a PAGAR ativas (cadastro), para a caixa SUBCATEGORIA. */
+  subcategories: string[];
   costCenters: CostCenterOption[];
   today: string;
   prefill?: NewPayablePrefill;
@@ -187,15 +190,26 @@ export function NewPayableForm({
           </span>
         ) : null}
       </Field>
-      {/* Subcategoria: texto livre e OPCIONAL, gravado no título como digitado. */}
+      {/* Subcategoria: OPCIONAL, escolhida na lista do cadastro "Subcategoria a PAGAR";
+          o nome escolhido é gravado no título. */}
       <Field label="Subcategoria">
-        <input
+        <select
           name="subcategory"
-          maxLength={120}
-          defaultValue={prefill?.subcategory ?? ""}
           className={inputClass}
-          placeholder="Ex.: Energia elétrica"
-        />
+          defaultValue={prefill?.subcategory ?? ""}
+        >
+          <option value="">— selecione —</option>
+          {subcategories.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        {subcategories.length === 0 ? (
+          <span className="mt-1 block text-xs text-[var(--ink-muted)]">
+            Cadastre subcategorias em “Subcategoria a PAGAR”.
+          </span>
+        ) : null}
       </Field>
       <Field label="Classificação do CUSTO">
         <select

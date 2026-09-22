@@ -38,6 +38,7 @@ import type {
   SkillExecution,
   Supplier,
   SupplierCategory,
+  PayableSubcategory,
   User,
 } from "@/core/entities";
 import { NotFoundError, ValidationError } from "@/core/errors";
@@ -75,6 +76,7 @@ import type {
   Repositories,
   SkillExecutionRepo,
   SupplierCategoryRepo,
+  PayableSubcategoryRepo,
   SupplierRepo,
   UserRepo,
 } from "@/core/repositories";
@@ -138,6 +140,13 @@ class MemSupplierCategoryRepo
   extends MemBase<SupplierCategory>
   implements SupplierCategoryRepo
 {
+  async delete(companyId: ID, id: ID): Promise<void> {
+    const idx = this.items.findIndex((c) => c.companyId === companyId && c.id === id);
+    if (idx >= 0) this.items.splice(idx, 1);
+  }
+}
+
+class MemPayableSubcategoryRepo extends MemBase<PayableSubcategory> implements PayableSubcategoryRepo {
   async delete(companyId: ID, id: ID): Promise<void> {
     const idx = this.items.findIndex((c) => c.companyId === companyId && c.id === id);
     if (idx >= 0) this.items.splice(idx, 1);
@@ -916,6 +925,7 @@ export function createMemoryRepositories(db: MemoryDb): Repositories {
     customers: new MemBase(db.customers),
     suppliers: new MemSupplierRepo(db.suppliers),
     supplierCategories: new MemSupplierCategoryRepo(db.supplierCategories),
+    payableSubcategories: new MemPayableSubcategoryRepo(db.payableSubcategories),
     recurringTemplates: new MemRecurringTemplateRepo(db.recurringTemplates),
     bankAccounts: new MemBase(db.bankAccounts),
     bankTransactions: new MemBankTransactionRepo(db.bankTransactions),
