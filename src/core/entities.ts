@@ -212,6 +212,8 @@ export interface Payable {
   costCenterId?: ID;
   /** Categoria de fornecedor (texto), espelhada do cadastro no momento da entrada. */
   supplierCategory?: string;
+  /** Subcategoria (texto livre, opcional) informada na caixa "Subcategoria" do novo título. */
+  subcategory?: string;
   /** Classificação de custo (Fixo/Variável), espelhada do fornecedor na entrada. */
   costClassification?: CostClassification;
   installmentNumber: number;

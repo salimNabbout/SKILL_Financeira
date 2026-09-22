@@ -41,6 +41,7 @@ export async function createPayableAction(formData: FormData): Promise<void> {
   const issueDate = fdString(formData, "issueDate");
   const dueDate = fdString(formData, "dueDate");
   const supplierCategory = fdOptional(formData, "supplierCategory");
+  const subcategory = fdOptional(formData, "subcategory");
   const costRaw = fdOptional(formData, "costClassification");
   const costCenterId = fdOptional(formData, "costCenterId");
   const documentNumber = fdOptional(formData, "documentNumber");
@@ -65,6 +66,7 @@ export async function createPayableAction(formData: FormData): Promise<void> {
     if (issueDate) qs.set("nt_emissao", issueDate);
     if (dueDate) qs.set("nt_vencimento", dueDate);
     if (supplierCategory) qs.set("nt_categoria", supplierCategory);
+    if (subcategory) qs.set("nt_subcategoria", subcategory);
     if (costRaw) qs.set("nt_custo", costRaw);
     if (costCenterId) qs.set("nt_centrocusto", costCenterId);
     if (documentNumber) qs.set("nt_documento", documentNumber);
@@ -152,6 +154,8 @@ export async function createPayableAction(formData: FormData): Promise<void> {
         // gravadas em supplierCategory; a categoria contábil (categoryId) passa
         // a ser sempre sugerida automaticamente pelo skill.
         supplierCategory,
+        // Subcategoria é opcional (texto livre): só entra quando preenchida.
+        ...(subcategory ? { subcategory } : {}),
         costClassification,
         // Centro de custo é opcional: só entra no payload quando selecionado
         // (string vazia vira undefined via fdOptional; não enviar a chave vazia).
