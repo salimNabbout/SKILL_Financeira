@@ -119,6 +119,7 @@ export default async function ContasAPagarPage({
     nt_emissao?: string;
     nt_vencimento?: string;
     nt_categoria?: string;
+    nt_subcategoria?: string;
     nt_custo?: string;
     nt_centrocusto?: string;
     nt_documento?: string;
@@ -397,6 +398,7 @@ export default async function ContasAPagarPage({
         issueDate: sp.nt_emissao,
         dueDate: sp.nt_vencimento,
         supplierCategory: sp.nt_categoria,
+        subcategory: sp.nt_subcategoria,
         costClassification: sp.nt_custo,
         costCenterId: sp.nt_centrocusto,
         documentNumber: sp.nt_documento,

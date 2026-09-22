@@ -80,6 +80,8 @@ const createPayableObject = z.object({
   categoryId: z.string().min(1).optional(),
   costCenterId: z.string().min(1).optional(),
   supplierCategory: z.string().min(1).optional(),
+  // Subcategoria: texto livre e opcional, digitado na caixa do novo título.
+  subcategory: z.string().trim().min(1).max(120).optional(),
   costClassification: z.enum(["fixed", "variable"]).optional(),
   installmentCount: z.number().int().min(1).max(120).optional(),
   // PARCELAMENTO (installmentCount) divide o valor total; RECORRÊNCIA repete
@@ -586,6 +588,7 @@ async function createPayable(
       categoryId,
       costCenterId: input.costCenterId,
       supplierCategory: input.supplierCategory,
+      subcategory: input.subcategory,
       costClassification: input.costClassification,
       installmentNumber: n,
       installmentCount: count,

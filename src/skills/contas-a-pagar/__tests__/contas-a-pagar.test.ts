@@ -390,6 +390,31 @@ describe("contas_a_pagar — create_payable", () => {
     }
   });
 
+  it("persiste a subcategoria (texto livre, aparado) em todas as parcelas; ausente fica indefinida", async () => {
+    const env = createTestEnv();
+    seedSupplier(env);
+    seedCategory(env);
+
+    const com = await runSkill(
+      contasAPagarSkill,
+      env.ctx(),
+      baseCreateInput({ installmentCount: 2, supplierCategory: "Utilidades", subcategory: "  Energia elétrica  " })
+    );
+    expect(com.status).toBe("success");
+    const parcelas = (com.data as CreatePayableData).payables;
+    expect(parcelas).toHaveLength(2);
+    for (const p of parcelas) expect(p.subcategory).toBe("Energia elétrica");
+    const gravado = await env.repos.payables.getById(env.company.id, parcelas[0].id);
+    expect(gravado?.subcategory).toBe("Energia elétrica");
+
+    const sem = await runSkill(contasAPagarSkill, env.ctx(), baseCreateInput({ document: { type: "invoice", number: "NF-SEM-SUB", issuedAt: "2026-08-01", totalCents: 100_000 } }));
+    expect(sem.status).toBe("success");
+    expect((sem.data as CreatePayableData).payables[0].subcategory).toBeUndefined();
+
+    const vazia = await runSkill(contasAPagarSkill, env.ctx(), baseCreateInput({ subcategory: "   " }));
+    expect(vazia.status).toBe("error");
+  });
+
   it("valida fornecedor inexistente e vencimento anterior à emissão", async () => {
     const env = createTestEnv();
     seedSupplier(env);

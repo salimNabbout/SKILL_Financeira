@@ -39,6 +39,7 @@ const dbPayableRow: AnyRow = {
   categoryId: null,
   costCenterId: null,
   supplierCategory: "Material de Escritório",
+  subcategory: "Papelaria",
   costClassification: "fixed",
   installmentNumber: 1,
   installmentCount: 1,
@@ -165,6 +166,7 @@ describe("conversões banco -> domínio", () => {
     expect(found?.notes).toBeUndefined();
     expect(found?.canceledAt).toBeUndefined();
     expect(found?.supplierCategory).toBe("Material de Escritório");
+    expect(found?.subcategory).toBe("Papelaria");
     expect(found?.costClassification).toBe("fixed");
     expect(found?.createdAt).toBe("2026-03-01T12:34:56.000Z");
     expect(payable.findFirst).toHaveBeenCalledWith({

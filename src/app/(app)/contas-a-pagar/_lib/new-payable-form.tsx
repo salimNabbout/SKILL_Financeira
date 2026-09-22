@@ -33,6 +33,7 @@ export interface NewPayablePrefill {
   issueDate?: string;
   dueDate?: string;
   supplierCategory?: string;
+  subcategory?: string;
   costClassification?: string;
   costCenterId?: string;
   documentNumber?: string;
@@ -185,6 +186,16 @@ export function NewPayableForm({
             Cadastre categorias em “Categoria de Fornecedores”.
           </span>
         ) : null}
+      </Field>
+      {/* Subcategoria: texto livre e OPCIONAL, gravado no título como digitado. */}
+      <Field label="Subcategoria">
+        <input
+          name="subcategory"
+          maxLength={120}
+          defaultValue={prefill?.subcategory ?? ""}
+          className={inputClass}
+          placeholder="Ex.: Energia elétrica"
+        />
       </Field>
       <Field label="Classificação do CUSTO">
         <select
