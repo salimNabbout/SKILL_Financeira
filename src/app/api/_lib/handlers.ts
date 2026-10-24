@@ -616,6 +616,68 @@ export async function listPayables(
   });
 }
 
+/**
+ * Visão MÍNIMA e somente leitura dos títulos a pagar para integrações (ex.: agentes que cruzam documentos
+ * recebidos com o que está pago). Só o necessário para o cruzamento — fornecedor (nome e CNPJ), número do
+ * documento, vencimento, valores e situação. NUNCA dados bancários, PIX, e-mail ou telefone.
+ * Mesma permissão da listagem de títulos (report.view), logo o papel viewer basta.
+ */
+export interface PayableIntegrationView {
+  id: string;
+  supplierName: string | null;
+  supplierDocument: string | null;
+  documentNumber: string | null;
+  description: string;
+  issueDate: string;
+  dueDate: string;
+  amountCents: number;
+  paidCents: number;
+  status: Payable["status"];
+  installmentNumber: number;
+  installmentCount: number;
+}
+
+export async function listPayablesForIntegration(
+  deps: ApiDeps,
+  session: ApiSession,
+  rawQuery: unknown
+): Promise<Page<PayableIntegrationView>> {
+  requirePermission(session, "report.view");
+  const query = parse(listPayablesQuerySchema, rawQuery);
+  const companyId = session.company.id;
+  const [all, suppliers] = await Promise.all([
+    deps.repos.payables.listAll(companyId),
+    deps.repos.suppliers.listAll(companyId),
+  ]);
+  const byId = new Map(suppliers.map((s) => [s.id, s]));
+  const filtered = all
+    .filter((p) => (query.status ? p.status === query.status : true))
+    .filter((p) => (query.from ? p.dueDate >= query.from : true))
+    .filter((p) => (query.to ? p.dueDate <= query.to : true))
+    .sort((a, b) => (a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1));
+  const page = pageOf(filtered, query);
+  const items: PayableIntegrationView[] = [];
+  for (const p of page.items) {
+    const sup = byId.get(p.supplierId);
+    const doc = p.documentId ? await deps.repos.documents.getById(companyId, p.documentId) : null;
+    items.push({
+      id: p.id,
+      supplierName: sup?.name ?? null,
+      supplierDocument: sup?.document ?? doc?.issuerDoc ?? null,
+      documentNumber: doc?.number ?? null,
+      description: p.description,
+      issueDate: p.issueDate,
+      dueDate: p.dueDate,
+      amountCents: p.amountCents,
+      paidCents: p.paidCents,
+      status: p.status,
+      installmentNumber: p.installmentNumber,
+      installmentCount: p.installmentCount,
+    });
+  }
+  return { ...page, items };
+}
+
 export interface PayableDetail {
   payable: Payable;
   payments: Payment[];
