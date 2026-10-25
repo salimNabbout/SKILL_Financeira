@@ -648,13 +648,17 @@ describe("payables", () => {
       id: env.ids.next("doc"), companyId: env.company.id, type: "nfe", number: "4532", issuerName: "Fornecedor X",
       issuerDoc: "12345678000190", issuedAt: "2026-10-01", totalCents: 100_000, contentHash: "h", createdAt: env.clock.now().toISOString(),
     } as never);
-    await seedPayable(env, { supplierId: sup.id, documentId: doc.id, dueDate: "2026-10-20", status: "paid", paidCents: 100_000 });
+    await seedPayable(env, {
+      supplierId: sup.id, documentId: doc.id, dueDate: "2026-10-20", status: "paid", paidCents: 100_000,
+      supplierCategory: "Energia", subcategory: "Luz", costClassification: "fixed", costCenterId: "cc_adm",
+    });
     await seedPayable(env, { supplierId: "sup_inexistente", dueDate: "2026-10-10" });
 
     const r = await listPayablesForIntegration(deps, viewer, { from: "2026-10-01", to: "2026-10-31" });
     expect(r.total).toBe(2);
     expect(r.items[0]).toMatchObject({ supplierName: null, supplierDocument: null, documentNumber: null, status: "open" });
-    expect(r.items[1]).toMatchObject({ supplierName: "Fornecedor X", supplierDocument: "12345678000190", documentNumber: "4532", status: "paid", paidCents: 100_000 });
+    expect(r.items[1]).toMatchObject({ supplierName: "Fornecedor X", supplierDocument: "12345678000190", documentNumber: "4532", status: "paid", paidCents: 100_000, supplierCategory: "Energia", subcategory: "Luz", costClassification: "fixed", costCenterId: "cc_adm" });
+    expect(r.items[0]).toMatchObject({ supplierCategory: null, subcategory: null, costClassification: null, costCenterId: null });
     const texto = JSON.stringify(r);
     expect(texto).not.toMatch(/contato@x|\*\*\*|bankInfo|pixKey|email/i);
     const so = await listPayablesForIntegration(deps, viewer, { status: "paid" });

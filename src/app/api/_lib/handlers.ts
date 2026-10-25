@@ -635,6 +635,11 @@ export interface PayableIntegrationView {
   status: Payable["status"];
   installmentNumber: number;
   installmentCount: number;
+  /** Classificação do título (texto/ids de cadastro, nada sensível): permite sugerir o mesmo padrão ao próximo título do fornecedor. */
+  supplierCategory: string | null;
+  subcategory: string | null;
+  costClassification: Payable["costClassification"] | null;
+  costCenterId: string | null;
 }
 
 export async function listPayablesForIntegration(
@@ -673,6 +678,10 @@ export async function listPayablesForIntegration(
       status: p.status,
       installmentNumber: p.installmentNumber,
       installmentCount: p.installmentCount,
+      supplierCategory: p.supplierCategory ?? null,
+      subcategory: p.subcategory ?? null,
+      costClassification: p.costClassification ?? null,
+      costCenterId: p.costCenterId ?? null,
     });
   }
   return { ...page, items };
