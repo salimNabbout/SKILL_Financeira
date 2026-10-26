@@ -79,6 +79,27 @@ describe("papel integration_agent", () => {
     expect(ASSIGNABLE_ROLES).toContain("integration_agent");
   });
 
+  it("aceita o pedido completo que o agente monta (categoria, classificação, centro de custo, subcategoria e documento)", async () => {
+    await env.repos.costCenters.create({ id: "cc_adm", companyId: env.company.id, code: "CC-03", name: "Administrativo", active: true, scope: "both" });
+    const res = await orch.execute({
+      flow: "supplier_invoice_intake",
+      companyId: env.company.id,
+      actor: agente,
+      idempotencyKey: "agente-abc123",
+      payload: {
+        ...payload,
+        supplierCategory: "Energia",
+        subcategory: "Luz",
+        costClassification: "fixed",
+        costCenterId: "cc_adm",
+        document: { type: "nfe", number: "4532", issuedAt: "2026-08-10", totalCents: 500_000 },
+      },
+    });
+    expect(res.status).toBe("completed");
+    const [titulo] = await env.repos.payables.listAll(env.company.id);
+    expect(titulo).toMatchObject({ supplierCategory: "Energia", subcategory: "Luz", costClassification: "fixed", costCenterId: "cc_adm", status: "open" });
+  });
+
   it("fornecedor que não existe barra a criação (o agente não cadastra fornecedor)", async () => {
     const res = await orch.execute({
       flow: "supplier_invoice_intake", companyId: env.company.id, actor: agente, payload: { ...payload, supplierId: "sup_inexistente" },
