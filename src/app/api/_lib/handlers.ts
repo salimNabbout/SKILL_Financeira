@@ -616,6 +616,106 @@ export async function listPayables(
   });
 }
 
+/**
+ * Visão MÍNIMA e somente leitura dos títulos a pagar para integrações (ex.: agentes que cruzam documentos
+ * recebidos com o que está pago). Só o necessário para o cruzamento — fornecedor (nome e CNPJ), número do
+ * documento, vencimento, valores e situação. NUNCA dados bancários, PIX, e-mail ou telefone.
+ * Mesma permissão da listagem de títulos (report.view), logo o papel viewer basta.
+ */
+export interface PayableIntegrationView {
+  id: string;
+  /** Id do fornecedor no cadastro (a criação de título por integração precisa dele). */
+  supplierId: string;
+  supplierName: string | null;
+  supplierDocument: string | null;
+  documentNumber: string | null;
+  description: string;
+  issueDate: string;
+  dueDate: string;
+  amountCents: number;
+  paidCents: number;
+  status: Payable["status"];
+  installmentNumber: number;
+  installmentCount: number;
+  /** Classificação do título (texto/ids de cadastro, nada sensível): permite sugerir o mesmo padrão ao próximo título do fornecedor. */
+  supplierCategory: string | null;
+  subcategory: string | null;
+  costClassification: Payable["costClassification"] | null;
+  costCenterId: string | null;
+}
+
+export async function listPayablesForIntegration(
+  deps: ApiDeps,
+  session: ApiSession,
+  rawQuery: unknown
+): Promise<Page<PayableIntegrationView>> {
+  requirePermission(session, "report.view");
+  const query = parse(listPayablesQuerySchema, rawQuery);
+  const companyId = session.company.id;
+  const [all, suppliers] = await Promise.all([
+    deps.repos.payables.listAll(companyId),
+    deps.repos.suppliers.listAll(companyId),
+  ]);
+  const byId = new Map(suppliers.map((s) => [s.id, s]));
+  const filtered = all
+    .filter((p) => (query.status ? p.status === query.status : true))
+    .filter((p) => (query.from ? p.dueDate >= query.from : true))
+    .filter((p) => (query.to ? p.dueDate <= query.to : true))
+    .sort((a, b) => (a.dueDate !== b.dueDate ? (a.dueDate < b.dueDate ? -1 : 1) : a.id < b.id ? -1 : 1));
+  const page = pageOf(filtered, query);
+  const items: PayableIntegrationView[] = [];
+  for (const p of page.items) {
+    const sup = byId.get(p.supplierId);
+    const doc = p.documentId ? await deps.repos.documents.getById(companyId, p.documentId) : null;
+    items.push({
+      id: p.id,
+      supplierId: p.supplierId,
+      supplierName: sup?.name ?? null,
+      supplierDocument: sup?.document ?? doc?.issuerDoc ?? null,
+      documentNumber: doc?.number ?? null,
+      description: p.description,
+      issueDate: p.issueDate,
+      dueDate: p.dueDate,
+      amountCents: p.amountCents,
+      paidCents: p.paidCents,
+      status: p.status,
+      installmentNumber: p.installmentNumber,
+      installmentCount: p.installmentCount,
+      supplierCategory: p.supplierCategory ?? null,
+      subcategory: p.subcategory ?? null,
+      costClassification: p.costClassification ?? null,
+      costCenterId: p.costCenterId ?? null,
+    });
+  }
+  return { ...page, items };
+}
+
+/**
+ * Fornecedores para integrações (somente leitura, report.view): só id, nome, CNPJ e os padrões de categoria e classificação, para a integração
+ * achar o `supplierId` antes de criar um título. A listagem completa (master_data.manage) traz também banco, PIX,
+ * e-mail e telefone; esta NUNCA.
+ */
+export interface SupplierIntegrationView {
+  id: string;
+  name: string;
+  document: string | null;
+  /** Padrões do cadastro do fornecedor (texto, nada sensível); null se não preenchidos. */
+  category: string | null;
+  costClassification: Supplier["costClassification"] | null;
+}
+
+export async function listSuppliersForIntegration(deps: ApiDeps, session: ApiSession): Promise<SupplierIntegrationView[]> {
+  requirePermission(session, "report.view");
+  const todos = await deps.repos.suppliers.listAll(session.company.id);
+  return todos.map((s) => ({
+    id: s.id,
+    name: s.name,
+    document: s.document ?? null,
+    category: s.category ?? null,
+    costClassification: s.costClassification ?? null,
+  }));
+}
+
 export interface PayableDetail {
   payable: Payable;
   payments: Payment[];
