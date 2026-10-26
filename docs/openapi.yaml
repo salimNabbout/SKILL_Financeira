@@ -486,6 +486,34 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /suppliers/integration:
+    get:
+      tags: [fornecedores]
+      summary: Fornecedores (visão mínima, somente leitura) para integrações
+      description: >-
+        Devolve só id, nome, CNPJ e os padrões de categoria e classificação do cadastro, para uma integração achar o
+        supplierId antes de criar um título pelo fluxo supplier_invoice_intake. Nunca devolve banco, PIX, e-mail nem telefone.
+        Permissão report.view: o papel viewer basta.
+      responses:
+        "200":
+          description: "Lista: data = [{ id, name, document, category, costClassification }]"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        document: { type: string, nullable: true }
+                        category: { type: string, nullable: true }
+                        costClassification: { type: string, enum: [fixed, variable], nullable: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /payables/integration:
     get:
       tags: [títulos]
@@ -525,6 +553,7 @@ paths:
                           type: object
                           properties:
                             id: { type: string }
+                            supplierId: { type: string }
                             supplierName: { type: string, nullable: true }
                             supplierDocument: { type: string, nullable: true }
                             documentNumber: { type: string, nullable: true }

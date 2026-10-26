@@ -4,6 +4,13 @@ Registro das mudanças relevantes. Datas em ISO (AAAA-MM-DD).
 
 ---
 
+## 2026-10-26 — Integração: `supplierId` nos títulos e `GET /suppliers/integration`
+
+A visão de integração dos títulos passa a devolver `supplierId`, e há uma lista mínima e somente leitura de fornecedores
+(`GET /api/v1/suppliers/integration`: id, nome, CNPJ e os padrões de categoria e classificação; papel viewer basta; nunca
+banco, PIX, e-mail nem telefone). Serve para uma integração achar o fornecedor antes de criar um título pelo fluxo
+`supplier_invoice_intake` (que continua exigindo `payable.create`).
+
 ## 2026-10-26 — API de leitura mínima de títulos para integrações
 
 `GET /api/v1/payables/integration` (somente leitura, mesma permissão da listagem de títulos, papel `viewer` basta):

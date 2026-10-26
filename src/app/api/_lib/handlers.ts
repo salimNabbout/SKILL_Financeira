@@ -624,6 +624,8 @@ export async function listPayables(
  */
 export interface PayableIntegrationView {
   id: string;
+  /** Id do fornecedor no cadastro (a criação de título por integração precisa dele). */
+  supplierId: string;
   supplierName: string | null;
   supplierDocument: string | null;
   documentNumber: string | null;
@@ -667,6 +669,7 @@ export async function listPayablesForIntegration(
     const doc = p.documentId ? await deps.repos.documents.getById(companyId, p.documentId) : null;
     items.push({
       id: p.id,
+      supplierId: p.supplierId,
       supplierName: sup?.name ?? null,
       supplierDocument: sup?.document ?? doc?.issuerDoc ?? null,
       documentNumber: doc?.number ?? null,
@@ -685,6 +688,32 @@ export async function listPayablesForIntegration(
     });
   }
   return { ...page, items };
+}
+
+/**
+ * Fornecedores para integrações (somente leitura, report.view): só id, nome, CNPJ e os padrões de categoria e classificação, para a integração
+ * achar o `supplierId` antes de criar um título. A listagem completa (master_data.manage) traz também banco, PIX,
+ * e-mail e telefone; esta NUNCA.
+ */
+export interface SupplierIntegrationView {
+  id: string;
+  name: string;
+  document: string | null;
+  /** Padrões do cadastro do fornecedor (texto, nada sensível); null se não preenchidos. */
+  category: string | null;
+  costClassification: Supplier["costClassification"] | null;
+}
+
+export async function listSuppliersForIntegration(deps: ApiDeps, session: ApiSession): Promise<SupplierIntegrationView[]> {
+  requirePermission(session, "report.view");
+  const todos = await deps.repos.suppliers.listAll(session.company.id);
+  return todos.map((s) => ({
+    id: s.id,
+    name: s.name,
+    document: s.document ?? null,
+    category: s.category ?? null,
+    costClassification: s.costClassification ?? null,
+  }));
 }
 
 export interface PayableDetail {

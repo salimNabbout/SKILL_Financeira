@@ -37,6 +37,7 @@ import {
   listFlows,
   listPayables,
   listPayablesForIntegration,
+  listSuppliersForIntegration,
   listSkills,
   listSuppliers,
   login,
@@ -663,6 +664,22 @@ describe("payables", () => {
     expect(texto).not.toMatch(/contato@x|\*\*\*|bankInfo|pixKey|email/i);
     const so = await listPayablesForIntegration(deps, viewer, { status: "paid" });
     expect(so.items).toHaveLength(1);
+    expect(r.items[1].supplierId).toBe(sup.id);
+    expect(r.items[0].supplierId).toBe("sup_inexistente");
+  });
+
+  it("lista de fornecedores para integração: só id, nome, CNPJ e padrões; nunca banco, PIX, e-mail nem telefone; viewer basta", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const viewer = await sessionFor(env, "viewer");
+    const sup = await env.repos.suppliers.create({
+      id: env.ids.next("sup"), companyId: env.company.id, name: "Fornecedor X", document: "12345678000190", active: true,
+      email: "contato@x.com", phone: "21999990000", category: "Energia", costClassification: "fixed",
+      bankInfoMasked: "****1234", pixKeyMasked: "***", createdAt: env.clock.now().toISOString(), updatedAt: env.clock.now().toISOString(),
+    } as never);
+    const lista = await listSuppliersForIntegration(deps, viewer);
+    expect(lista).toEqual([{ id: sup.id, name: "Fornecedor X", document: "12345678000190", category: "Energia", costClassification: "fixed" }]);
+    expect(JSON.stringify(lista)).not.toMatch(/contato@x|21999990000|\*\*\*|bankInfo|pixKey|email|phone/i);
   });
 
   it("rejeita status e datas inválidos", async () => {
