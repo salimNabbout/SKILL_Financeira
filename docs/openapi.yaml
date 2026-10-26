@@ -486,6 +486,66 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /payables/integration:
+    get:
+      tags: [títulos]
+      summary: Visão mínima e somente leitura dos títulos a pagar, para integrações
+      description: >-
+        Devolve só o necessário para cruzar documentos recebidos com títulos (fornecedor, CNPJ, número do documento,
+        vencimento, valores, situação e a classificação do título). Nunca devolve dados bancários, PIX, e-mail nem telefone.
+        Mesma permissão da listagem de títulos (report.view): o papel viewer basta.
+      parameters:
+        - $ref: "#/components/parameters/PageLimit"
+        - $ref: "#/components/parameters/PageOffset"
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, scheduled, partially_paid, paid, canceled] }
+        - name: from
+          in: query
+          description: Vencimento a partir de (inclusive)
+          schema: { $ref: "#/components/schemas/ISODate" }
+        - name: to
+          in: query
+          description: Vencimento até (inclusive)
+          schema: { $ref: "#/components/schemas/ISODate" }
+      responses:
+        "200":
+          description: "Página: data = { items, total, offset, limit } (ordem: vencimento asc)"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string }
+                            supplierName: { type: string, nullable: true }
+                            supplierDocument: { type: string, nullable: true }
+                            documentNumber: { type: string, nullable: true }
+                            description: { type: string }
+                            issueDate: { $ref: "#/components/schemas/ISODate" }
+                            dueDate: { $ref: "#/components/schemas/ISODate" }
+                            amountCents: { type: integer }
+                            paidCents: { type: integer }
+                            status: { type: string, enum: [open, scheduled, partially_paid, paid, canceled] }
+                            installmentNumber: { type: integer }
+                            installmentCount: { type: integer }
+                            supplierCategory: { type: string, nullable: true }
+                            subcategory: { type: string, nullable: true }
+                            costClassification: { type: string, enum: [fixed, variable], nullable: true }
+                            costCenterId: { type: string, nullable: true }
+                      total: { type: integer }
+                      offset: { type: integer }
+                      limit: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
   /payables/{id}:
     get:
       tags: [títulos]
