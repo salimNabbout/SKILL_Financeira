@@ -86,7 +86,7 @@ model Membership {
   id                 String  @id
   userId             String
   companyId          String
-  role               String // admin | finance_manager | approver | finance_analyst | accountant | viewer
+  role               String // admin | finance_manager | approver | finance_analyst | accountant | viewer | integration_agent
   approvalLimitCents BigInt? // null = sem limite (dentro do papel)
 
   user    User    @relation(fields: [userId], references: [id])

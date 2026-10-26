@@ -61,6 +61,7 @@ export const ROLE_LABELS: Record<string, string> = {
   finance_analyst: "Analista financeiro(a)",
   accountant: "Contador(a)",
   viewer: "Visualização",
+  integration_agent: "Agente (só cria título)",
 };
 
 /**

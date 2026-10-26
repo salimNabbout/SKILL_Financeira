@@ -27,6 +27,7 @@ export const ASSIGNABLE_ROLES: RoleName[] = [
   "finance_analyst",
   "accountant",
   "viewer",
+  "integration_agent",
 ];
 
 export interface UserAdminDeps {
