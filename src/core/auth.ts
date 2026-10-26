@@ -91,11 +91,15 @@ const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   ],
   accountant: ["accounting.export", "report.view", "audit.view", "flow.execute"],
   viewer: ["report.view"],
+  // Conta de serviço dos agentes (leitura do e-mail -> título). Só cria título e consulta: NÃO tem payment.*, master_data.manage
+  // (não cadastra fornecedor), payable.cancel nem user.manage. Pagar continua exigindo pedido e aprovação de pessoas.
+  integration_agent: ["payable.create", "report.view", "flow.execute"],
 };
 
 /** Hierarquia para "papel mínimo exigido" em aprovações. */
 const ROLE_RANK: Record<RoleName, number> = {
   viewer: 0,
+  integration_agent: 0,
   accountant: 1,
   finance_analyst: 2,
   approver: 3,

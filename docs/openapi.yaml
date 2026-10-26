@@ -1445,7 +1445,7 @@ components:
 
     RoleName:
       type: string
-      enum: [admin, finance_manager, approver, finance_analyst, accountant, viewer]
+      enum: [admin, finance_manager, approver, finance_analyst, accountant, viewer, integration_agent]
 
     PublicUser:
       type: object
