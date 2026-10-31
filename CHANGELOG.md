@@ -14,6 +14,21 @@ e `report.view`. **Não** tem `payment.*`, `payable.cancel`, `master_data.manage
 como aprovador em nenhuma alçada. Pagar continua exigindo pedido e aprovação de
 pessoas. Atribuível em Cadastros › Usuários; sem migração (o papel é texto).
 
+## 2026-10-26 — Integração: `supplierId` nos títulos e `GET /suppliers/integration`
+
+A visão de integração dos títulos passa a devolver `supplierId`, e há uma lista mínima e somente leitura de fornecedores
+(`GET /api/v1/suppliers/integration`: id, nome, CNPJ e os padrões de categoria e classificação; papel viewer basta; nunca
+banco, PIX, e-mail nem telefone). Serve para uma integração achar o fornecedor antes de criar um título pelo fluxo
+`supplier_invoice_intake` (que continua exigindo `payable.create`).
+
+## 2026-10-26 — API de leitura mínima de títulos para integrações
+
+`GET /api/v1/payables/integration` (somente leitura, mesma permissão da listagem de títulos, papel `viewer` basta):
+fornecedor (nome e CNPJ), número do documento, vencimento, valores, situação e a classificação do título (categoria,
+subcategoria, Fixo/Variável e centro de custo), paginado e filtrável por status e janela de vencimento. Serve a um
+agente externo que cruza os documentos recebidos por e-mail com os títulos lançados, **sem nunca gravar no app**.
+Não devolve dados bancários, PIX, e-mail nem telefone. Nenhum endpoint existente mudou. Testes na suíte da API.
+
 ## 2026-09-17 — Auditoria de fórmulas + Painel por Período no Dashboard
 
 **Painel por Período** no topo do Dashboard, em regime de **caixa** (vale a

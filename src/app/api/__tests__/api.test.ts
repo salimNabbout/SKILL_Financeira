@@ -36,6 +36,8 @@ import {
   listCompanyUsers,
   listFlows,
   listPayables,
+  listPayablesForIntegration,
+  listSuppliersForIntegration,
   listSkills,
   listSuppliers,
   login,
@@ -633,6 +635,51 @@ describe("payables", () => {
     expect(page1.total).toBe(3);
     expect(page1.limit).toBe(2);
     await expect(listPayables(deps, session, { limit: "500" })).rejects.toThrow(ValidationError);
+  });
+
+  it("integração: viewer lê a visão mínima com fornecedor e documento, sem dados bancários", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const viewer = await sessionFor(env, "viewer");
+    const sup = await env.repos.suppliers.create({
+      id: env.ids.next("sup"), companyId: env.company.id, name: "Fornecedor X", document: "12345678000190",
+      email: "contato@x.com", bankInfoMasked: "****1234", pixKeyMasked: "***", createdAt: env.clock.now().toISOString(),
+    } as never);
+    const doc = await env.repos.documents.create({
+      id: env.ids.next("doc"), companyId: env.company.id, type: "nfe", number: "4532", issuerName: "Fornecedor X",
+      issuerDoc: "12345678000190", issuedAt: "2026-10-01", totalCents: 100_000, contentHash: "h", createdAt: env.clock.now().toISOString(),
+    } as never);
+    await seedPayable(env, {
+      supplierId: sup.id, documentId: doc.id, dueDate: "2026-10-20", status: "paid", paidCents: 100_000,
+      supplierCategory: "Energia", subcategory: "Luz", costClassification: "fixed", costCenterId: "cc_adm",
+    });
+    await seedPayable(env, { supplierId: "sup_inexistente", dueDate: "2026-10-10" });
+
+    const r = await listPayablesForIntegration(deps, viewer, { from: "2026-10-01", to: "2026-10-31" });
+    expect(r.total).toBe(2);
+    expect(r.items[0]).toMatchObject({ supplierName: null, supplierDocument: null, documentNumber: null, status: "open" });
+    expect(r.items[1]).toMatchObject({ supplierName: "Fornecedor X", supplierDocument: "12345678000190", documentNumber: "4532", status: "paid", paidCents: 100_000, supplierCategory: "Energia", subcategory: "Luz", costClassification: "fixed", costCenterId: "cc_adm" });
+    expect(r.items[0]).toMatchObject({ supplierCategory: null, subcategory: null, costClassification: null, costCenterId: null });
+    const texto = JSON.stringify(r);
+    expect(texto).not.toMatch(/contato@x|\*\*\*|bankInfo|pixKey|email/i);
+    const so = await listPayablesForIntegration(deps, viewer, { status: "paid" });
+    expect(so.items).toHaveLength(1);
+    expect(r.items[1].supplierId).toBe(sup.id);
+    expect(r.items[0].supplierId).toBe("sup_inexistente");
+  });
+
+  it("lista de fornecedores para integração: só id, nome, CNPJ e padrões; nunca banco, PIX, e-mail nem telefone; viewer basta", async () => {
+    const env = createTestEnv();
+    const deps = buildDeps(env);
+    const viewer = await sessionFor(env, "viewer");
+    const sup = await env.repos.suppliers.create({
+      id: env.ids.next("sup"), companyId: env.company.id, name: "Fornecedor X", document: "12345678000190", active: true,
+      email: "contato@x.com", phone: "21999990000", category: "Energia", costClassification: "fixed",
+      bankInfoMasked: "****1234", pixKeyMasked: "***", createdAt: env.clock.now().toISOString(), updatedAt: env.clock.now().toISOString(),
+    } as never);
+    const lista = await listSuppliersForIntegration(deps, viewer);
+    expect(lista).toEqual([{ id: sup.id, name: "Fornecedor X", document: "12345678000190", category: "Energia", costClassification: "fixed" }]);
+    expect(JSON.stringify(lista)).not.toMatch(/contato@x|21999990000|\*\*\*|bankInfo|pixKey|email|phone/i);
   });
 
   it("rejeita status e datas inválidos", async () => {
