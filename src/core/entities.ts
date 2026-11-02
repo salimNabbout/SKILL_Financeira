@@ -21,7 +21,8 @@ export type RoleName =
   | "approver"
   | "finance_analyst"
   | "accountant"
-  | "viewer";
+  | "viewer"
+  | "integration_agent"; // conta de serviço de agentes: só cria título (sem pagar, aprovar nem cadastrar)
 
 export interface Company {
   id: ID;

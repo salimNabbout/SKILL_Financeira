@@ -4,6 +4,16 @@ Registro das mudanças relevantes. Datas em ISO (AAAA-MM-DD).
 
 ---
 
+## 2026-10-26 — Papel `integration_agent` (conta de serviço dos agentes)
+
+Novo papel para a conta de serviço que os agentes da empresa usam para **criar**
+título em Contas a Pagar (pelo fluxo `supplier_invoice_intake`, já idempotente por
+fornecedor + documento + parcela). Permissões: `payable.create`, `flow.execute`
+e `report.view`. **Não** tem `payment.*`, `payable.cancel`, `master_data.manage`
+(não cadastra fornecedor), `receivable.*`, `user.manage` nem `audit.view`; não vale
+como aprovador em nenhuma alçada. Pagar continua exigindo pedido e aprovação de
+pessoas. Atribuível em Cadastros › Usuários; sem migração (o papel é texto).
+
 ## 2026-10-26 — Integração: `supplierId` nos títulos e `GET /suppliers/integration`
 
 A visão de integração dos títulos passa a devolver `supplierId`, e há uma lista mínima e somente leitura de fornecedores
@@ -18,7 +28,6 @@ fornecedor (nome e CNPJ), número do documento, vencimento, valores, situação 
 subcategoria, Fixo/Variável e centro de custo), paginado e filtrável por status e janela de vencimento. Serve a um
 agente externo que cruza os documentos recebidos por e-mail com os títulos lançados, **sem nunca gravar no app**.
 Não devolve dados bancários, PIX, e-mail nem telefone. Nenhum endpoint existente mudou. Testes na suíte da API.
-
 
 ## 2026-09-17 — Auditoria de fórmulas + Painel por Período no Dashboard
 
